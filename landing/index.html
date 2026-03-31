@@ -96,6 +96,16 @@
       background: rgba(7,9,13,0.85);
       backdrop-filter: blur(16px);
     }
+    .nav-ascii {
+      font-family: var(--font-mono);
+      font-size: 4.5px;
+      line-height: 1.2;
+      color: var(--cyan);
+      margin: 0;
+      white-space: pre;
+      letter-spacing: 0;
+    }
+
     .nav-logo {
       font-family: var(--font-display);
       font-weight: 700;
@@ -1057,7 +1067,12 @@
 <!-- ── NAV ── -->
 <nav id="nav">
   <a href="#" class="nav-logo">
-    <img src="mint_logo.png" alt="Mint" style="height:28px;width:auto;display:block;"> <span class="nav-badge">beta</span>
+    <pre class="nav-ascii">  ███╗   ███╗██╗███╗   ██╗████████╗
+  ████╗ ████║██║████╗  ██║╚══██╔══╝
+  ██╔████╔██║██║██╔██╗ ██║   ██║
+  ██║╚██╔╝██║██║██║╚██╗██║   ██║
+  ██║ ╚═╝ ██║██║██║ ╚████║   ██║
+  ╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝   ╚═╝</pre> <span class="nav-badge">beta</span>
   </a>
   <ul class="nav-links">
     <li><a href="#how-it-works">How it works</a></li>
