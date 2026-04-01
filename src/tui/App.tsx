@@ -301,7 +301,12 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
       {showWelcome ? (
         <WelcomeScreen />
       ) : (
-        <MessageList messages={messages} streamingContent={streamingContent} />
+        <MessageList
+          messages={messages}
+          streamingContent={streamingContent}
+          livePhases={pipelinePhases}
+          availableHeight={(process.stdout.rows ?? 24) - 6}
+        />
       )}
 
       <InputBox
