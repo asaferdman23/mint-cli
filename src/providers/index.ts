@@ -6,6 +6,7 @@ import { grokProvider } from './grok.js';
 import { groqProvider } from './groq.js';
 import { qwenProvider } from './qwen.js';
 import { geminiProvider } from './gemini.js';
+import { gatewayProvider } from './gateway.js';
 
 // Registry of all providers
 const providers: Map<string, Provider> = new Map([
@@ -18,18 +19,10 @@ const providers: Map<string, Provider> = new Map([
   ['gemini', geminiProvider],
 ]);
 
-export function getProvider(modelId: ModelId): Provider {
-  const modelInfo = MODELS[modelId];
-  if (!modelInfo) {
-    throw new Error(`Unknown model: ${modelId}`);
-  }
-
-  const provider = providers.get(modelInfo.provider);
-  if (!provider) {
-    throw new Error(`Provider ${modelInfo.provider} not available`);
-  }
-
-  return provider;
+export function getProvider(_modelId: ModelId): Provider {
+  // All requests are routed through the Mint Gateway regardless of model selected.
+  // The gateway handles model routing server-side.
+  return gatewayProvider;
 }
 
 export async function complete(request: CompletionRequest): Promise<CompletionResponse> {

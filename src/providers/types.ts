@@ -16,7 +16,9 @@ export type ModelId =
   | 'gemini-1-5-flash'
   | 'gemini-1-5-pro'
   | 'groq-llama-70b'
-  | 'groq-llama-8b';
+  | 'groq-llama-8b'
+  | 'groq-gpt-oss-120b'
+  | 'groq-gpt-oss-20b';
 
 export type ProviderId = 'anthropic' | 'deepseek' | 'openrouter' | 'gemini' | 'openai' | 'kimi' | 'grok' | 'groq';
 
@@ -197,6 +199,24 @@ export const MODELS: Record<ModelId, ModelInfo> = {
     contextWindow: 128000,
     capabilities: { coding: 6, reasoning: 6, speed: 10 },
   },
+  'groq-gpt-oss-120b': {
+    id: 'groq-gpt-oss-120b',
+    provider: 'groq',
+    name: 'GPT OSS 120B (Groq)',
+    inputPrice: 0.15,
+    outputPrice: 0.60,
+    contextWindow: 128000,
+    capabilities: { coding: 8, reasoning: 8, speed: 9 },
+  },
+  'groq-gpt-oss-20b': {
+    id: 'groq-gpt-oss-20b',
+    provider: 'groq',
+    name: 'GPT OSS 20B (Groq)',
+    inputPrice: 0.075,
+    outputPrice: 0.30,
+    contextWindow: 128000,
+    capabilities: { coding: 7, reasoning: 7, speed: 10 },
+  },
 };
 
 export interface Message {
@@ -229,6 +249,7 @@ export interface CompletionRequest {
   temperature?: number;
   stream?: boolean;
   signal?: AbortSignal;
+  sessionId?: string;
   tools?: ToolDefinition[];
   systemPrompt?: string;
 }

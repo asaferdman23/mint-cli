@@ -18,6 +18,8 @@ export interface UsageRecord {
   savedAmount: number;
   routingReason: string;
   taskPreview: string;
+  latencyMs: number;
+  costSonnet: number;
 }
 
 export interface UsageSummary {
@@ -68,7 +70,9 @@ export class UsageDb {
         opusCost      REAL    NOT NULL DEFAULT 0,
         savedAmount   REAL    NOT NULL DEFAULT 0,
         routingReason TEXT    NOT NULL DEFAULT '',
-        taskPreview   TEXT    NOT NULL DEFAULT ''
+        taskPreview   TEXT    NOT NULL DEFAULT '',
+        latencyMs     INTEGER NOT NULL DEFAULT 0,
+        costSonnet    REAL    NOT NULL DEFAULT 0
       )
     `);
   }
@@ -78,11 +82,11 @@ export class UsageDb {
       INSERT INTO usage
         (timestamp, sessionId, command, model, provider, tier,
          inputTokens, outputTokens, cost, opusCost, savedAmount,
-         routingReason, taskPreview)
+         routingReason, taskPreview, latencyMs, costSonnet)
       VALUES
         (@timestamp, @sessionId, @command, @model, @provider, @tier,
          @inputTokens, @outputTokens, @cost, @opusCost, @savedAmount,
-         @routingReason, @taskPreview)
+         @routingReason, @taskPreview, @latencyMs, @costSonnet)
     `);
     stmt.run(record);
   }

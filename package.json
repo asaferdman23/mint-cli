@@ -1,16 +1,20 @@
 {
-  "name": "mint-cli",
+  "name": "usemint",
   "version": "0.1.0",
-  "description": "AI coding CLI with smart model routing and cost optimization",
+  "description": "Zero-setup AI coding CLI — type mint, start coding",
   "type": "module",
   "bin": {
     "mint": "./dist/cli/index.js"
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
     "start": "node dist/cli/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "MINT_API_TOKEN=6711e079a4547a8aec4fe7831ff80de41f9d313ec67fe8bfbea666f302211c7c MINT_GATEWAY_URL=https://api.usemint.dev npm run build"
   },
   "keywords": [
     "ai",

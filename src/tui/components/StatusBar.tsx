@@ -10,34 +10,17 @@ interface StatusBarProps {
   routingReason?: string;
 }
 
-function formatCostDisplay(cost: number): string {
-  if (cost < 0.01) {
-    return `${(cost * 100).toFixed(3)}¢`;
-  }
+function formatCost(cost: number): string {
+  if (cost === 0) return '$0';
+  if (cost < 0.01) return `${(cost * 100).toFixed(3)}¢`;
   return `$${cost.toFixed(4)}`;
 }
 
-export function StatusBar({
-  currentModel,
-  sessionTokens,
-  sessionCost,
-  messageCount,
-  routingReason,
-}: StatusBarProps): React.ReactElement {
-  const modelLabel = currentModel ?? 'auto';
-  const userTurns = Math.ceil(messageCount / 2);
-
+export function StatusBar({ currentModel, sessionTokens, sessionCost }: StatusBarProps): React.ReactElement {
+  const model = currentModel ?? 'auto';
   return (
-    <Box flexDirection="row" justifyContent="space-between" paddingX={1}>
-      <Text dimColor>
-        {`[${modelLabel}] | tokens: ${sessionTokens.toLocaleString()} | cost: ${formatCostDisplay(sessionCost)} | session: #${userTurns}`}
-      </Text>
-      <Box flexDirection="row" gap={2}>
-        {routingReason ? (
-          <Text color="cyan" dimColor>{`routed: ${routingReason}`}</Text>
-        ) : null}
-        <Text dimColor>{'Ctrl+C exit  /help cmds'}</Text>
-      </Box>
+    <Box paddingX={1}>
+      <Text dimColor>{`${model} · ${sessionTokens.toLocaleString()} tokens · ${formatCost(sessionCost)}`}</Text>
     </Box>
   );
 }

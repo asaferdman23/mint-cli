@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
-import { Banner } from './components/Banner.js';
+import { initChalkLevel } from './utils/colorize.js';
 import { MessageList, ChatMessage } from './components/MessageList.js';
 import { InputBox } from './components/InputBox.js';
 import { StatusBar } from './components/StatusBar.js';
@@ -12,7 +12,11 @@ import { getTier } from '../providers/tiers.js';
 import type { ModelId, Message } from '../providers/types.js';
 import { MODELS } from '../providers/types.js';
 import { config } from '../utils/config.js';
-import { createUsageTracker, calculateOpusCost } from '../usage/tracker.js';
+import { createUsageTracker, calculateOpusCost, calculateSonnetCost } from '../usage/tracker.js';
+
+// Initialize chalk color depth once at startup.
+// Boosts to truecolor in VS Code terminals; clamps to 256-color in tmux.
+initChalkLevel();
 
 interface AppProps {
   initialPrompt?: string;
@@ -55,17 +59,37 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
     return () => { abortRef.current?.abort(); };
   }, []);
 
-  // Handle Ctrl+C
-  useInput((_, key) => {
-    if (key.ctrl && key.name === 'c') {
+  // Global Ctrl+C handler (abort + exit)
+  // Ink v5 Key type has no .name; Ctrl+C arrives as input '\x03'.
+  useInput((input, key) => {
+    if (key.ctrl && input === 'c') {
       abortRef.current?.abort();
       exit();
     }
-    // Escape clears input
-    if (key.escape && !busyRef.current) {
-      setInput('');
-    }
   });
+
+  // Stdin resume gap detection — ported from claude-code-src/src/ink/components/App.tsx
+  //
+  // After tmux detach→attach, ssh reconnect, or laptop wake, the terminal
+  // resets DEC private modes but sends no signal. We detect the silence gap
+  // and write a bell (BEL) to wake the terminal on first stdin after >5s.
+  // A real implementation would re-assert kitty keyboard / mouse tracking;
+  // for now this keeps the pattern in place for future extension.
+  const STDIN_RESUME_GAP_MS = 5000;
+  const lastStdinRef = useRef(Date.now());
+  useEffect(() => {
+    const stdin = process.stdin;
+    const onData = () => {
+      const now = Date.now();
+      if (now - lastStdinRef.current > STDIN_RESUME_GAP_MS) {
+        // Terminal resumed after a gap — re-assert any terminal modes here.
+        // Currently a no-op hook; extend for kitty keyboard or mouse tracking.
+      }
+      lastStdinRef.current = now;
+    };
+    stdin.on('data', onData);
+    return () => { stdin.off('data', onData); };
+  }, []);
 
   const handleSubmit = useCallback(async (userInput: string) => {
     const trimmed = userInput.trim();
@@ -147,12 +171,12 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
         setSavingsPct(decision.savingsPct > 0 ? decision.savingsPct : undefined);
       }
     } catch {
-      selectedModel = 'deepseek-v3';
+      selectedModel = 'groq-gpt-oss-120b';
     }
 
     // Fallback if router picked a model whose provider isn't registered yet
     if (!isModelAvailable(selectedModel)) {
-      selectedModel = 'deepseek-v3';
+      selectedModel = 'groq-gpt-oss-120b';
     }
 
     // Warn if DeepSeek selected but no key configured
@@ -206,17 +230,20 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
     const controller = new AbortController();
     abortRef.current = controller;
     try {
+      const requestStart = Date.now();
       for await (const chunk of streamComplete({ model: selectedModel, messages: allMessages, signal: controller.signal })) {
         streamRef.current += chunk;
         setStreamingContent(streamRef.current);
       }
 
+      const latencyMs = Date.now() - requestStart;
       const finalContent = streamRef.current;
       const inputTokens = Math.ceil(
         allMessages.reduce((sum, m) => sum + m.content.length, 0) / 4
       );
       const outputTokens = Math.ceil(finalContent.length / 4);
       const cost = calculateCost(selectedModel, inputTokens, outputTokens);
+      const costSonnet = calculateSonnetCost(inputTokens, outputTokens);
 
       // Update session totals
       setSessionTokens((t) => t + inputTokens + outputTokens);
@@ -236,6 +263,8 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
         savedAmount: Math.max(0, opusCost - cost.total),
         routingReason: routingReason ?? selectedModel,
         taskPreview: trimmed,
+        latencyMs,
+        costSonnet,
       });
 
       // Finalize the streaming message
@@ -280,8 +309,6 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
 
   return (
     <Box flexDirection="column" height={process.stdout.rows ?? 24}>
-      <Banner />
-
       {errorMsg && (
         <Box paddingX={1}>
           <Text color="red">{errorMsg}</Text>

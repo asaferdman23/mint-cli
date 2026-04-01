@@ -8,21 +8,10 @@ import { showUsage } from './commands/usage.js';
 
 const program = new Command();
 
-// ASCII Art Banner
-const banner = `
-  ███╗   ███╗██╗███╗   ██╗████████╗
-  ████╗ ████║██║████╗  ██║╚══██╔══╝
-  ██╔████╔██║██║██╔██╗ ██║   ██║
-  ██║╚██╔╝██║██║██║╚██╗██║   ██║
-  ██║ ╚═╝ ██║██║██║ ╚████║   ██║
-  ╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝   ╚═╝
-`;
-
 program
   .name('mint')
   .description('AI coding CLI with smart model routing')
-  .version('0.1.0')
-  .addHelpText('beforeAll', chalk.cyan(banner));
+  .version('0.1.0');
 
 // Main command - run a prompt
 program
@@ -32,9 +21,18 @@ program
   .option('--no-context', 'Disable automatic context gathering')
   .option('-v, --verbose', 'Show detailed output including tokens and cost')
   .action(async (promptParts: string[], options) => {
-    const prompt = promptParts.join(' ');
+    const prompt = promptParts.join(' ').trim();
     if (!prompt) {
-      program.help();
+      // No args → open TUI directly
+      const { render } = await import('ink');
+      const React = await import('react');
+      const { App } = await import('../tui/App.js');
+      const app = render(
+        React.default.createElement(App, {
+          modelPreference: options.model,
+        })
+      );
+      await app.waitUntilExit();
       return;
     }
     await runPrompt(prompt, options);
