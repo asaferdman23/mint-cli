@@ -33,7 +33,7 @@ export type VimInputHandle = {
   handleKey: (input: string, key: InkKey) => void
 }
 
-/** Subset of Ink's Key type we care about. */
+/** Subset of Ink's Key type we care about (Ink v5 booleans). */
 export type InkKey = {
   escape?: boolean
   backspace?: boolean
@@ -42,7 +42,13 @@ export type InkKey = {
   ctrl?: boolean
   meta?: boolean
   shift?: boolean
-  name?: string
+  tab?: boolean
+  upArrow?: boolean
+  downArrow?: boolean
+  leftArrow?: boolean
+  rightArrow?: boolean
+  pageUp?: boolean
+  pageDown?: boolean
 }
 
 export type UseVimInputOptions = {
@@ -80,7 +86,9 @@ export function useVimInput({
     (input: string, key: InkKey) => {
       const currentVim = vimRef.current
       const text = textRef.current
-      const offset = Math.min(offsetRef.current, Math.max(0, text.length - 1))
+      // INSERT: cursor can be at text.length (appending). NORMAL: cursor sits ON a char.
+      const maxOffset = currentVim.mode === 'INSERT' ? text.length : Math.max(0, text.length - 1)
+      const offset = Math.min(offsetRef.current, maxOffset)
 
       // ── INSERT mode ─────────────────────────────────────────────────────────
       if (currentVim.mode === 'INSERT') {
@@ -93,7 +101,7 @@ export function useVimInput({
         }
 
         // Ctrl+C handled by App; we just return
-        if (key.ctrl && key.name === 'c') return
+        if (key.ctrl) return
 
         // Enter / submit
         if (key.return) {
@@ -111,8 +119,20 @@ export function useVimInput({
           return
         }
 
-        // Regular character input
-        if (input && !key.ctrl && !key.meta) {
+        // Arrow keys → cursor movement (no text change)
+        if (key.leftArrow) {
+          setCursorOffset(Math.max(0, offset - 1))
+          return
+        }
+        if (key.rightArrow) {
+          setCursorOffset(Math.min(text.length, offset + 1))
+          return
+        }
+        // Up/down/tab/page keys — ignore in single-line input
+        if (key.upArrow || key.downArrow || key.tab || key.pageUp || key.pageDown) return
+
+        // Regular character input — only printable characters
+        if (input && !key.meta && input.charCodeAt(0) >= 32) {
           const newText = text.slice(0, offset) + input + text.slice(offset)
           onChange(newText)
           setCursorOffset(offset + input.length)
@@ -127,12 +147,12 @@ export function useVimInput({
         return
       }
 
-      // Map Ink key names to vim input strings
+      // Map Ink v5 key booleans to vim input strings
       let vimInput = input
-      if (key.name === 'up') vimInput = 'k'
-      else if (key.name === 'down') vimInput = 'j'
-      else if (key.name === 'left') vimInput = 'h'
-      else if (key.name === 'right') vimInput = 'l'
+      if (key.upArrow) vimInput = 'k'
+      else if (key.downArrow) vimInput = 'j'
+      else if (key.leftArrow) vimInput = 'h'
+      else if (key.rightArrow) vimInput = 'l'
       else if (key.backspace || key.delete) vimInput = 'h'
 
       if (!vimInput) return

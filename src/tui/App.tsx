@@ -4,18 +4,17 @@ import { initChalkLevel } from './utils/colorize.js';
 import { MessageList, ChatMessage } from './components/MessageList.js';
 import { InputBox } from './components/InputBox.js';
 import { StatusBar } from './components/StatusBar.js';
-import { RightPanel } from './components/RightPanel.js';
+import { WelcomeScreen } from './components/WelcomeScreen.js';
 import { useAgentEvents } from './hooks/useAgentEvents.js';
-import { streamComplete, isModelAvailable } from '../providers/index.js';
-import { selectModel, selectModelWithReason, calculateCost } from '../providers/router.js';
+import { calculateCost } from '../providers/router.js';
 import { getTier } from '../providers/tiers.js';
-import type { ModelId, Message } from '../providers/types.js';
+import type { ModelId } from '../providers/types.js';
 import { MODELS } from '../providers/types.js';
 import { config } from '../utils/config.js';
 import { createUsageTracker, calculateOpusCost, calculateSonnetCost } from '../usage/tracker.js';
+import { runPipeline, type PipelineChunk } from '../pipeline/index.js';
+import type { PipelinePhaseData, ContextChip } from './types.js';
 
-// Initialize chalk color depth once at startup.
-// Boosts to truecolor in VS Code terminals; clamps to 256-color in tmux.
 initChalkLevel();
 
 interface AppProps {
@@ -23,9 +22,6 @@ interface AppProps {
   modelPreference?: string;
   agentMode?: 'yolo' | 'plan' | 'diff' | 'auto';
 }
-
-const SYSTEM_PROMPT = `You are Mint, a cost-aware AI coding assistant. Be concise and precise.
-Prefer direct answers. Show code changes clearly with diffs.`;
 
 let messageIdCounter = 0;
 function nextId(): string {
@@ -44,23 +40,25 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
   const [sessionCost, setSessionCost] = useState(0);
   const [streamingContent, setStreamingContent] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [routingReason, setRoutingReason] = useState<string | undefined>(undefined);
   const [savingsPct, setSavingsPct] = useState<number | undefined>(undefined);
+  const [contextChips, setContextChips] = useState<ContextChip[] | null>(null);
 
-  const { panelState, onCostUpdate } = useAgentEvents();
+  const { panelState, pipelinePhases, onCostUpdate, onPhaseStart, onPhaseDone, resetPhases } = useAgentEvents();
 
   const streamRef = useRef('');
   const busyRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const trackerRef = useRef(createUsageTracker(Date.now().toString(36), 'chat'));
 
-  // Abort in-flight stream on unmount
+  // Load context chips from .mint/context.json on mount
+  useEffect(() => {
+    loadContextChips().then(setContextChips).catch(() => {});
+  }, []);
+
   useEffect(() => {
     return () => { abortRef.current?.abort(); };
   }, []);
 
-  // Global Ctrl+C handler (abort + exit)
-  // Ink v5 Key type has no .name; Ctrl+C arrives as input '\x03'.
   useInput((input, key) => {
     if (key.ctrl && input === 'c') {
       abortRef.current?.abort();
@@ -68,46 +66,29 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
     }
   });
 
-  // Stdin resume gap detection — ported from claude-code-src/src/ink/components/App.tsx
-  //
-  // After tmux detach→attach, ssh reconnect, or laptop wake, the terminal
-  // resets DEC private modes but sends no signal. We detect the silence gap
-  // and write a bell (BEL) to wake the terminal on first stdin after >5s.
-  // A real implementation would re-assert kitty keyboard / mouse tracking;
-  // for now this keeps the pattern in place for future extension.
-  const STDIN_RESUME_GAP_MS = 5000;
-  const lastStdinRef = useRef(Date.now());
-  useEffect(() => {
-    const stdin = process.stdin;
-    const onData = () => {
-      const now = Date.now();
-      if (now - lastStdinRef.current > STDIN_RESUME_GAP_MS) {
-        // Terminal resumed after a gap — re-assert any terminal modes here.
-        // Currently a no-op hook; extend for kitty keyboard or mouse tracking.
-      }
-      lastStdinRef.current = now;
-    };
-    stdin.on('data', onData);
-    return () => { stdin.off('data', onData); };
-  }, []);
-
   const handleSubmit = useCallback(async (userInput: string) => {
     const trimmed = userInput.trim();
     if (!trimmed || busyRef.current) return;
 
     // Handle slash commands
     if (trimmed === '/help') {
-      const helpId = nextId();
       setMessages((prev) => [
         ...prev,
         {
-          id: helpId,
+          id: nextId(),
           role: 'assistant',
           content: [
-            'Available commands:',
-            '  /help    — show this help',
-            '  /clear   — clear chat history',
-            '  /model   — show current model',
+            'Commands:',
+            '  /help    — this help',
+            '  /clear   — clear chat',
+            '  /model   — current model',
+            '  /models  — list all models',
+            '  /agent   — agent mode',
+            '  /usage   — session stats',
+            '',
+            'Keyboard:',
+            '  Esc      — normal mode',
+            '  i        — insert mode',
             '  Ctrl+C   — exit',
           ].join('\n'),
         },
@@ -121,27 +102,21 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
       setInput('');
       setSessionTokens(0);
       setSessionCost(0);
+      setSavingsPct(undefined);
+      resetPhases();
       return;
     }
 
     if (trimmed === '/model') {
       setMessages((prev) => [
         ...prev,
-        {
-          id: nextId(),
-          role: 'assistant',
-          content: `Current model: ${currentModel ?? 'auto (will be selected on next message)'}`,
-        },
+        { id: nextId(), role: 'assistant', content: `Current model: ${currentModel ?? 'auto'}` },
       ]);
       setInput('');
       return;
     }
 
-    // Check for DeepSeek API key if model would use DeepSeek
-    const providers = config.get('providers') as Record<string, string> | undefined;
-    const hasDeepseekKey = providers?.deepseek;
-
-    // 1. Add user message
+    // Add user message
     const userMsgId = nextId();
     setMessages((prev) => [
       ...prev,
@@ -152,139 +127,143 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
     setIsBusy(true);
     setIsRouting(true);
     setErrorMsg(null);
+    resetPhases();
 
-    // 2. Select model
-    let selectedModel: ModelId;
-    try {
-      if (modelPreference && modelPreference !== 'auto') {
-        // Map shorthand to ModelId
-        const modelMap: Record<string, ModelId> = {
-          deepseek: 'deepseek-v3',
-          sonnet: 'claude-sonnet-4',
-          opus: 'claude-opus-4',
-        };
-        selectedModel = (modelMap[modelPreference] ?? modelPreference) as ModelId;
-      } else {
-        const decision = selectModelWithReason(trimmed);
-        selectedModel = decision.model;
-        setRoutingReason(decision.reason);
-        setSavingsPct(decision.savingsPct > 0 ? decision.savingsPct : undefined);
-      }
-    } catch {
-      selectedModel = 'groq-gpt-oss-120b';
-    }
+    // Resolve model
+    const modelMap: Record<string, ModelId> = {
+      deepseek: 'deepseek-v3', sonnet: 'claude-sonnet-4', opus: 'claude-opus-4',
+    };
+    const preferredModel = (modelPreference && modelPreference !== 'auto')
+      ? (modelMap[modelPreference] ?? modelPreference) as ModelId
+      : undefined;
 
-    // Fallback if router picked a model whose provider isn't registered yet
-    if (!isModelAvailable(selectedModel)) {
-      selectedModel = 'groq-gpt-oss-120b';
-    }
-
-    // Warn if DeepSeek selected but no key configured
-    if (selectedModel.startsWith('deepseek') && !hasDeepseekKey) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: nextId(),
-          role: 'assistant',
-          content: `No DeepSeek API key configured. Run:\n  axon config:set providers.deepseek YOUR_KEY\n\nOr use: axon chat -m sonnet`,
-        },
-      ]);
-      busyRef.current = false;
-      setIsBusy(false);
-      setIsRouting(false);
-      return;
-    }
-
-    setCurrentModel(selectedModel);
-    setIsRouting(false);
-
-    // 3. Build messages array
-    const historyMessages: Message[] = messages.map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
-
-    const allMessages: Message[] = [
-      { role: 'system', content: SYSTEM_PROMPT },
-      ...historyMessages,
-      { role: 'user', content: trimmed },
-    ];
-
-    // 4. Create streaming placeholder message
+    // Create streaming placeholder with phase tracking
     const assistantMsgId = nextId();
     setMessages((prev) => [
       ...prev,
-      {
-        id: assistantMsgId,
-        role: 'assistant',
-        content: '',
-        model: selectedModel,
-        isStreaming: true,
-      },
+      { id: assistantMsgId, role: 'assistant', content: '', isStreaming: true, phases: [] },
     ]);
 
     streamRef.current = '';
     setStreamingContent('');
 
-    // 5. Stream
     const controller = new AbortController();
     abortRef.current = controller;
+
+    const history = messages.map((m) => ({
+      role: m.role as 'user' | 'assistant',
+      content: m.content,
+    }));
+
     try {
-      const requestStart = Date.now();
-      for await (const chunk of streamComplete({ model: selectedModel, messages: allMessages, signal: controller.signal })) {
-        streamRef.current += chunk;
-        setStreamingContent(streamRef.current);
+      for await (const chunk of runPipeline(trimmed, {
+        cwd: process.cwd(),
+        model: preferredModel,
+        signal: controller.signal,
+        history,
+      })) {
+        switch (chunk.type) {
+          case 'search':
+            setIsRouting(false);
+            if (chunk.filesFound && chunk.filesFound.length > 0) {
+              onPhaseStart('SCOUT');
+              onPhaseDone('SCOUT', {
+                summary: `${chunk.filesFound.length} files found`,
+              });
+            }
+            break;
+
+          case 'context':
+            if (chunk.contextTokens) {
+              onPhaseStart('ARCHITECT');
+            }
+            break;
+
+          case 'phase-start':
+            if (chunk.phase) {
+              onPhaseStart(chunk.phase, chunk.phaseModel);
+            }
+            break;
+
+          case 'phase-done':
+            if (chunk.phase) {
+              onPhaseDone(chunk.phase, {
+                duration: chunk.phaseDuration,
+                cost: chunk.phaseCost,
+                summary: chunk.phaseSummary,
+              });
+            }
+            break;
+
+          case 'text':
+            if (chunk.text) {
+              streamRef.current += chunk.text;
+              setStreamingContent(streamRef.current);
+            }
+            break;
+
+          case 'done': {
+            const r = chunk.result!;
+            setCurrentModel(r.model);
+
+            const cost = calculateCost(r.model, r.inputTokens, r.outputTokens);
+            setSessionTokens((t) => t + r.inputTokens + r.outputTokens);
+            setSessionCost((c) => c + cost.total);
+            onCostUpdate(cost.total, r.inputTokens + r.outputTokens);
+
+            const savPct = r.opusCost > 0
+              ? Math.round((1 - r.cost / r.opusCost) * 100)
+              : 0;
+            if (savPct > 0) setSavingsPct(savPct);
+
+            // Complete any remaining active phases
+            onPhaseDone('BUILDER', {
+              duration: r.duration,
+              cost: r.cost,
+              summary: `${r.model} · ${r.filesSearched.length} files`,
+            });
+
+            trackerRef.current.track({
+              model: r.model,
+              provider: MODELS[r.model]?.provider ?? 'unknown',
+              tier: getTier(r.model),
+              inputTokens: r.inputTokens,
+              outputTokens: r.outputTokens,
+              cost: cost.total,
+              opusCost: r.opusCost,
+              savedAmount: Math.max(0, r.opusCost - cost.total),
+              routingReason: `pipeline → ${r.model}`,
+              taskPreview: trimmed,
+              latencyMs: r.duration,
+              costSonnet: calculateSonnetCost(r.inputTokens, r.outputTokens),
+            });
+
+            // Finalize message with phases
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantMsgId
+                  ? {
+                      ...m,
+                      content: streamRef.current,
+                      cost: cost.total,
+                      model: r.model,
+                      isStreaming: false,
+                      phases: [...pipelinePhases],
+                    }
+                  : m
+              )
+            );
+            setStreamingContent('');
+            break;
+          }
+
+          case 'error':
+            throw new Error(chunk.error);
+        }
       }
-
-      const latencyMs = Date.now() - requestStart;
-      const finalContent = streamRef.current;
-      const inputTokens = Math.ceil(
-        allMessages.reduce((sum, m) => sum + m.content.length, 0) / 4
-      );
-      const outputTokens = Math.ceil(finalContent.length / 4);
-      const cost = calculateCost(selectedModel, inputTokens, outputTokens);
-      const costSonnet = calculateSonnetCost(inputTokens, outputTokens);
-
-      // Update session totals
-      setSessionTokens((t) => t + inputTokens + outputTokens);
-      setSessionCost((c) => c + cost.total);
-      onCostUpdate(cost.total, inputTokens + outputTokens);
-
-      // Track usage for savings dashboard
-      const opusCost = calculateOpusCost(inputTokens, outputTokens);
-      trackerRef.current.track({
-        model: selectedModel,
-        provider: MODELS[selectedModel]?.provider ?? 'unknown',
-        tier: getTier(selectedModel),
-        inputTokens,
-        outputTokens,
-        cost: cost.total,
-        opusCost,
-        savedAmount: Math.max(0, opusCost - cost.total),
-        routingReason: routingReason ?? selectedModel,
-        taskPreview: trimmed,
-        latencyMs,
-        costSonnet,
-      });
-
-      // Finalize the streaming message
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMsgId
-            ? {
-                ...m,
-                content: finalContent,
-                cost: cost.total,
-                isStreaming: false,
-              }
-            : m
-        )
-      );
-      setStreamingContent('');
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       setErrorMsg(`Error: ${errMsg}`);
-      // Remove the empty streaming placeholder
       setMessages((prev) => prev.filter((m) => m.id !== assistantMsgId));
     } finally {
       busyRef.current = false;
@@ -292,20 +271,17 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
       setIsRouting(false);
       streamRef.current = '';
     }
-  }, [messages, currentModel, modelPreference]);
+  }, [messages, currentModel, modelPreference, pipelinePhases]);
 
   // Auto-submit initialPrompt on mount
   useEffect(() => {
     if (initialPrompt?.trim()) {
-      // Small delay so the UI renders first
-      const timer = setTimeout(() => {
-        handleSubmit(initialPrompt);
-      }, 100);
+      const timer = setTimeout(() => handleSubmit(initialPrompt), 100);
       return () => clearTimeout(timer);
     }
-  }, []); // intentionally run only once on mount
+  }, []);
 
-  const terminalWidth = process.stdout.columns ?? 80;
+  const showWelcome = messages.length === 0 && !isBusy && !isRouting;
 
   return (
     <Box flexDirection="column" height={process.stdout.rows ?? 24}>
@@ -315,40 +291,49 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
         </Box>
       )}
 
-      {/* Main split-pane */}
-      <Box flexDirection="row" flexGrow={1}>
-        {/* Left: chat */}
-        <Box flexDirection="column" flexGrow={1}>
-          <MessageList messages={messages} streamingContent={streamingContent} />
+      {showWelcome ? (
+        <WelcomeScreen />
+      ) : (
+        <MessageList messages={messages} streamingContent={streamingContent} />
+      )}
 
-          <InputBox
-            value={input}
-            onChange={setInput}
-            onSubmit={handleSubmit}
-            isBusy={isBusy}
-            isRouting={isRouting}
-          />
-        </Box>
-
-        {/* Right: panel — always visible when terminal is wide enough */}
-        {terminalWidth >= 80 && (
-          <RightPanel
-            state={panelState}
-            currentModel={currentModel}
-            mode={agentMode ?? 'auto'}
-            width={26}
-            savingsPct={savingsPct}
-          />
-        )}
-      </Box>
+      <InputBox
+        value={input}
+        onChange={setInput}
+        onSubmit={handleSubmit}
+        isBusy={isBusy}
+        isRouting={isRouting}
+        contextChips={contextChips}
+      />
 
       <StatusBar
         currentModel={currentModel}
         sessionTokens={sessionTokens}
         sessionCost={sessionCost}
-        messageCount={messages.length}
-        routingReason={routingReason}
+        savingsPct={savingsPct}
+        agentMode={agentMode ?? 'auto'}
       />
     </Box>
   );
+}
+
+/** Load context chips from .mint/context.json if it exists. */
+async function loadContextChips(): Promise<ContextChip[] | null> {
+  try {
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const indexPath = join(process.cwd(), '.mint', 'context.json');
+    const raw = readFileSync(indexPath, 'utf-8');
+    const index = JSON.parse(raw);
+
+    const chips: ContextChip[] = [];
+    if (index.language) chips.push({ label: index.language, color: 'green' });
+    if (index.totalFiles) chips.push({ label: `${index.totalFiles} files`, color: 'blue' });
+    if (index.framework) chips.push({ label: index.framework, color: 'yellow' });
+    chips.push({ label: 'indexed', color: 'cyan' });
+
+    return chips.length > 0 ? chips : null;
+  } catch {
+    return null;
+  }
 }
