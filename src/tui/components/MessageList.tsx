@@ -1,5 +1,8 @@
+// src/tui/components/MessageList.tsx
 import React from 'react';
 import { Box, Text } from 'ink';
+import { PipelinePhase } from './PipelinePhase.js';
+import type { PipelinePhaseData } from '../types.js';
 
 export interface ChatMessage {
   id: string;
@@ -8,15 +11,12 @@ export interface ChatMessage {
   model?: string;
   cost?: number;
   isStreaming?: boolean;
+  phases?: PipelinePhaseData[];
 }
 
 interface MessageListProps {
   messages: ChatMessage[];
   streamingContent: string;
-}
-
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
 }
 
 export function MessageList({ messages, streamingContent }: MessageListProps): React.ReactElement {
@@ -36,9 +36,9 @@ export function MessageList({ messages, streamingContent }: MessageListProps): R
       )}
       {allMessages.map((msg, idx) => (
         <Box key={msg.id} flexDirection="column" marginBottom={1}>
-          {/* Separator between turns (not before first message) */}
+          {/* Separator between turns */}
           {idx > 0 && (
-            <Text dimColor>{'─'.repeat(40)}</Text>
+            <Text dimColor>{'─'.repeat(Math.min(60, process.stdout.columns ?? 60))}</Text>
           )}
 
           {msg.role === 'user' ? (
@@ -48,19 +48,27 @@ export function MessageList({ messages, streamingContent }: MessageListProps): R
             </Box>
           ) : (
             <Box flexDirection="column">
-              <Text color="green" bold>
-                {'Axon'}
-                {msg.model ? <Text dimColor> [{msg.model}]</Text> : null}
-              </Text>
-              <Text wrap="wrap">{msg.content}</Text>
-              {msg.isStreaming && (
-                <Text color="cyan">{'▋'}</Text>
+              {/* Pipeline phases (if any) */}
+              {msg.phases && msg.phases.length > 0 && (
+                <Box flexDirection="column" marginBottom={1}>
+                  {msg.phases.map((phase) => (
+                    <PipelinePhase key={phase.name} phase={phase} />
+                  ))}
+                </Box>
               )}
-              {!msg.isStreaming && msg.model && (
-                <Text dimColor>
-                  {`  ~${estimateTokens(msg.content)} tokens`}
-                  {msg.cost !== undefined ? `  ${formatCostDisplay(msg.cost)}` : ''}
-                </Text>
+
+              {/* Assistant response */}
+              {(msg.content || msg.isStreaming) && (
+                <Box flexDirection="column">
+                  <Text color="green" bold>
+                    {'Mint'}
+                    {msg.model ? <Text dimColor> [{msg.model}]</Text> : null}
+                  </Text>
+                  <Text wrap="wrap">{msg.content}</Text>
+                  {msg.isStreaming && !msg.phases && (
+                    <Text color="cyan">▋</Text>
+                  )}
+                </Box>
               )}
             </Box>
           )}
@@ -68,11 +76,4 @@ export function MessageList({ messages, streamingContent }: MessageListProps): R
       ))}
     </Box>
   );
-}
-
-function formatCostDisplay(cost: number): string {
-  if (cost < 0.01) {
-    return `${(cost * 100).toFixed(3)}¢`;
-  }
-  return `$${cost.toFixed(4)}`;
 }

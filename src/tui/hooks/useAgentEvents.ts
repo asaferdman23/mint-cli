@@ -1,5 +1,6 @@
 // src/tui/hooks/useAgentEvents.ts
 import { useState, useCallback } from 'react';
+import type { PipelinePhaseData, PhaseName } from '../types.js';
 
 export type FileStatus = 'READ' | 'EDIT' | 'NEW' | 'BASH';
 
@@ -31,9 +32,10 @@ export function useAgentEvents() {
     iterationCount: 0,
   });
 
+  const [pipelinePhases, setPipelinePhases] = useState<PipelinePhaseData[]>([]);
+
   const onToolCall = useCallback((toolName: string, toolInput: Record<string, unknown>) => {
     setPanelState(prev => {
-      // Track files
       const newFiles = [...prev.files];
       const fileStatus = inferFileStatus(toolName);
       if (fileStatus && toolInput.path) {
@@ -46,7 +48,6 @@ export function useAgentEvents() {
         }
       }
 
-      // Track tool calls
       const newToolCalls = [...prev.toolCalls];
       const existingTool = newToolCalls.find(t => t.name === toolName);
       if (existingTool) {
@@ -72,6 +73,26 @@ export function useAgentEvents() {
     }));
   }, []);
 
+  const onPhaseStart = useCallback((name: PhaseName, model?: string) => {
+    setPipelinePhases(prev => [
+      ...prev.map(p => p.status === 'active' ? { ...p, status: 'done' as const } : p),
+      { name, status: 'active' as const, model },
+    ]);
+  }, []);
+
+  const onPhaseDone = useCallback((name: PhaseName, result: { duration?: number; cost?: number; summary?: string }) => {
+    setPipelinePhases(prev =>
+      prev.map(p => p.name === name
+        ? { ...p, status: 'done' as const, duration: result.duration, cost: result.cost, summary: result.summary }
+        : p
+      )
+    );
+  }, []);
+
+  const resetPhases = useCallback(() => {
+    setPipelinePhases([]);
+  }, []);
+
   const reset = useCallback(() => {
     setPanelState({
       files: [],
@@ -80,9 +101,10 @@ export function useAgentEvents() {
       totalTokens: 0,
       iterationCount: 0,
     });
+    setPipelinePhases([]);
   }, []);
 
-  return { panelState, onToolCall, onCostUpdate, reset };
+  return { panelState, pipelinePhases, onToolCall, onCostUpdate, onPhaseStart, onPhaseDone, resetPhases, reset };
 }
 
 function inferFileStatus(toolName: string): FileStatus | null {
@@ -90,7 +112,6 @@ function inferFileStatus(toolName: string): FileStatus | null {
     case 'read_file':  return 'READ';
     case 'write_file': return 'NEW';
     case 'edit_file':  return 'EDIT';
-    case 'bash':       return null;  // bash tracked as tool, not file
     default:           return null;
   }
 }
