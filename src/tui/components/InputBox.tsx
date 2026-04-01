@@ -53,6 +53,7 @@ export function InputBox({
   const vim = useVimInput({
     value,
     onChange,
+    startInNormal: true,
     onSubmit: (val: string) => {
       // If autocomplete is showing and user presses Enter, select the command
       if (hasAutocomplete) {
