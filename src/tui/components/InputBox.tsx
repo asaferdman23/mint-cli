@@ -153,23 +153,19 @@ export function InputBox({
         borderColor={borderColor}
         paddingX={1}
         flexDirection="row"
-        justifyContent="space-between"
-        height={heightVal + 2}
       >
         {/* Mode indicator */}
         <Text color={promptColor} bold>{isNormal ? '[N] ' : '[I] '}</Text>
 
-        <Box flexDirection="column" flexGrow={1}>
+        <Box flexGrow={1}>
           {isNormal ? (
             value.length === 0
-              ? <Text dimColor>— NORMAL —</Text>
+              ? <Text dimColor>— NORMAL — press i to type</Text>
               : <TextWithCursor text={value} offset={vim.cursorOffset} />
           ) : (
-            <>
-              <Text>{value}</Text>
-              {value.length === 0 && <Text dimColor>Ask anything… or try "fix the auth bug"</Text>}
-              {value.length > 0 && <Text inverse> </Text>}
-            </>
+            value.length === 0
+              ? <Text dimColor>Ask anything… or try "fix the auth bug"</Text>
+              : <Text>{value}<Text inverse> </Text></Text>
           )}
         </Box>
 
