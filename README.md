@@ -1,164 +1,103 @@
-# Axon CLI
+# mint
 
-AI coding CLI with smart model routing and cost optimization.
+Zero-setup AI coding CLI. Type `mint`, start coding.
 
-```
-   █████╗ ██╗  ██╗ ██████╗ ███╗   ██╗
-  ██╔══██╗╚██╗██╔╝██╔═══██╗████╗  ██║
-  ███████║ ╚███╔╝ ██║   ██║██╔██╗ ██║
-  ██╔══██║ ██╔██╗ ██║   ██║██║╚██╗██║
-  ██║  ██║██╔╝ ██╗╚██████╔╝██║ ╚████║
-  ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝
-```
+No API keys. No accounts. No config.
 
-## Features
+---
 
-- 🚀 **Smart Model Routing** - Automatically picks the best model for your task
-- 💰 **Cost Optimization** - Uses cheaper models (DeepSeek, Qwen) when quality allows
-- 📊 **Cost Visibility** - See exactly what you're spending per request
-- 🔄 **Compare Mode** - Run same prompt on multiple models and compare
-- 📁 **Context Aware** - Automatically gathers relevant code context
-- 🔐 **Enterprise Ready** - SSO, usage tracking, team management
-
-## Installation
+## Install
 
 ```bash
-npm install -g axon-cli
+npm install -g usemint
 ```
 
-## Quick Start
+## Use
 
 ```bash
-# Login (for teams with SSO)
-axon login
-
-# Or use BYOK (Bring Your Own Keys)
-axon config:set providers.deepseek sk-xxx
-axon config:set providers.anthropic sk-xxx
-
-# Run a prompt
-axon "refactor the auth module to use JWT"
-
-# Explicitly choose a model
-axon -m deepseek "write tests for utils.ts"
-axon -m sonnet "explain this codebase architecture"
-
-# Compare models
-axon compare "implement a rate limiter" --models=deepseek,sonnet
-
-# See usage stats
-axon usage
+mint
 ```
+
+That's it. The TUI opens immediately.
+
+---
+
+## How it works
+
+Every message goes to `api.usemint.dev` — a gateway that holds all provider keys and picks the cheapest model capable of handling your task.
+
+```
+mint CLI  →  api.usemint.dev  →  Groq / DeepSeek / Grok
+```
+
+**3-tier routing — automatic, invisible:**
+
+| Task | Examples | Model | Cost |
+|------|----------|-------|------|
+| Simple | explain, Q&A, "what is" | Groq llama-3.1-8b | $0.05/$0.08 per 1M |
+| Medium | write, fix, refactor, review | DeepSeek v3 | $0.27/$1.10 per 1M |
+| Complex | architect, multi-file, agents | Grok-3-mini-fast | $0.60/$4.00 per 1M |
+| Fallback | any provider failure | Groq llama-3.3-70b | $0.59/$0.79 per 1M |
+
+Context over 20K tokens automatically bumps to the next tier.
+
+---
+
+## TUI
+
+The interface is minimal by design:
+
+- **Vim mode** — `i` for INSERT, `Esc` for NORMAL. Full motion support (w, b, e, f, t, d, c, y, p, and more)
+- **Status bar** — shows current model, token count, and session cost
+- **Slash commands** — `/help`, `/clear`, `/model`
+- **Ctrl+C** — exit
+
+---
+
+## Observability (for us, not you)
+
+Every request is logged server-side to Postgres and Axiom:
+
+- Which model ran, why, how long it took
+- Token counts and actual cost vs. what Claude Sonnet would have cost
+- Full session replay via admin API
+
+You don't need to configure anything. This is how we tune the routing.
+
+---
 
 ## Commands
 
-### Main Command
-
 ```bash
-axon [prompt] [options]
+mint                     # open TUI (default)
+mint "fix the auth bug"  # one-shot prompt
+mint usage               # show savings dashboard
+mint savings             # total $ saved vs Claude Opus
+mint models              # list available models
 ```
 
-| Option | Description |
-|--------|-------------|
-| `-m, --model <model>` | Model to use: auto (default), deepseek, sonnet, opus |
-| `-c, --compare` | Compare results across models |
-| `--no-context` | Disable automatic context gathering |
-| `-v, --verbose` | Show detailed output with costs |
+---
 
-### Auth
+## Requirements
 
-```bash
-axon login    # Opens browser for SSO
-axon logout   # Clear credentials
-axon whoami   # Show current user
-```
+- Node.js 20+
+- Internet connection
 
-### Config
-
-```bash
-axon config                           # Show all config
-axon config:set defaultModel sonnet   # Set default model
-axon config:set providers.deepseek sk-xxx  # Set provider key
-```
-
-### Compare
-
-```bash
-axon compare "your prompt" --models=deepseek,sonnet,opus
-```
-
-### Usage
-
-```bash
-axon usage          # Last 7 days
-axon usage -d 30    # Last 30 days
-```
-
-## Model Routing
-
-Axon automatically selects the optimal model based on:
-
-| Task Type | Detected By | Default Model |
-|-----------|------------|---------------|
-| Code writing | "write", "create", "implement" | DeepSeek V3 |
-| Debugging | "fix", "bug", "error" | DeepSeek V3 |
-| Refactoring | "refactor", "improve" | DeepSeek V3 |
-| Explanation | "explain", "why" | Sonnet 4 |
-| Complex tasks | Long context, multi-file | Opus 4 (fallback) |
-
-## Cost Comparison
-
-| Model | Input ($/1M) | Output ($/1M) | Quality |
-|-------|-------------|---------------|---------|
-| DeepSeek V3 | $0.27 | $1.10 | ★★★★☆ |
-| Qwen 2.5 Coder | $0.40 | $1.20 | ★★★★☆ |
-| Claude Sonnet 4 | $3.00 | $15.00 | ★★★★★ |
-| Claude Opus 4 | $15.00 | $75.00 | ★★★★★ |
-
-Using DeepSeek instead of Opus can save **50-98%** on most coding tasks.
-
-## Configuration
-
-Config is stored in `~/.config/axon-cli/config.json`
-
-```json
-{
-  "defaultModel": "auto",
-  "autoContext": true,
-  "maxContextTokens": 100000,
-  "providers": {
-    "deepseek": "sk-xxx",
-    "anthropic": "sk-xxx"
-  }
-}
-```
+---
 
 ## Development
 
 ```bash
-# Clone and install
-git clone https://github.com/yourname/axon-cli
-cd axon-cli
+git clone https://github.com/asaferdman23/mint-cli
+cd mint-cli
 npm install
-
-# Build
 npm run build
-
-# Run locally
-node dist/cli/index.js "test prompt"
-
-# Watch mode
-npm run dev
+node dist/cli/index.js
 ```
 
-## Roadmap
+Gateway lives in `packages/gateway/` — deployed to Railway.
 
-- [ ] Agents and sub-agents orchestration
-- [ ] Prompt caching
-- [ ] Context compression
-- [ ] Team dashboard
-- [ ] VS Code extension
-- [ ] Local model support (Ollama)
+---
 
 ## License
 
