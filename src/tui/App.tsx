@@ -59,6 +59,18 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
     return () => { abortRef.current?.abort(); };
   }, []);
 
+  // Handle terminal resize — clear screen to prevent ghost artifacts
+  const [termSize, setTermSize] = useState({ cols: process.stdout.columns ?? 80, rows: process.stdout.rows ?? 24 });
+  useEffect(() => {
+    const onResize = () => {
+      // Clear the entire screen and move cursor to top-left
+      process.stdout.write('\x1B[2J\x1B[H');
+      setTermSize({ cols: process.stdout.columns ?? 80, rows: process.stdout.rows ?? 24 });
+    };
+    process.stdout.on('resize', onResize);
+    return () => { process.stdout.off('resize', onResize); };
+  }, []);
+
   useInput((input, key) => {
     if (key.ctrl && input === 'c') {
       abortRef.current?.abort();
@@ -291,7 +303,7 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
   const showWelcome = messages.length === 0 && !isBusy && !isRouting;
 
   return (
-    <Box flexDirection="column" height={process.stdout.rows ?? 24}>
+    <Box flexDirection="column" height={termSize.rows}>
       {errorMsg && (
         <Box paddingX={1}>
           <Text color="red">{errorMsg}</Text>
@@ -305,7 +317,7 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
           messages={messages}
           streamingContent={streamingContent}
           livePhases={pipelinePhases}
-          availableHeight={(process.stdout.rows ?? 24) - 6}
+          availableHeight={termSize.rows - 6}
         />
       )}
 
