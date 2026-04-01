@@ -176,6 +176,9 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
           case 'context':
             if (chunk.contextTokens) {
               onPhaseStart('ARCHITECT');
+              onPhaseDone('ARCHITECT', {
+                summary: `${chunk.contextTokens.toLocaleString()} context tokens`,
+              });
             }
             break;
 
@@ -197,6 +200,10 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
 
           case 'text':
             if (chunk.text) {
+              // First text chunk means model is generating — start BUILDER phase
+              if (streamRef.current === '') {
+                onPhaseStart('BUILDER');
+              }
               streamRef.current += chunk.text;
               setStreamingContent(streamRef.current);
             }
