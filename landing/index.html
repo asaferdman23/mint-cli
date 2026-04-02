@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mint — AI Coding CLI That Watches Your Bill</title>
-  <meta name="description" content="Mint routes every coding prompt to the cheapest capable model. No API keys to manage — we handle everything. 87% cheaper than Claude Opus.">
+  <title>Mint — Agentic Coding CLI In Active Beta</title>
+  <meta name="description" content="Mint is an agentic coding CLI with project indexing, built-in code tools, a Scout → Architect → Builder → Reviewer pipeline, and cost-aware model routing.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@300;400;600;700;800&family=Fira+Code:wght@300;400;500&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
@@ -322,7 +322,7 @@
       font-family: var(--font-mono);
       font-size: 0.8rem;
       line-height: 1.7;
-      min-height: 320px;
+      min-height: 420px;
     }
     .t-line { display: flex; gap: 0; white-space: pre-wrap; }
     .t-prompt { color: var(--cyan); }
@@ -583,7 +583,7 @@
     /* ── PRICING ── */
     .pricing-grid {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(3, 1fr);
       gap: 1px;
       margin-top: 56px;
       background: var(--border);
@@ -917,19 +917,35 @@
 
     /* ── RESPONSIVE ── */
     @media (max-width: 860px) {
+      #hero {
+        min-height: auto;
+        padding: 80px 0 40px;
+        overflow: visible;
+      }
       .hero-inner, .math-grid, .install-grid {
         grid-template-columns: 1fr;
-        gap: 40px;
+        gap: 32px;
       }
+      .hero-left { text-align: center; }
+      .hero-desc { margin-left: auto; margin-right: auto; }
+      .hero-actions { justify-content: center; }
+      .hero-stats { justify-content: center; }
+      .terminal-body { min-height: 220px !important; font-size: 0.7rem !important; }
+      .terminal-wrap { max-width: 100%; overflow-x: auto; }
       .math-arrow { transform: rotate(90deg); }
       .steps { grid-template-columns: 1fr; }
       .features-grid { grid-template-columns: 1fr; }
       .features-grid .feature { border-right: none !important; }
       .pricing-grid { grid-template-columns: repeat(2, 1fr); }
       .nav-links { display: none; }
+      .hero-logo-wrap { display: flex; justify-content: center; margin-bottom: 8px; }
     }
     @media (max-width: 560px) {
       .pricing-grid { grid-template-columns: 1fr; }
+      h1 { font-size: 1.8rem !important; }
+      .hero-desc { font-size: 0.92rem; }
+      .terminal-body { font-size: 0.65rem !important; padding: 14px 12px !important; }
+      .t-banner { font-size: 0.5rem !important; }
     }
 
     /* ── WAITLIST ── */
@@ -1076,9 +1092,9 @@
   </a>
   <ul class="nav-links">
     <li><a href="#how-it-works">How it works</a></li>
-    <li><a href="#models">Models</a></li>
-    <li><a href="#pricing">Pricing</a></li>
-    <li><a href="https://github.com" target="_blank">GitHub</a></li>
+    <li><a href="#models">What ships now</a></li>
+    <li><a href="#pricing">Current stage</a></li>
+    <li><a href="https://github.com/asaferdman23/mint-cli" target="_blank">GitHub</a></li>
     <li><a href="#waitlist" class="nav-cta">Join Waitlist</a></li>
   </ul>
 </nav>
@@ -1090,28 +1106,28 @@
   <div class="container">
     <div class="hero-inner">
       <div class="hero-left">
-        <p class="hero-eyebrow">AI coding CLI · cost optimizer</p>
-        <h1>Stop paying<br><span class="accent-orange">Opus prices</span><br>for every task.</h1>
-        <p class="hero-desc">Mint routes every coding prompt to the cheapest capable model — automatically. No API keys to manage. No accounts to juggle. Just install and go.</p>
+        <p class="hero-eyebrow">agentic coding cli · active beta</p>
+        <h1>Talk to your code.<br>Agents do the work.<br><span class="accent">In parallel.</span></h1>
+        <p class="hero-desc">Mint is an agentic coding CLI. Have a conversation, and Mint dispatches parallel workers, subagents, and a Scout → Architect → Builder → Reviewer pipeline — all with cost-aware model routing.</p>
         <div class="hero-actions">
           <a href="#waitlist" class="btn-primary">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-            Get Early Access
+            Join the Waitlist
           </a>
-          <a href="#how-it-works" class="btn-secondary">See how it works →</a>
+          <a href="#pricing" class="btn-secondary">See current stage →</a>
         </div>
         <div class="hero-stats">
           <div class="stat-item">
-            <div class="stat-num" id="stat-savings">87%</div>
-            <div class="stat-label">cheaper than Opus-only</div>
+            <div class="stat-num">4</div>
+            <div class="stat-label">pipeline phases</div>
           </div>
           <div class="stat-item">
-            <div class="stat-num orange">$0.27</div>
-            <div class="stat-label">per 1M tokens (DeepSeek)</div>
+            <div class="stat-num orange">7</div>
+            <div class="stat-label">built-in code tools</div>
           </div>
           <div class="stat-item">
-            <div class="stat-num">5min</div>
-            <div class="stat-label">time to first value</div>
+            <div class="stat-num">init</div>
+            <div class="stat-label">index + rules bootstrap</div>
           </div>
         </div>
       </div>
@@ -1123,7 +1139,7 @@
             <div class="t-dot red"></div>
             <div class="t-dot yellow"></div>
             <div class="t-dot green"></div>
-            <span class="terminal-title">mint — ~/projects/my-app</span>
+            <span class="terminal-title">mint-cli — ~/projects/my-app</span>
           </div>
           <div class="terminal-body" id="terminal-output">
             <!-- JS fills this in -->
@@ -1138,36 +1154,36 @@
 <section id="math">
   <div class="container">
     <div class="reveal">
-      <p class="section-label">cost reality</p>
-      <h2>The math doesn't lie.</h2>
+      <p class="section-label">why routing matters</p>
+      <h2>Agentic doesn't need<br>premium-everywhere pricing.</h2>
     </div>
     <div class="math-grid reveal">
-      <!-- WITHOUT AXON -->
+      <!-- PREMIUM-ONLY -->
       <div class="math-card bad">
-        <div class="math-card-label">Without Mint</div>
+        <div class="math-card-label">Premium-Only Workflow</div>
         <div class="math-row">
-          <span class="math-model">Write tests</span>
+          <span class="math-model">Scout pass</span>
           <span class="math-price-bad">Claude Opus · $15/1M</span>
         </div>
         <div class="math-row">
-          <span class="math-model">Fix a bug</span>
+          <span class="math-model">Architecture plan</span>
           <span class="math-price-bad">Claude Opus · $15/1M</span>
         </div>
         <div class="math-row">
-          <span class="math-model">Refactor module</span>
+          <span class="math-model">Builder pass</span>
           <span class="math-price-bad">Claude Opus · $15/1M</span>
         </div>
         <div class="math-row">
-          <span class="math-model">Explain code</span>
+          <span class="math-model">Reviewer pass</span>
           <span class="math-price-bad">Claude Opus · $15/1M</span>
         </div>
         <div class="math-row">
-          <span class="math-model">Review architecture</span>
+          <span class="math-model">Retry / follow-up</span>
           <span class="math-price-bad">Claude Opus · $15/1M</span>
         </div>
         <div class="math-total bad">
-          <div class="math-total-num">~$160</div>
-          <div class="math-total-label">per dev / month</div>
+          <div class="math-total-num">1 model</div>
+          <div class="math-total-label">used for every step</div>
         </div>
       </div>
 
@@ -1175,37 +1191,37 @@
 
       <!-- WITH MINT -->
       <div class="math-card good">
-        <div class="math-card-label">With Mint</div>
+        <div class="math-card-label">Mint Beta Workflow</div>
         <div class="math-row">
-          <span class="math-model">Write tests</span>
+          <span class="math-model">Scout pass</span>
+          <span class="math-price-good">Groq 8B · $0.05/1M</span>
+        </div>
+        <div class="math-row">
+          <span class="math-model">Architecture plan</span>
           <span class="math-price-good">DeepSeek V3 · $0.27/1M</span>
         </div>
         <div class="math-row">
-          <span class="math-model">Fix a bug</span>
+          <span class="math-model">Builder pass</span>
           <span class="math-price-good">DeepSeek V3 · $0.27/1M</span>
         </div>
         <div class="math-row">
-          <span class="math-model">Refactor module</span>
-          <span class="math-price-good">DeepSeek V3 · $0.27/1M</span>
+          <span class="math-model">Reviewer pass</span>
+          <span class="math-price-good">Groq 70B · $0.59/1M</span>
         </div>
         <div class="math-row">
-          <span class="math-model">Explain code</span>
-          <span class="math-price-good">Claude Sonnet · $3/1M</span>
-        </div>
-        <div class="math-row">
-          <span class="math-model">Review architecture</span>
-          <span class="math-price-good">Claude Sonnet · $3/1M</span>
+          <span class="math-model">Large-context fallback</span>
+          <span class="math-price-good">Gemini Flash · $0.075/1M</span>
         </div>
         <div class="math-total good">
-          <div class="math-total-num">~$22</div>
-          <div class="math-total-label">per dev / month</div>
+          <div class="math-total-num">fit-to-task</div>
+          <div class="math-total-label">cheap where possible, strong where needed</div>
         </div>
       </div>
     </div>
 
     <div class="savings-badge reveal" style="margin-top:32px; display:inline-block;">
       <div class="savings-badge-num" id="savings-counter">0%</div>
-      <div class="savings-badge-label">average cost reduction · same output quality</div>
+      <div class="savings-badge-label">typical routing savings vs premium-everywhere flow</div>
     </div>
   </div>
 </section>
@@ -1215,23 +1231,23 @@
   <div class="container">
     <div class="reveal">
       <p class="section-label">how it works</p>
-      <h2>Smart routing.<br>Zero config.</h2>
+      <h2>Index. Search. Plan.<br>Build. Review.</h2>
     </div>
     <div class="steps">
       <div class="step reveal" style="transition-delay:0s">
         <div class="step-num">01</div>
-        <h3>Detect task complexity</h3>
-        <p>Mint reads your prompt and classifies it: write, debug, explain, review, or refactor. Each maps to an optimal price tier.</p>
+        <h3>Bootstrap project context</h3>
+        <p>Run <code style="font-family:var(--font-mono);color:var(--cyan);font-size:0.85em">mint init</code> once. Mint scans the repo, writes <code style="font-family:var(--font-mono);color:var(--cyan);font-size:0.85em">.mint/context.json</code>, and generates <code style="font-family:var(--font-mono);color:var(--cyan);font-size:0.85em">MINT.md</code> project rules.</p>
       </div>
       <div class="step reveal" style="transition-delay:0.1s">
         <div class="step-num">02</div>
-        <h3>Route to the right model</h3>
-        <p>Simple coding tasks go to DeepSeek V3 at $0.27/1M. Complex reasoning goes to Sonnet. Only explicitly flagged tasks touch Opus.</p>
+        <h3>Run the agent pipeline</h3>
+        <p>For real coding work, Mint narrows the file set, routes each phase to a cheaper capable model, and runs Scout → Architect → Builder → Reviewer instead of one blind completion.</p>
       </div>
       <div class="step reveal" style="transition-delay:0.2s">
         <div class="step-num">03</div>
-        <h3>Track every dollar saved</h3>
-        <p>Run <code style="font-family:var(--font-mono);color:var(--cyan);font-size:0.85em">mint usage</code> to see exactly what you spent vs what you'd have paid on Opus-only. Share the report with your manager.</p>
+        <h3>Review and apply locally</h3>
+        <p>Mint prints unified diffs, tracks savings, and can apply changes from the terminal. The beta already supports diff application; history and undo are the next hardening step.</p>
       </div>
     </div>
   </div>
@@ -1241,8 +1257,8 @@
 <section id="models">
   <div class="container">
     <div class="reveal">
-      <p class="section-label">model routing</p>
-      <h2>Every model. One CLI.</h2>
+      <p class="section-label">what ships now</p>
+      <h2>The routing matrix<br>behind the beta.</h2>
     </div>
     <table class="model-table reveal">
       <thead>
@@ -1251,44 +1267,51 @@
           <th>Provider</th>
           <th>Input / 1M tokens</th>
           <th>Output / 1M tokens</th>
-          <th>Axon routes when</th>
+          <th>Mint uses it for</th>
         </tr>
       </thead>
       <tbody>
+        <tr>
+          <td><span class="model-name">Llama 3.1 8B</span></td>
+          <td><span class="model-provider">groq</span></td>
+          <td><span class="model-price cheap">$0.05</span></td>
+          <td><span class="model-price cheap">$0.08</span></td>
+          <td><span class="model-tag tag-default">scout</span> trivial tasks · cheap classification</td>
+        </tr>
+        <tr>
+          <td><span class="model-name">Llama 3.3 70B</span></td>
+          <td><span class="model-provider">groq</span></td>
+          <td><span class="model-price cheap">$0.59</span></td>
+          <td><span class="model-price cheap">$0.79</span></td>
+          <td><span class="model-tag tag-auto">auto</span> stronger scout / reviewer passes</td>
+        </tr>
         <tr>
           <td><span class="model-name">DeepSeek V3</span></td>
           <td><span class="model-provider">deepseek</span></td>
           <td><span class="model-price cheap">$0.27</span></td>
           <td><span class="model-price cheap">$1.10</span></td>
-          <td><span class="model-tag tag-default">default</span> write · fix · refactor</td>
+          <td><span class="model-tag tag-default">default</span> architect + builder for most code tasks</td>
         </tr>
         <tr>
-          <td><span class="model-name">DeepSeek Coder</span></td>
-          <td><span class="model-provider">deepseek</span></td>
-          <td><span class="model-price cheap">$0.14</span></td>
-          <td><span class="model-price cheap">$0.28</span></td>
-          <td><span class="model-tag tag-auto">auto</span> targeted code generation</td>
-        </tr>
-        <tr>
-          <td><span class="model-name">Qwen 2.5 Coder</span></td>
+          <td><span class="model-name">Qwen 2.5 Coder 32B</span></td>
           <td><span class="model-provider">openrouter</span></td>
           <td><span class="model-price cheap">$0.40</span></td>
           <td><span class="model-price cheap">$1.20</span></td>
-          <td><span class="model-tag tag-auto">auto</span> DeepSeek fallback</td>
+          <td><span class="model-tag tag-auto">fallback</span> budget code fallback path</td>
+        </tr>
+        <tr>
+          <td><span class="model-name">Gemini 2.0 Flash</span></td>
+          <td><span class="model-provider">google</span></td>
+          <td><span class="model-price cheap">$0.075</span></td>
+          <td><span class="model-price cheap">$0.30</span></td>
+          <td><span class="model-tag tag-auto">auto</span> large-context cheap fallback</td>
         </tr>
         <tr>
           <td><span class="model-name">Claude Sonnet 4</span></td>
           <td><span class="model-provider">anthropic</span></td>
           <td><span class="model-price mid">$3.00</span></td>
           <td><span class="model-price mid">$15.00</span></td>
-          <td><span class="model-tag tag-auto">auto</span> explain · review · complex</td>
-        </tr>
-        <tr>
-          <td><span class="model-name">Gemini 2.0 Pro</span></td>
-          <td><span class="model-provider">google</span></td>
-          <td><span class="model-price mid">$1.25</span></td>
-          <td><span class="model-price mid">$5.00</span></td>
-          <td><span class="model-tag tag-auto">auto</span> large context tasks</td>
+          <td><span class="model-tag tag-auto">manual</span> premium escalation path</td>
         </tr>
         <tr>
           <td><span class="model-name">Claude Opus 4</span></td>
@@ -1307,28 +1330,28 @@
   <div class="container">
     <div class="reveal">
       <p class="section-label">features</p>
-      <h2>Built for teams that care<br>about their bill.</h2>
+      <h2>Built around the<br>current beta surface.</h2>
     </div>
     <div class="features-grid reveal">
       <div class="feature">
         <div class="feature-icon cyan">⚡</div>
-        <h3>Smart Model Router</h3>
-        <p>Classifies every prompt by task type and complexity. Maps to the cheapest model that can handle it. Fully configurable routing rules.</p>
+        <h3>Scout → Architect → Builder → Reviewer</h3>
+        <p>One-shot tasks already run through a multi-agent pipeline. Mint classifies the task, narrows the file set, plans the change, generates diffs, and reviews the result.</p>
       </div>
       <div class="feature">
         <div class="feature-icon orange">📦</div>
-        <h3>Context Engine</h3>
-        <p>Scans your codebase, respects .gitignore, estimates tokens per file. Includes only what's relevant — fewer tokens = lower cost.</p>
+        <h3>Project Index + MINT.md</h3>
+        <p><code style="font-family:var(--font-mono);color:var(--cyan);font-size:0.85em">mint init</code> builds a project index, dependency graph, summaries, and rules file so later tasks start with grounded context instead of blind prompting.</p>
       </div>
       <div class="feature">
         <div class="feature-icon green">📊</div>
-        <h3>Usage Dashboard</h3>
-        <p>Real-time spend tracking per model. Shows predicted savings vs Opus baseline. Export reports for finance and team leads.</p>
+        <h3>Tool-Use Agent</h3>
+        <p><code style="font-family:var(--font-mono);color:var(--cyan);font-size:0.85em">mint agent</code> can read, grep, edit, write, list directories, and run bash with approval modes. This is the path toward deeper autonomous repo work.</p>
       </div>
       <div class="feature">
         <div class="feature-icon purple">🔑</div>
-        <h3>Zero Setup. We Handle the Keys.</h3>
-        <p>No API accounts, no key management, no rate limit headaches. Mint provides access to all 18 models under one subscription. Just install and start building.</p>
+        <h3>Cost Tracking + Gateway Fallback</h3>
+        <p>Mint still tracks spend and savings, but now routing is part of the agent loop. BYOK providers can run directly, and the Mint gateway remains the shared fallback path.</p>
       </div>
     </div>
   </div>
@@ -1338,58 +1361,46 @@
 <section id="pricing">
   <div class="container">
     <div class="reveal">
-      <p class="section-label">pricing</p>
-      <h2>Start free. Scale when<br>the savings prove it.</h2>
+      <p class="section-label">current stage</p>
+      <h2>Where we are.<br>Where we're going.</h2>
     </div>
     <div class="pricing-grid reveal">
       <div class="pricing-card">
-        <div class="pricing-name">Early Access</div>
-        <div class="pricing-price">Free</div>
-        <div class="pricing-period">/ during beta</div>
+        <div class="pricing-name">Phases 1-4</div>
+        <div class="pricing-price">Done</div>
+        <div class="pricing-period">/ foundation shipped</div>
         <ul class="pricing-features">
-          <li>All 18 models included</li>
-          <li>Smart router + context engine</li>
-          <li>Local usage tracking</li>
-          <li>No API keys needed</li>
+          <li>Tool system exists</li>
+          <li>Context engine + indexer exist</li>
+          <li>Multi-agent pipeline exists</li>
+          <li>Provider matrix is broader than the original plan</li>
         </ul>
-        <a href="#waitlist" class="pricing-btn secondary">Join waitlist →</a>
+        <a href="#models" class="pricing-btn secondary">See shipped surface →</a>
       </div>
       <div class="pricing-card featured">
-        <div class="pricing-badge">Coming Soon</div>
-        <div class="pricing-name">Pro</div>
-        <div class="pricing-price">$15</div>
-        <div class="pricing-period">/ user / month</div>
+        <div class="pricing-badge">You Are Here</div>
+        <div class="pricing-name">Current</div>
+        <div class="pricing-price">Building</div>
+        <div class="pricing-period">/ hardening before launch</div>
         <ul class="pricing-features">
-          <li>All models, managed by Mint</li>
-          <li>Usage dashboard + reports</li>
-          <li>Budget controls</li>
-          <li>Email support</li>
+          <li>Pipeline, tools, and agents work end-to-end</li>
+          <li>Parallel workers and cost-aware routing are live</li>
+          <li>Stabilizing diff apply, retries, and edge cases</li>
+          <li>Not public yet — early access via waitlist</li>
         </ul>
-        <a href="#waitlist" class="pricing-btn primary">Get notified →</a>
+        <a href="#waitlist" class="pricing-btn primary">Get early access →</a>
       </div>
       <div class="pricing-card">
-        <div class="pricing-name">Team</div>
-        <div class="pricing-price">$30</div>
-        <div class="pricing-period">/ user / month</div>
+        <div class="pricing-name">Up Next</div>
+        <div class="pricing-price">Next</div>
+        <div class="pricing-period">/ polish, proof, GTM</div>
         <ul class="pricing-features">
-          <li>SSO (Google, GitHub)</li>
-          <li>Team analytics</li>
-          <li>Policy controls</li>
-          <li>Budget alerts</li>
+          <li>Landing + README polish</li>
+          <li>Real-project validation on larger repos</li>
+          <li>Demo assets and release cleanup</li>
+          <li>Commercial packaging after reliability hardening</li>
         </ul>
-        <a href="mailto:team@usemint.dev" class="pricing-btn secondary">Contact sales →</a>
-      </div>
-      <div class="pricing-card">
-        <div class="pricing-name">Enterprise</div>
-        <div class="pricing-price">Custom</div>
-        <div class="pricing-period">/ negotiated</div>
-        <ul class="pricing-features">
-          <li>SAML / Okta</li>
-          <li>Audit logs</li>
-          <li>SLA guarantee</li>
-          <li>Dedicated support</li>
-        </ul>
-        <a href="mailto:enterprise@usemint.dev" class="pricing-btn secondary">Talk to us →</a>
+        <a href="https://github.com/asaferdman23/mint-cli" class="pricing-btn secondary" target="_blank">Track repo →</a>
       </div>
     </div>
   </div>
@@ -1399,51 +1410,17 @@
 <section id="install">
   <div class="container">
     <div class="reveal">
-      <p class="section-label">quickstart</p>
-      <h2>Running in under<br>5 minutes.</h2>
+      <p class="section-label">preview</p>
+      <h2>Here's what a session<br>looks like.</h2>
     </div>
     <div class="install-grid">
-      <div class="install-steps reveal">
-        <div class="install-step">
-          <div class="install-step-num">1</div>
-          <div class="install-step-content">
-            <div class="install-step-title">Install globally</div>
-            <code class="code-inline" onclick="copyCode(this, 'npm install -g mint-cli')">
-              npm install -g mint-cli
-              <span class="copy-hint">click to copy</span>
-            </code>
-          </div>
-        </div>
-        <div class="install-step">
-          <div class="install-step-num">2</div>
-          <div class="install-step-content">
-            <div class="install-step-title">Log in — we handle the rest</div>
-            <code class="code-inline" onclick="copyCode(this, 'mint login')">
-              mint login
-              <span class="copy-hint">click to copy</span>
-            </code>
-          </div>
-        </div>
-        <div class="install-step">
-          <div class="install-step-num">3</div>
-          <div class="install-step-content">
-            <div class="install-step-title">Start coding</div>
-            <code class="code-inline" onclick="copyCode(this, 'mint')">
-              mint
-              <span class="copy-hint">click to copy</span>
-            </code>
-          </div>
-        </div>
-        <div class="install-step">
-          <div class="install-step-num">4</div>
-          <div class="install-step-content">
-            <div class="install-step-title">Check your savings</div>
-            <code class="code-inline" onclick="copyCode(this, 'mint usage')">
-              mint usage
-              <span class="copy-hint">click to copy</span>
-            </code>
-          </div>
-        </div>
+      <div class="install-steps reveal" style="display:flex;flex-direction:column;justify-content:center;gap:24px;">
+        <p style="font-size:1.05rem;color:var(--text-muted);line-height:1.7;font-weight:300;">This is what a real Mint session looks like — you talk, agents work in parallel, diffs get reviewed and applied.</p>
+        <p style="font-size:1.05rem;color:var(--text-muted);line-height:1.7;font-weight:300;">We're still hardening the rough edges. Drop your email and we'll let you know when it's solid.</p>
+        <a href="#waitlist" class="btn-primary" style="width:fit-content;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+          Get Early Access
+        </a>
       </div>
 
       <div class="install-terminal reveal" style="transition-delay:0.2s">
@@ -1451,25 +1428,22 @@
           <div class="t-dot red"></div>
           <div class="t-dot yellow"></div>
           <div class="t-dot green"></div>
-          <span class="terminal-title">mint usage</span>
+          <span class="terminal-title">mint-cli — ~/projects/my-app</span>
         </div>
         <div class="terminal-body">
-          <div class="t-line"><span class="t-dim">╭─────────────────────────────────────╮</span></div>
-          <div class="t-line"><span class="t-dim">│</span> <span class="t-cyan">Usage Summary</span> <span class="t-dim">(Last 7 days)             │</span></div>
-          <div class="t-line"><span class="t-dim">│                                     │</span></div>
-          <div class="t-line"><span class="t-dim">│</span>  Total Tokens:  <span class="t-white">1,250,000</span>           <span class="t-dim">│</span></div>
-          <div class="t-line"><span class="t-dim">│</span>  Total Cost:    <span class="t-orange">$12.50</span>              <span class="t-dim">│</span></div>
-          <div class="t-line"><span class="t-dim">│</span>  Total Saved:   <span class="t-green">$45.30</span> vs Opus       <span class="t-dim">│</span></div>
-          <div class="t-line"><span class="t-dim">╰─────────────────────────────────────╯</span></div>
+          <div class="t-line"><span class="t-cyan">you</span><span class="t-dim"> ›</span> <span class="t-white">refactor the payment module to use Stripe v2</span></div>
           <div class="t-line">&nbsp;</div>
-          <div class="t-line"><span class="t-dim">Usage by Model:</span></div>
-          <div class="t-line"><span class="t-dim">┌─────────────┬──────────┬───────────┬────────┐</span></div>
-          <div class="t-line"><span class="t-dim">│</span> <span class="t-white">deepseek-v3</span>  <span class="t-dim">│</span> <span class="t-white">45 reqs</span>   <span class="t-dim">│</span> <span class="t-white">800k tok</span>   <span class="t-dim">│</span> <span class="t-green">$0.22</span>  <span class="t-dim">│</span></div>
-          <div class="t-line"><span class="t-dim">│</span> <span class="t-white">sonnet-4</span>     <span class="t-dim">│</span> <span class="t-white">12 reqs</span>   <span class="t-dim">│</span> <span class="t-white">350k tok</span>   <span class="t-dim">│</span> <span class="t-orange">$8.75</span>  <span class="t-dim">│</span></div>
-          <div class="t-line"><span class="t-dim">│</span> <span class="t-white">opus-4</span>       <span class="t-dim">│</span> <span class="t-white">3 reqs</span>    <span class="t-dim">│</span> <span class="t-white">100k tok</span>   <span class="t-dim">│</span> <span class="t-red">$3.50</span>  <span class="t-dim">│</span></div>
-          <div class="t-line"><span class="t-dim">└─────────────┴──────────┴───────────┴────────┘</span></div>
+          <div class="t-line"><span class="t-cyan">mint</span><span class="t-dim"> ›</span> <span class="t-white">Found 4 payment files. Breaking this into</span></div>
+          <div class="t-line"><span class="t-white">       parallel subtasks…</span></div>
           <div class="t-line">&nbsp;</div>
-          <div class="t-line"><span class="t-green">💰 Smart routing saved you 78% ($45.30)</span></div>
+          <div class="t-line"><span class="t-dim">  ┌─ </span><span class="t-orange">parallel workers</span></div>
+          <div class="t-line"><span class="t-dim">  │</span> <span class="t-green">✓</span> <span class="t-dim">#1</span> <span class="t-white">migrate checkout flow</span>    <span class="t-dim">· 1.1s</span></div>
+          <div class="t-line"><span class="t-dim">  │</span> <span class="t-green">✓</span> <span class="t-dim">#2</span> <span class="t-white">update webhook handler</span>   <span class="t-dim">· 0.8s</span></div>
+          <div class="t-line"><span class="t-dim">  │</span> <span class="t-green">✓</span> <span class="t-dim">#3</span> <span class="t-white">patch subscription logic</span> <span class="t-dim">· 1.3s</span></div>
+          <div class="t-line"><span class="t-dim">  │</span> <span class="t-green">✓</span> <span class="t-dim">#4</span> <span class="t-white">update integration tests</span> <span class="t-dim">· 1.0s</span></div>
+          <div class="t-line"><span class="t-dim">  └─ </span><span class="t-green">4/4 done</span> <span class="t-dim">· $0.041</span></div>
+          <div class="t-line">&nbsp;</div>
+          <div class="t-line"><span class="t-cyan">mint</span><span class="t-dim"> ›</span> <span class="t-green">reviewed & applied.</span> <span class="t-savings">saved 94%</span></div>
         </div>
       </div>
     </div>
@@ -1481,11 +1455,12 @@
   <div class="waitlist-glow"></div>
   <div class="container">
     <div class="waitlist-inner reveal">
-      <div class="waitlist-badge">early access</div>
-      <h2>Be first.<br>Pay less. <span class="accent">Ship faster.</span></h2>
+      <div class="waitlist-badge">beta updates</div>
+      <h2>Get in early.<br><span class="accent">We'll let you know.</span></h2>
       <p class="waitlist-desc">
-        Mint is in private beta. Join the waitlist and get early access —
-        free while we're building. No credit card. No spam.
+        Mint already ships indexing, routing, a multi-agent pipeline, and beta diff apply.
+        Join the list if you want release notes, roadmap updates, and early access as history, undo,
+        and larger-repo hardening land.
       </p>
 
       <form class="waitlist-form" id="waitlist-form" onsubmit="handleWaitlist(event)">
@@ -1499,15 +1474,15 @@
             autocomplete="email"
           />
           <button type="submit" class="waitlist-btn" id="waitlist-submit">
-            Get Early Access →
+            Join Beta Updates →
           </button>
         </div>
-        <p class="waitlist-note">← free during beta · no credit card · unsubscribe anytime</p>
+        <p class="waitlist-note">← roadmap drops · beta invites · unsubscribe anytime</p>
       </form>
 
       <div class="waitlist-success" id="waitlist-success" style="display:none;">
         <div class="waitlist-success-icon">✓</div>
-        <div class="waitlist-success-text">You're on the list. We'll reach out soon.</div>
+        <div class="waitlist-success-text">You're on the list. We'll send beta updates.</div>
       </div>
 
       <div class="waitlist-count" id="waitlist-count">
@@ -1522,10 +1497,10 @@
   <div class="container">
     <div class="footer-inner">
       <div class="footer-logo"><img src="mint_logo.png" alt="Mint" style="height:24px;width:auto;opacity:0.85;"></div>
-      <div class="footer-text">usemint.dev · beta · built for developers who ship</div>
+      <div class="footer-text">usemint.dev · active beta · agentic cli in progress</div>
       <ul class="footer-links">
-        <li><a href="#">Docs</a></li>
-        <li><a href="#">GitHub</a></li>
+        <li><a href="https://github.com/asaferdman23/mint-cli/blob/main/README.md" target="_blank">Docs</a></li>
+        <li><a href="https://github.com/asaferdman23/mint-cli" target="_blank">GitHub</a></li>
         <li><a href="mailto:hello@usemint.dev">hello@usemint.dev</a></li>
       </ul>
     </div>
@@ -1574,31 +1549,30 @@
   // ── Terminal animation ──
   const terminalOutput = document.getElementById('terminal-output');
   const lines = [
-    { delay: 0,    content: '<span class="t-cyan t-banner">  ███╗   ███╗██╗███╗   ██╗████████╗</span>' },
-    { delay: 60,   content: '<span class="t-cyan t-banner">  ████╗ ████║██║████╗  ██║╚══██╔══╝</span>' },
-    { delay: 120,  content: '<span class="t-cyan t-banner">  ██╔████╔██║██║██╔██╗ ██║   ██║   </span>' },
-    { delay: 180,  content: '<span class="t-cyan t-banner">  ██║╚██╔╝██║██║██║╚██╗██║   ██║   </span>' },
-    { delay: 240,  content: '<span class="t-cyan t-banner">  ██║ ╚═╝ ██║██║██║ ╚████║   ██║   </span>' },
-    { delay: 300,  content: '<span class="t-cyan t-banner">  ╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝   ╚═╝   </span>' },
-    { delay: 400,  content: '<span class="t-dim">  AI coding CLI · smart model routing · beta</span>' },
+    { delay: 0,    content: '<span class="t-cyan t-banner">  ███╗   ███╗██╗███╗   ██╗████████╗    ██████╗██╗     ██╗</span>' },
+    { delay: 60,   content: '<span class="t-cyan t-banner">  ████╗ ████║██║████╗  ██║╚══██╔══╝   ██╔════╝██║     ██║</span>' },
+    { delay: 120,  content: '<span class="t-cyan t-banner">  ██╔████╔██║██║██╔██╗ ██║   ██║      ██║     ██║     ██║</span>' },
+    { delay: 180,  content: '<span class="t-cyan t-banner">  ██║╚██╔╝██║██║██║╚██╗██║   ██║      ██║     ██║     ██║</span>' },
+    { delay: 240,  content: '<span class="t-cyan t-banner">  ██║ ╚═╝ ██║██║██║ ╚████║   ██║      ╚██████╗███████╗██║</span>' },
+    { delay: 300,  content: '<span class="t-cyan t-banner">  ╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝   ╚═╝       ╚═════╝╚══════╝╚═╝</span>' },
+    { delay: 400,  content: '<span class="t-dim">                    AI CODING CLI</span>' },
     { delay: 650,  content: '' },
-    { delay: 800,  content: '<span class="t-prompt">❯ </span><span class="t-cmd">mint "refactor auth module to use JWT"</span>' },
-    { delay: 1400, content: '<span class="t-dim">  Gathering context...</span>' },
-    { delay: 1900, content: '<span class="t-dim">  Context: </span><span class="t-cyan">8 files</span><span class="t-dim"> · </span><span class="t-cyan">3,420 tokens</span>' },
-    { delay: 2500, content: '<span class="t-dim">  Routing → </span><span class="t-green">deepseek-v3</span><span class="t-dim"> (code task · auto)</span>' },
-    { delay: 3000, content: '' },
-    { delay: 3200, content: '<span class="t-white">Here\'s the refactored auth module with JWT:</span>' },
-    { delay: 3600, content: '<span class="t-dim">```typescript</span>' },
-    { delay: 3700, content: '<span class="t-cyan">import</span><span class="t-white"> jwt </span><span class="t-cyan">from</span><span class="t-white"> \'jsonwebtoken\';</span>' },
-    { delay: 3800, content: '<span class="t-cyan">export function</span><span class="t-white"> signToken(payload) {</span>' },
-    { delay: 3900, content: '<span class="t-white">  </span><span class="t-cyan">return</span><span class="t-white"> jwt.sign(payload, process.env.JWT_SECRET);</span>' },
-    { delay: 4000, content: '<span class="t-white">}</span>' },
-    { delay: 4100, content: '<span class="t-dim">```</span>' },
-    { delay: 4400, content: '' },
-    { delay: 4500, content: '<span class="t-dim">deepseek-v3 · est. 1,180 tokens · </span><span class="t-green">0.031¢</span>' },
-    { delay: 4800, content: '<span class="t-savings">💰 saved $0.41 vs Opus on this request</span>' },
-    { delay: 5200, content: '' },
-    { delay: 5400, content: '<span class="t-prompt">❯ </span><span class="cursor"></span>' },
+    { delay: 800,  content: '<span class="t-cyan">you</span><span class="t-dim"> ›</span> <span class="t-white">fix the auth refresh bug in middleware</span>' },
+    { delay: 1400, content: '' },
+    { delay: 1500, content: '<span class="t-cyan">mint</span><span class="t-dim"> ›</span> <span class="t-dim">scanning project… found 6 relevant files</span>' },
+    { delay: 1900, content: '<span class="t-cyan">mint</span><span class="t-dim"> ›</span> <span class="t-white">I see the issue — the refresh token isn\'t</span>' },
+    { delay: 2100, content: '<span class="t-white">       being rotated on expiry. Spawning workers…</span>' },
+    { delay: 2500, content: '' },
+    { delay: 2600, content: '<span class="t-dim">  ┌─ </span><span class="t-orange">parallel workers</span>' },
+    { delay: 2800, content: '<span class="t-dim">  │</span> <span class="t-green">✓</span> <span class="t-dim">#1</span> <span class="t-white">patch tokenService.ts</span> <span class="t-dim">· deepseek-v3 · 1.2s</span>' },
+    { delay: 3100, content: '<span class="t-dim">  │</span> <span class="t-green">✓</span> <span class="t-dim">#2</span> <span class="t-white">update auth middleware</span> <span class="t-dim">· deepseek-v3 · 0.9s</span>' },
+    { delay: 3400, content: '<span class="t-dim">  │</span> <span class="t-green">✓</span> <span class="t-dim">#3</span> <span class="t-white">add regression tests</span>  <span class="t-dim">· gpt-4.1-mini · 1.4s</span>' },
+    { delay: 3600, content: '<span class="t-dim">  └─ </span><span class="t-green">3/3 done</span> <span class="t-dim">· $0.028</span>' },
+    { delay: 3900, content: '' },
+    { delay: 4000, content: '<span class="t-cyan">mint</span><span class="t-dim"> ›</span> <span class="t-green">reviewed & approved</span><span class="t-dim"> · 3 files changed</span>' },
+    { delay: 4300, content: '<span class="t-cyan">mint</span><span class="t-dim"> ›</span> <span class="t-white">changes applied.</span> <span class="t-savings">saved 96% vs Opus-only</span>' },
+    { delay: 4700, content: '' },
+    { delay: 4900, content: '<span class="t-cyan">you</span><span class="t-dim"> ›</span> <span class="cursor"></span>' },
   ];
   // mint branding confirmed
 
