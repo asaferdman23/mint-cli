@@ -151,6 +151,13 @@ export async function* streamAgent(request: CompletionRequest): AsyncIterable<Ag
     }
   }
 
+  // Fall back to the gateway — it supports agent streaming via /v1/agent
+  if (hasAgent(gatewayProvider)) {
+    console.error(`[agent] No direct keys found, using Mint Gateway`);
+    yield* gatewayProvider.streamAgent(request);
+    return;
+  }
+
   throw new Error(
     'No provider with a direct API key supports agent mode. ' +
     'Add a key with: mint config:set providers.deepseek <key>'
