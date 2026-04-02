@@ -29,6 +29,10 @@ export const MODEL_TIERS: Record<ModelId, ContextTier> = {
   'moonshot-v1-32k':      'ultra',
   'moonshot-v1-8k':       'ultra',
   'groq-llama-8b':        'ultra',
+  'groq-gpt-oss-120b':   'fast',
+  'groq-gpt-oss-20b':    'ultra',
+  'grok-4-beta':          'apex',
+  'mistral-small':        'ultra',
 };
 
 /** Maximum context tokens to send to the model (reserve the rest for output). */

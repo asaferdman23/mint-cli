@@ -1,6 +1,7 @@
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
 import { chatRoute } from './routes/chat.js'
+import { agentRoute } from './routes/agent.js'
 import { adminRoute } from './routes/admin.js'
 import { initSchema } from './db.js'
 
@@ -18,6 +19,7 @@ app.use('/v1/*', async (c, next) => {
 
 app.get('/health', (c) => c.json({ ok: true }))
 app.route('/v1', chatRoute)
+app.route('/v1', agentRoute)
 app.route('/admin', adminRoute)
 
 const port = Number(process.env.PORT ?? 3000)

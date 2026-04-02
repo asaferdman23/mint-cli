@@ -1,9 +1,15 @@
-import { streamComplete } from '../providers/index.js';
 import { streamAgent } from '../providers/index.js';
 import { isModelAvailable } from '../providers/index.js';
 import type { Message, AgentStreamChunk } from '../providers/types.js';
 import type { ModelId } from '../providers/types.js';
-import { TOOLS, executeTool, type ToolResult, type AgentOptions } from './tools.js';
+import { isConcurrencySafeTool, toolRequiresApproval } from '../tools/index.js';
+import {
+  TOOLS,
+  executeTool,
+  getAgentToolDefinitions,
+  type ToolResult,
+  type AgentOptions,
+} from './tools.js';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,7 +30,9 @@ interface ToolCallRecord {
 }
 
 // Extended message for agent use — carries tool call metadata
-interface AgentMessage extends Message {
+interface AgentMessage {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
   toolCalls?: ToolCallRecord[];
   toolResults?: Array<{ toolCallId: string; content: string }>;
 }
@@ -43,6 +51,9 @@ export async function* agentLoop(
 ): AsyncGenerator<AgentLoopChunk> {
   const messages: AgentMessage[] = [{ role: 'user', content: task }];
   const maxIterations = options.maxIterations ?? 20;
+  const toolDefinitions = options.toolNames
+    ? getAgentToolDefinitions(options.toolNames)
+    : TOOLS;
 
   // Resolve model with fallback
   let model: ModelId = 'deepseek-v3';
@@ -74,7 +85,7 @@ export async function* agentLoop(
         model,
         messages: messages as Message[],
         systemPrompt: options.systemPrompt,
-        tools: TOOLS,
+        tools: toolDefinitions,
         maxTokens: 8192,
         signal: options.signal,
       })) {
@@ -114,13 +125,45 @@ export async function* agentLoop(
     };
     messages.push(assistantMsg);
 
-    // Execute all tool calls
-    const toolResults: ToolResult[] = [];
-    for (const tc of toolCallsThisRound) {
-      if (options.signal?.aborted) break;
-      const result = await executeTool(tc.name, tc.input, tc.id, options);
-      toolResults.push(result);
+    const hasApprovalGatedCall = toolCallsThisRound.some((toolCall) =>
+      toolRequiresApproval(toolCall.name, toolCall.input)
+    );
+
+    if (
+      hasApprovalGatedCall &&
+      options.mode !== 'yolo' &&
+      options.mode !== 'auto' &&
+      options.onIterationApprovalNeeded
+    ) {
+      const approved = await options.onIterationApprovalNeeded(
+        iteration + 1,
+        toolCallsThisRound.map((toolCall) => ({ name: toolCall.name, input: toolCall.input })),
+      );
+
+      if (!approved) {
+        const rejectedResults: ToolResult[] = toolCallsThisRound.map((toolCall) => ({
+          toolCallId: toolCall.id,
+          toolName: toolCall.name,
+          content: `[REJECTED] User denied executing ${toolCall.name} in iteration ${iteration + 1}.`,
+          isError: true,
+        }));
+
+        yield { type: 'tool_result', results: rejectedResults };
+
+        const toolMsg: AgentMessage = {
+          role: 'tool',
+          content: '',
+          toolResults: rejectedResults.map((result) => ({
+            toolCallId: result.toolCallId,
+            content: result.content,
+          })),
+        };
+        messages.push(toolMsg);
+        continue;
+      }
     }
+
+    const toolResults = await executeToolCalls(toolCallsThisRound, options);
 
     yield { type: 'tool_result', results: toolResults };
 
@@ -134,4 +177,35 @@ export async function* agentLoop(
   }
 
   yield { type: 'done' };
+}
+
+async function executeToolCalls(
+  toolCalls: ToolCallRecord[],
+  options: AgentOptions,
+): Promise<ToolResult[]> {
+  const results: ToolResult[] = [];
+
+  for (let index = 0; index < toolCalls.length;) {
+    if (options.signal?.aborted) break;
+
+    const current = toolCalls[index];
+    if (!isConcurrencySafeTool(current.name)) {
+      results.push(await executeTool(current.name, current.input, current.id, options));
+      index += 1;
+      continue;
+    }
+
+    const batch: ToolCallRecord[] = [];
+    while (index < toolCalls.length && isConcurrencySafeTool(toolCalls[index]!.name)) {
+      batch.push(toolCalls[index]!);
+      index += 1;
+    }
+
+    const batchResults = await Promise.all(
+      batch.map((toolCall) => executeTool(toolCall.name, toolCall.input, toolCall.id, options)),
+    );
+    results.push(...batchResults);
+  }
+
+  return results;
 }

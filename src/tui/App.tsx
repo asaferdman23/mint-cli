@@ -5,15 +5,17 @@ import { MessageList, ChatMessage } from './components/MessageList.js';
 import { InputBox } from './components/InputBox.js';
 import { StatusBar } from './components/StatusBar.js';
 import { WelcomeScreen } from './components/WelcomeScreen.js';
+import { LiveTaskInspector } from './components/LiveTaskInspector.js';
+import { SLASH_COMMANDS } from './components/SlashAutocomplete.js';
 import { useAgentEvents } from './hooks/useAgentEvents.js';
-import { calculateCost } from '../providers/router.js';
 import { getTier } from '../providers/tiers.js';
 import type { ModelId } from '../providers/types.js';
 import { MODELS } from '../providers/types.js';
 import { config } from '../utils/config.js';
-import { createUsageTracker, calculateOpusCost, calculateSonnetCost } from '../usage/tracker.js';
+import { createUsageTracker, calculateSonnetCost } from '../usage/tracker.js';
 import { runPipeline, type PipelineChunk } from '../pipeline/index.js';
-import type { PipelinePhaseData, ContextChip } from './types.js';
+import type { PipelineTaskInfo } from '../pipeline/types.js';
+import type { PipelinePhaseData, ContextChip, SubtaskData } from './types.js';
 
 initChalkLevel();
 
@@ -26,6 +28,51 @@ interface AppProps {
 let messageIdCounter = 0;
 function nextId(): string {
   return `msg-${++messageIdCounter}`;
+}
+
+function estimateContextChipLines(contextChips: ContextChip[] | null | undefined, terminalWidth: number): number {
+  if (!contextChips || contextChips.length === 0) return 0;
+
+  const usableWidth = Math.max(20, terminalWidth - 2);
+  let rows = 1;
+  let currentWidth = 0;
+
+  for (const chip of contextChips) {
+    const chipWidth = chip.label.length + 2;
+    const gap = currentWidth === 0 ? 0 : 1;
+
+    if (currentWidth + gap + chipWidth > usableWidth) {
+      rows += 1;
+      currentWidth = chipWidth;
+    } else {
+      currentWidth += gap + chipWidth;
+    }
+  }
+
+  return rows;
+}
+
+function estimateInputAreaHeight(
+  input: string,
+  isBusy: boolean,
+  isRouting: boolean,
+  contextChips: ContextChip[] | null | undefined,
+  terminalWidth: number,
+): number {
+  if (isBusy || isRouting) {
+    return 3;
+  }
+
+  let lines = 3;
+  lines += estimateContextChipLines(contextChips, terminalWidth);
+
+  const showAutocomplete = input.startsWith('/') && input.length >= 1;
+  if (showAutocomplete) {
+    const matches = SLASH_COMMANDS.filter((cmd) => `/${cmd.name}`.startsWith(input.toLowerCase()));
+    lines += Math.min(matches.length, 5);
+  }
+
+  return lines;
 }
 
 export function App({ initialPrompt, modelPreference, agentMode }: AppProps): React.ReactElement {
@@ -42,13 +89,25 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [savingsPct, setSavingsPct] = useState<number | undefined>(undefined);
   const [contextChips, setContextChips] = useState<ContextChip[] | null>(null);
+  const [scrollOffset, setScrollOffset] = useState(0);
+  const [isInspectorOpen, setIsInspectorOpen] = useState(false);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
-  const { panelState, pipelinePhases, onCostUpdate, onPhaseStart, onPhaseDone, resetPhases } = useAgentEvents();
+  const {
+    panelState,
+    pipelinePhases,
+    onCostUpdate,
+    onPhaseStart,
+    onPhaseDone,
+    onTaskEvent,
+    resetPhases,
+  } = useAgentEvents();
 
   const streamRef = useRef('');
   const busyRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const trackerRef = useRef(createUsageTracker(Date.now().toString(36), 'chat'));
+  const pipelinePhasesRef = useRef<PipelinePhaseData[]>([]);
 
   // Load context chips from .mint/context.json on mount
   useEffect(() => {
@@ -58,6 +117,10 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
   useEffect(() => {
     return () => { abortRef.current?.abort(); };
   }, []);
+
+  useEffect(() => {
+    pipelinePhasesRef.current = pipelinePhases;
+  }, [pipelinePhases]);
 
   // Handle terminal resize — clear screen to prevent ghost artifacts
   const [termSize, setTermSize] = useState({ cols: process.stdout.columns ?? 80, rows: process.stdout.rows ?? 24 });
@@ -71,12 +134,50 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
     return () => { process.stdout.off('resize', onResize); };
   }, []);
 
-  useInput((input, key) => {
-    if (key.ctrl && input === 'c') {
+  useInput((keypress, key) => {
+    if (key.ctrl && keypress === 'c') {
       abortRef.current?.abort();
       exit();
     }
-  });
+    if (key.tab && pipelinePhases.length > 0 && (isBusy || isRouting || input.length === 0)) {
+      setIsInspectorOpen((open) => !open);
+      if (!isInspectorOpen) {
+        setSelectedTaskId(null);
+      }
+      return;
+    }
+    if (isInspectorOpen && (isBusy || isRouting || input.length === 0) && (key.leftArrow || key.rightArrow)) {
+      const taskIds = getInspectorTaskIds(pipelinePhases);
+      if (taskIds.length > 0) {
+        const currentId = selectedTaskId ?? selectDefaultInspectorTaskId(pipelinePhases);
+        const currentIndex = Math.max(0, taskIds.indexOf(currentId ?? taskIds[0]!));
+        const nextIndex = key.rightArrow
+          ? (currentIndex + 1) % taskIds.length
+          : (currentIndex - 1 + taskIds.length) % taskIds.length;
+        setSelectedTaskId(taskIds[nextIndex]!);
+      }
+      return;
+    }
+    const canScroll = messages.length > 0 && (isBusy || isRouting || scrollOffset > 0 || input.length === 0);
+    const pageStep = Math.max(8, Math.floor(termSize.rows / 2));
+
+    if (key.upArrow && canScroll) {
+      setScrollOffset((n) => n + 3);
+      return;
+    }
+    if (key.downArrow && canScroll) {
+      setScrollOffset((n) => Math.max(0, n - 3));
+      return;
+    }
+    if (key.pageUp && canScroll) {
+      setScrollOffset((n) => n + pageStep);
+      return;
+    }
+    if (key.pageDown && canScroll) {
+      setScrollOffset((n) => Math.max(0, n - pageStep));
+      return;
+    }
+  }, { isActive: messages.length > 0 });
 
   const handleSubmit = useCallback(async (userInput: string) => {
     const trimmed = userInput.trim();
@@ -84,6 +185,7 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
 
     // Handle slash commands
     if (trimmed === '/help') {
+      setScrollOffset(0);
       setMessages((prev) => [
         ...prev,
         {
@@ -99,9 +201,12 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
             '  /usage   — session stats',
             '',
             'Keyboard:',
-            '  Esc      — normal mode',
-            '  i        — insert mode',
-            '  Ctrl+C   — exit',
+            '  Enter      — send message',
+            '  ↑ / ↓      — scroll response',
+            '  PgUp / PgDn — faster scroll',
+            '  Tab        — toggle live inspector',
+            '  ← / →      — switch inspector task',
+            '  Ctrl+C     — exit',
           ].join('\n'),
         },
       ]);
@@ -115,11 +220,13 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
       setSessionTokens(0);
       setSessionCost(0);
       setSavingsPct(undefined);
+      setScrollOffset(0);
       resetPhases();
       return;
     }
 
     if (trimmed === '/model') {
+      setScrollOffset(0);
       setMessages((prev) => [
         ...prev,
         { id: nextId(), role: 'assistant', content: `Current model: ${currentModel ?? 'auto'}` },
@@ -139,6 +246,7 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
     setIsBusy(true);
     setIsRouting(true);
     setErrorMsg(null);
+    setScrollOffset(0);
     resetPhases();
 
     // Resolve model
@@ -177,12 +285,6 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
         switch (chunk.type) {
           case 'search':
             setIsRouting(false);
-            if (chunk.filesFound && chunk.filesFound.length > 0) {
-              onPhaseStart('SCOUT');
-              onPhaseDone('SCOUT', {
-                summary: `${chunk.filesFound.length} files found`,
-              });
-            }
             break;
 
           case 'context':
@@ -196,7 +298,7 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
 
           case 'phase-start':
             if (chunk.phase) {
-              onPhaseStart(chunk.phase, chunk.phaseModel);
+              onPhaseStart(chunk.phase, chunk.phaseModel, chunk.subtasks as import('./types.js').SubtaskData[] | undefined);
             }
             break;
 
@@ -206,7 +308,24 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
                 duration: chunk.phaseDuration,
                 cost: chunk.phaseCost,
                 summary: chunk.phaseSummary,
+                subtasks: chunk.subtasks as import('./types.js').SubtaskData[] | undefined,
               });
+            }
+            break;
+
+          case 'task-start':
+          case 'task-progress':
+          case 'task-done':
+          case 'task-failed':
+          case 'task-notification':
+            if (chunk.task) {
+              onTaskEvent(chunk.task as PipelineTaskInfo);
+            }
+            break;
+
+          case 'task-log':
+            if (chunk.task) {
+              onTaskEvent(chunk.task as PipelineTaskInfo, chunk.log);
             }
             break;
 
@@ -224,11 +343,9 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
           case 'done': {
             const r = chunk.result!;
             setCurrentModel(r.model);
-
-            const cost = calculateCost(r.model, r.inputTokens, r.outputTokens);
             setSessionTokens((t) => t + r.inputTokens + r.outputTokens);
-            setSessionCost((c) => c + cost.total);
-            onCostUpdate(cost.total, r.inputTokens + r.outputTokens);
+            setSessionCost((c) => c + r.cost);
+            onCostUpdate(r.cost, r.inputTokens + r.outputTokens);
 
             const savPct = r.opusCost > 0
               ? Math.round((1 - r.cost / r.opusCost) * 100)
@@ -248,9 +365,9 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
               tier: getTier(r.model),
               inputTokens: r.inputTokens,
               outputTokens: r.outputTokens,
-              cost: cost.total,
+              cost: r.cost,
               opusCost: r.opusCost,
-              savedAmount: Math.max(0, r.opusCost - cost.total),
+              savedAmount: Math.max(0, r.opusCost - r.cost),
               routingReason: `pipeline → ${r.model}`,
               taskPreview: trimmed,
               latencyMs: r.duration,
@@ -264,10 +381,10 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
                   ? {
                       ...m,
                       content: streamRef.current,
-                      cost: cost.total,
+                      cost: r.cost,
                       model: r.model,
                       isStreaming: false,
-                      phases: [...pipelinePhases],
+                      phases: [...pipelinePhasesRef.current],
                     }
                   : m
               )
@@ -301,6 +418,16 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
   }, []);
 
   const showWelcome = messages.length === 0 && !isBusy && !isRouting;
+  const inspectorHeight = isInspectorOpen && pipelinePhases.length > 0
+    ? Math.min(10, Math.max(6, Math.floor(termSize.rows * 0.28)))
+    : 0;
+  const reservedRows =
+    (errorMsg ? 1 : 0)
+    + inspectorHeight
+    + estimateInputAreaHeight(input, isBusy, isRouting, contextChips, termSize.cols)
+    + 1;
+  const messageAreaHeight = Math.max(1, termSize.rows - reservedRows);
+  const effectiveSelectedTaskId = selectedTaskId ?? selectDefaultInspectorTaskId(pipelinePhases);
 
   return (
     <Box flexDirection="column" height={termSize.rows}>
@@ -317,7 +444,16 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
           messages={messages}
           streamingContent={streamingContent}
           livePhases={pipelinePhases}
-          availableHeight={termSize.rows - 6}
+          availableHeight={messageAreaHeight}
+          scrollOffset={scrollOffset}
+        />
+      )}
+
+      {isInspectorOpen && !showWelcome && (
+        <LiveTaskInspector
+          phases={pipelinePhases}
+          selectedTaskId={effectiveSelectedTaskId}
+          maxHeight={inspectorHeight}
         />
       )}
 
@@ -336,6 +472,7 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
         sessionCost={sessionCost}
         savingsPct={savingsPct}
         agentMode={agentMode ?? 'auto'}
+        inspectorHint={pipelinePhases.length > 0 ? 'Tab inspector' : undefined}
       />
     </Box>
   );
@@ -360,4 +497,33 @@ async function loadContextChips(): Promise<ContextChip[] | null> {
   } catch {
     return null;
   }
+}
+
+function getInspectorTaskIds(phases: PipelinePhaseData[]): string[] {
+  return flattenInspectorTasks(phases).map((task) => task.taskId ?? task.id);
+}
+
+function selectDefaultInspectorTaskId(phases: PipelinePhaseData[]): string | null {
+  const tasks = flattenInspectorTasks(phases);
+  return tasks[0]?.taskId ?? tasks[0]?.id ?? null;
+}
+
+function flattenInspectorTasks(phases: PipelinePhaseData[]): SubtaskData[] {
+  return [...phases.flatMap((phase) => phase.subtasks ?? [])].sort((left, right) => {
+    return rankInspectorTask(right) - rankInspectorTask(left);
+  });
+}
+
+function rankInspectorTask(task: SubtaskData): number {
+  const statusRank = (() => {
+    switch (task.status) {
+      case 'waiting_approval': return 5;
+      case 'running': return 4;
+      case 'retry': return 3;
+      case 'blocked': return 2;
+      case 'queued': return 1;
+      default: return 0;
+    }
+  })();
+  return statusRank * 1000 + (task.recentLogs?.length ?? 0);
 }

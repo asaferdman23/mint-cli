@@ -1,4 +1,5 @@
 import type { ModelId } from '../providers/types.js';
+import type { AgentMode } from '../agent/tools.js';
 
 /** A single file diff parsed from the LLM response. */
 export interface ParsedDiff {
@@ -18,9 +19,59 @@ export interface DiffLine {
   content: string;
 }
 
+export type PipelinePhaseName = 'SCOUT' | 'ARCHITECT' | 'BUILDER' | 'REVIEWER';
+export type PipelineTaskStatus =
+  | 'pending'
+  | 'queued'
+  | 'blocked'
+  | 'running'
+  | 'waiting_approval'
+  | 'done'
+  | 'retry'
+  | 'failed';
+
+export interface PipelineTaskInfo {
+  taskId: string;
+  subtaskId?: string;
+  parentTaskId?: string;
+  phase: PipelinePhaseName;
+  role: 'scout' | 'architect' | 'builder' | 'reviewer';
+  title: string;
+  description: string;
+  status: PipelineTaskStatus;
+  progressSummary?: string;
+  blockedBy?: string[];
+  isBackground?: boolean;
+  requiresApproval?: boolean;
+  model?: string;
+  duration?: number;
+  cost?: number;
+  attempt?: number;
+  dependsOn?: string[];
+  writeTargets?: string[];
+  verificationTargets?: string[];
+  outputPath?: string;
+  transcriptPath?: string;
+  transcriptName?: string;
+  allowedTools?: string[];
+}
+
 /** Chunk emitted during streaming pipeline execution. */
 export interface PipelineChunk {
-  type: 'search' | 'context' | 'phase-start' | 'phase-done' | 'text' | 'done' | 'error';
+  type:
+    | 'search'
+    | 'context'
+    | 'phase-start'
+    | 'phase-done'
+    | 'task-start'
+    | 'task-progress'
+    | 'task-log'
+    | 'task-done'
+    | 'task-failed'
+    | 'task-notification'
+    | 'text'
+    | 'done'
+    | 'error';
   /** Streaming text from the model. */
   text?: string;
   /** Files found during search phase. */
@@ -28,7 +79,7 @@ export interface PipelineChunk {
   /** Context token count after compression. */
   contextTokens?: number;
   /** Phase name (for phase-start, phase-done). */
-  phase?: 'SCOUT' | 'ARCHITECT' | 'BUILDER' | 'REVIEWER';
+  phase?: PipelinePhaseName;
   /** Model used by this phase. */
   phaseModel?: string;
   /** Phase summary (for phase-done). */
@@ -41,6 +92,35 @@ export interface PipelineChunk {
   result?: PipelineResult;
   /** Error message (only on type: 'error'). */
   error?: string;
+  /** Subtask info for parallel builders. */
+  subtasks?: SubtaskInfo[];
+  /** Task-level event payload. */
+  task?: PipelineTaskInfo;
+  /** Optional log payload for task-log events. */
+  log?: string;
+}
+
+export interface SubtaskInfo {
+  id: string;
+  description: string;
+  status: PipelineTaskStatus;
+  duration?: number;
+  cost?: number;
+  taskId?: string;
+  parentTaskId?: string;
+  role?: 'scout' | 'architect' | 'builder' | 'reviewer';
+  title?: string;
+  progressSummary?: string;
+  blockedBy?: string[];
+  requiresApproval?: boolean;
+  isBackground?: boolean;
+  model?: string;
+  attempt?: number;
+  dependsOn?: string[];
+  writeTargets?: string[];
+  verificationTargets?: string[];
+  transcriptPath?: string;
+  transcriptName?: string;
 }
 
 /** Final result after pipeline completes. */
@@ -71,4 +151,11 @@ export interface PipelineOptions {
   signal?: AbortSignal;
   /** Conversation history for TUI mode. */
   history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  agentMode?: AgentMode;
+  onApprovalNeeded?: (toolName: string, toolInput: Record<string, unknown>) => Promise<boolean>;
+  onDiffProposed?: (path: string, diff: string) => Promise<boolean>;
+  onIterationApprovalNeeded?: (
+    iteration: number,
+    toolCalls: Array<{ name: string; input: Record<string, unknown> }>,
+  ) => Promise<boolean>;
 }

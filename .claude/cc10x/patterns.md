@@ -29,6 +29,10 @@
 - Manual test pattern: document exact command + expected output in plan steps
 
 ## Common Gotchas
+- Agent test pattern: run with `npx tsx src/agents/__tests__/foo.test.ts` — no jest/vitest, plain Node assertions
+- parseArchitectResponse: exported from architect.ts so tests can import without LLM calls
+- parseReviewerResponseFull: exported from reviewer.ts for the same reason
+- BuilderOptions.isolated: when true, skips history AND project tree to keep subtask builders focused
 - ESM .js extensions: TypeScript resolves .ts at compile time, Node requires .js at runtime — ALWAYS add .js in imports
 - `config.get()` returns `unknown` — cast aggressively before property access
 - Ink `flexGrow` on right panel: MUST set explicit width, hide when `process.stdout.columns < 80`

@@ -2,7 +2,6 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import Spinner from 'ink-spinner';
-import { useVimInput } from '../hooks/useVimInput.js';
 import { SlashAutocomplete, SLASH_COMMANDS } from './SlashAutocomplete.js';
 import type { ContextChip } from '../types.js';
 import { ContextChips } from './ContextChips.js';
@@ -20,19 +19,6 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-function TextWithCursor({ text, offset }: { text: string; offset: number }): React.ReactElement {
-  const before = text.slice(0, offset);
-  const at = text[offset] ?? ' ';
-  const after = text.slice(offset + 1);
-  return (
-    <Text>
-      {before}
-      <Text inverse>{at}</Text>
-      {after}
-    </Text>
-  );
-}
-
 export function InputBox({
   value,
   onChange,
@@ -42,6 +28,7 @@ export function InputBox({
   contextChips,
 }: InputBoxProps): React.ReactElement {
   const tokenEst = estimateTokens(value);
+  const [cursorOffset, setCursorOffset] = useState(0);
   const [autocompleteIndex, setAutocompleteIndex] = useState(0);
 
   const showAutocomplete = value.startsWith('/') && value.length >= 1 && !isBusy && !isRouting;
@@ -50,52 +37,79 @@ export function InputBox({
     : [];
   const hasAutocomplete = autocompleteMatches.length > 0 && showAutocomplete;
 
-  const vim = useVimInput({
-    value,
-    onChange,
-    startInNormal: true,
-    onSubmit: (val: string) => {
-      // If autocomplete is showing and user presses Enter, select the command
-      if (hasAutocomplete) {
-        const selected = autocompleteMatches[autocompleteIndex % autocompleteMatches.length];
-        if (selected) {
-          onChange(`/${selected.name} `);
-          setAutocompleteIndex(0);
-          return;
-        }
-      }
-      onSubmit(val);
-      setAutocompleteIndex(0);
-    },
-  });
-
   useInput(
     (input, key) => {
-      // Intercept arrow keys for autocomplete navigation
-      if (hasAutocomplete && vim.mode === 'INSERT') {
-        if (key.upArrow) {
-          setAutocompleteIndex((prev) => Math.max(0, prev - 1));
-          return;
-        }
-        if (key.downArrow) {
-          setAutocompleteIndex((prev) => Math.min(autocompleteMatches.length - 1, prev + 1));
-          return;
-        }
-        if (key.tab) {
+      if (key.ctrl) return; // handled by App (Ctrl+C)
+
+      if (key.return) {
+        if (hasAutocomplete) {
           const selected = autocompleteMatches[autocompleteIndex % autocompleteMatches.length];
           if (selected) {
             onChange(`/${selected.name} `);
+            setCursorOffset(`/${selected.name} `.length);
+            setAutocompleteIndex(0);
+            return;
+          }
+        }
+        onSubmit(value);
+        setCursorOffset(0);
+        setAutocompleteIndex(0);
+        return;
+      }
+
+      if (key.backspace || key.delete) {
+        if (cursorOffset === 0) return;
+        const newText = value.slice(0, cursorOffset - 1) + value.slice(cursorOffset);
+        onChange(newText);
+        setCursorOffset(cursorOffset - 1);
+        return;
+      }
+
+      if (key.leftArrow) {
+        setCursorOffset(Math.max(0, cursorOffset - 1));
+        return;
+      }
+      if (key.rightArrow) {
+        setCursorOffset(Math.min(value.length, cursorOffset + 1));
+        return;
+      }
+
+      if (key.upArrow) {
+        if (hasAutocomplete) setAutocompleteIndex((p) => Math.max(0, p - 1));
+        return;
+      }
+      if (key.downArrow) {
+        if (hasAutocomplete) setAutocompleteIndex((p) => Math.min(autocompleteMatches.length - 1, p + 1));
+        return;
+      }
+
+      if (key.tab) {
+        if (hasAutocomplete) {
+          const selected = autocompleteMatches[autocompleteIndex % autocompleteMatches.length];
+          if (selected) {
+            onChange(`/${selected.name} `);
+            setCursorOffset(`/${selected.name} `.length);
             setAutocompleteIndex(0);
           }
-          return;
         }
+        return;
       }
-      vim.handleKey(input, key);
+
+      // Printable character
+      if (input && !key.meta && !key.escape && input.charCodeAt(0) >= 32) {
+        const newText = value.slice(0, cursorOffset) + input + value.slice(cursorOffset);
+        onChange(newText);
+        setCursorOffset(cursorOffset + input.length);
+      }
     },
     { isActive: !isBusy && !isRouting },
   );
 
-  // Reset autocomplete index when input changes
+  // Sync cursor when value is cleared externally (after submit)
+  React.useEffect(() => {
+    if (value.length === 0) setCursorOffset(0);
+  }, [value]);
+
   React.useEffect(() => {
     setAutocompleteIndex(0);
   }, [value]);
@@ -122,23 +136,17 @@ export function InputBox({
     );
   }
 
-  const isNormal = vim.mode === 'NORMAL';
-  const borderColor = isNormal ? 'yellow' : 'cyan';
-  const promptColor = isNormal ? 'yellow' : 'cyan';
-
-  // Multi-line: count lines and cap display height
-  const lines = value.split('\n');
-  const displayLines = Math.min(lines.length, 6);
-  const heightVal = Math.max(1, displayLines);
+  // Render text with cursor block
+  const before = value.slice(0, cursorOffset);
+  const at = value[cursorOffset] ?? ' ';
+  const after = value.slice(cursorOffset + 1);
 
   return (
     <Box flexDirection="column">
-      {/* Context chips */}
       {contextChips && contextChips.length > 0 && (
         <ContextChips chips={contextChips} />
       )}
 
-      {/* Autocomplete dropdown */}
       {hasAutocomplete && (
         <SlashAutocomplete
           input={value}
@@ -147,28 +155,18 @@ export function InputBox({
         />
       )}
 
-      {/* Input box */}
-      <Box
-        borderStyle="single"
-        borderColor={borderColor}
-        paddingX={1}
-        flexDirection="row"
-      >
-        {/* Mode indicator */}
-        <Text color={promptColor} bold>{isNormal ? '[N] ' : '[I] '}</Text>
-
+      <Box borderStyle="single" borderColor="cyan" paddingX={1} flexDirection="row">
         <Box flexGrow={1}>
-          {isNormal ? (
-            value.length === 0
-              ? <Text dimColor>— NORMAL — press i to type</Text>
-              : <TextWithCursor text={value} offset={vim.cursorOffset} />
+          {value.length === 0 ? (
+            <Text dimColor>Ask anything… or try "fix the auth bug"<Text inverse> </Text></Text>
           ) : (
-            value.length === 0
-              ? <Text dimColor>Ask anything… or try "fix the auth bug"</Text>
-              : <Text>{value}<Text inverse> </Text></Text>
+            <Text>
+              {before}
+              <Text inverse>{at}</Text>
+              {after}
+            </Text>
           )}
         </Box>
-
         {value.length > 0 && (
           <Text dimColor>{` ~${tokenEst}t`}</Text>
         )}

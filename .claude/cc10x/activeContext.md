@@ -2,9 +2,21 @@
 <!-- CC10X: Do not rename headings. Used as Edit anchors. -->
 
 ## Current Focus
-Task 28 COMPLETE — usage tracking system + dashboard + routing explainer built.
+Specialist builder system + skills system built and verified.
 
 ## Recent Changes
+- [2026-04-01] Built specialist builder system: 7 specialist configs (frontend/backend/database/testing/devops/docs/general) in src/agents/specialists/
+- [2026-04-01] Built skills system: src/context/skills.ts — loadSkills + getSkillsForSpecialist with YAML frontmatter parsing
+- [2026-04-01] Updated Subtask type with specialist field, architect parses/detects specialist, builder uses specialist prompt + skills
+- [2026-04-01] Added `mint skills` CLI command, updated `mint init` to generate starter skills in .mint/skills/
+- [2026-04-01] Test: src/agents/__tests__/specialists-skills.test.ts — RED exit=1, GREEN exit=0
+- [2026-04-01] Built real multi-agent pipeline in src/agents/ — parallel builders, retry loop, JSON-structured arch output
+- [2026-04-01] Added Subtask, SubtaskBuilderResult types to agents/types.ts
+- [2026-04-01] Updated ArchitectOutput to type='single'|'split' with JSON parsing (parseArchitectResponse exported)
+- [2026-04-01] Updated ReviewerOutput with subtaskFeedback + parseReviewerResponseFull exported for testing
+- [2026-04-01] Added BuilderOptions interface with isolated flag (skips history + project tree in subtask mode)
+- [2026-04-01] Rewrote agents/index.ts — parallel builders via Promise.all, max-2 retry loop with subtask targeting
+- [2026-04-01] Test: src/agents/__tests__/agents-pipeline.test.ts — RED exit=1, GREEN exit=0
 - [2026-03-30] Task 28: Created src/usage/db.ts (UsageDb, better-sqlite3)
 - [2026-03-30] Task 28: Created src/usage/tracker.ts (calculateOpusCost, createUsageTracker)
 - [2026-03-30] Task 28: Created src/usage/dashboard.tsx (Ink TUI dashboard)

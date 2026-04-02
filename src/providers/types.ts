@@ -18,9 +18,11 @@ export type ModelId =
   | 'groq-llama-70b'
   | 'groq-llama-8b'
   | 'groq-gpt-oss-120b'
-  | 'groq-gpt-oss-20b';
+  | 'groq-gpt-oss-20b'
+  | 'grok-4-beta'
+  | 'mistral-small';
 
-export type ProviderId = 'anthropic' | 'deepseek' | 'openrouter' | 'gemini' | 'openai' | 'kimi' | 'grok' | 'groq';
+export type ProviderId = 'anthropic' | 'deepseek' | 'openrouter' | 'gemini' | 'openai' | 'kimi' | 'grok' | 'groq' | 'mistral';
 
 export interface ModelInfo {
   id: ModelId;
@@ -41,8 +43,8 @@ export const MODELS: Record<ModelId, ModelInfo> = {
     id: 'deepseek-v3',
     provider: 'deepseek',
     name: 'DeepSeek V3',
-    inputPrice: 0.27,
-    outputPrice: 1.10,
+    inputPrice: 0.28,
+    outputPrice: 0.42,
     contextWindow: 128000,
     capabilities: { coding: 9, reasoning: 8, speed: 8 },
   },
@@ -77,8 +79,8 @@ export const MODELS: Record<ModelId, ModelInfo> = {
     id: 'gemini-2-flash',
     provider: 'gemini',
     name: 'Gemini 2.0 Flash',
-    inputPrice: 0.075,
-    outputPrice: 0.30,
+    inputPrice: 0.10,
+    outputPrice: 0.40,
     contextWindow: 1000000,
     capabilities: { coding: 7, reasoning: 7, speed: 10 },
   },
@@ -216,6 +218,24 @@ export const MODELS: Record<ModelId, ModelInfo> = {
     outputPrice: 0.30,
     contextWindow: 128000,
     capabilities: { coding: 7, reasoning: 7, speed: 10 },
+  },
+  'grok-4-beta': {
+    id: 'grok-4-beta',
+    provider: 'grok',
+    name: 'Grok 4.2 Beta',
+    inputPrice: 2.0,
+    outputPrice: 6.0,
+    contextWindow: 131072,
+    capabilities: { coding: 9, reasoning: 10, speed: 7 },
+  },
+  'mistral-small': {
+    id: 'mistral-small',
+    provider: 'mistral',
+    name: 'Mistral Small 4',
+    inputPrice: 0.15,
+    outputPrice: 0.60,
+    contextWindow: 32768,
+    capabilities: { coding: 7, reasoning: 6, speed: 10 },
   },
 };
 

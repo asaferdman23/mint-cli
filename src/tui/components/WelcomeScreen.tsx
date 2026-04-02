@@ -69,6 +69,8 @@ export function WelcomeScreen({
           <Text><Text color="yellow">Esc   </Text><Text dimColor> → normal mode</Text></Text>
           <Text><Text color="yellow">i     </Text><Text dimColor> → insert mode</Text></Text>
           <Text><Text color="yellow">Enter </Text><Text dimColor> → send message</Text></Text>
+          <Text><Text color="yellow">Tab   </Text><Text dimColor> → live inspector</Text></Text>
+          <Text><Text color="yellow">PgUp  </Text><Text dimColor> → scroll faster</Text></Text>
           <Text><Text color="yellow">Ctrl+C</Text><Text dimColor> → exit</Text></Text>
         </Box>
       </Box>

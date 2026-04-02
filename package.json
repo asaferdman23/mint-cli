@@ -14,7 +14,7 @@
     "dev": "tsup --watch",
     "start": "node dist/cli/index.js",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "MINT_API_TOKEN=6711e079a4547a8aec4fe7831ff80de41f9d313ec67fe8bfbea666f302211c7c MINT_GATEWAY_URL=https://api.usemint.dev npm run build"
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "ai",

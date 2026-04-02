@@ -4,6 +4,7 @@ import { selectTarget, FALLBACK } from '../router.js'
 import { groqStream } from '../providers/groq.js'
 import { deepseekStream } from '../providers/deepseek.js'
 import { grokStream } from '../providers/grok.js'
+import { mistralStream } from '../providers/mistral.js'
 import { insertRequest, insertRoutingDecision, insertError } from '../db.js'
 import { log, logError } from '../logger.js'
 import type { ChatRequest, Message } from '../types.js'
@@ -30,7 +31,7 @@ chatRoute.post('/chat', async (c) => {
   if (!messages?.length) return c.json({ error: 'messages required' }, 400)
 
   const lastUserMsg = [...messages].reverse().find(m => m.role === 'user')?.content ?? ''
-  const contextTokens = messages.reduce((s, m) => s + estimateTokens(m.content), 0)
+  const contextTokens = messages.reduce((s, m) => s + estimateTokens(m.content ?? ''), 0)
 
   const { target, reason, savingsPct } = selectTarget(lastUserMsg, contextTokens)
 
@@ -57,6 +58,7 @@ chatRoute.post('/chat', async (c) => {
   const streamFn =
     target.provider === 'groq' ? groqStream :
     target.provider === 'deepseek' ? deepseekStream :
+    target.provider === 'mistral' ? mistralStream :
     grokStream
 
   const startMs = Date.now()

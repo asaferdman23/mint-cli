@@ -9,6 +9,7 @@ interface StatusBarProps {
   sessionCost: number;
   savingsPct?: number;
   agentMode?: string;
+  inspectorHint?: string;
 }
 
 function formatTokens(tokens: number): string {
@@ -38,6 +39,7 @@ export function StatusBar({
   sessionCost,
   savingsPct,
   agentMode = 'auto',
+  inspectorHint,
 }: StatusBarProps): React.ReactElement {
   const model = currentModel ?? 'auto';
 
@@ -59,6 +61,12 @@ export function StatusBar({
       <Box gap={0}>
         <Text color={modeColor(agentMode) as Parameters<typeof Text>[0]['color']}>{agentMode}</Text>
         <Text dimColor> │ v0.2.0</Text>
+        {inspectorHint && (
+          <>
+            <Text dimColor> │ </Text>
+            <Text dimColor>{inspectorHint}</Text>
+          </>
+        )}
       </Box>
     </Box>
   );

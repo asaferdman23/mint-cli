@@ -1,97 +1,25 @@
-import { spawnSync, execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { resolve, sep } from 'node:path';
-import { glob } from 'glob';
-import type { ToolDefinition } from '../providers/types.js';
+/**
+ * Agent tool layer — wraps src/tools/ registry with agent-specific concerns:
+ * approval modes, diff preview, plan-mode blocking.
+ *
+ * The actual tool implementations live in src/tools/*.ts.
+ */
+import {
+  getToolDefinitions,
+  executeTool as executeToolRaw,
+  isDestructiveTool,
+  toolRequiresApproval,
+  type ToolContext,
+  type ToolDefinition,
+} from '../tools/index.js';
 
-function assertInCwd(filePath: string, cwd: string): string {
-  const abs = resolve(cwd, filePath);
-  const cwdAbs = resolve(cwd);
-  if (!abs.startsWith(cwdAbs + sep) && abs !== cwdAbs) {
-    throw new Error(`Path outside working directory: ${filePath}`);
-  }
-  return abs;
+// Re-export the tool definitions for the agent loop / providers
+export const TOOLS: ToolDefinition[] = getToolDefinitions();
+export function getAgentToolDefinitions(toolNames?: string[]): ToolDefinition[] {
+  return getToolDefinitions(toolNames);
 }
 
-// ─── Tool Definitions ─────────────────────────────────────────────────────────
-
-export const TOOLS: ToolDefinition[] = [
-  {
-    name: 'bash',
-    description: 'Execute a shell command. Returns stdout, stderr, exit code.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        command: { type: 'string', description: 'Shell command to run' },
-        timeout: { type: 'number', description: 'Timeout in ms (default 30000)' },
-      },
-      required: ['command'],
-    },
-  },
-  {
-    name: 'read_file',
-    description: 'Read the contents of a file.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'Absolute or relative path to file' },
-      },
-      required: ['path'],
-    },
-  },
-  {
-    name: 'write_file',
-    description: 'Write content to a file (creates or overwrites).',
-    input_schema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'Path to file' },
-        content: { type: 'string', description: 'Content to write' },
-      },
-      required: ['path', 'content'],
-    },
-  },
-  {
-    name: 'edit_file',
-    description: 'Replace exact text in a file. Fails if old_text not found.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'Path to file' },
-        old_text: { type: 'string', description: 'Exact text to replace' },
-        new_text: { type: 'string', description: 'Replacement text' },
-      },
-      required: ['path', 'old_text', 'new_text'],
-    },
-  },
-  {
-    name: 'find_files',
-    description: 'Find files matching a glob pattern.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        pattern: { type: 'string', description: 'Glob pattern (e.g. "**/*.ts")' },
-        dir: { type: 'string', description: 'Directory to search in (default: cwd)' },
-      },
-      required: ['pattern'],
-    },
-  },
-  {
-    name: 'grep_files',
-    description: 'Search file contents for a regex pattern. Returns matching lines with file:line format.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        pattern: { type: 'string', description: 'Regex pattern to search for' },
-        dir: { type: 'string', description: 'Directory to search in (default: cwd)' },
-        glob: { type: 'string', description: 'File glob filter (e.g. "*.ts")' },
-      },
-      required: ['pattern'],
-    },
-  },
-];
-
-// ─── Tool Executors ────────────────────────────────────────────────────────────
+// ─── Agent-level types ──────────────────────────────────────────────────────
 
 export interface ToolResult {
   toolCallId: string;
@@ -108,134 +36,32 @@ export interface AgentOptions {
   signal?: AbortSignal;
   verbose?: boolean;
   mode?: AgentMode;
+  toolNames?: string[];
   onApprovalNeeded?: (toolName: string, toolInput: Record<string, unknown>) => Promise<boolean>;
   onDiffProposed?: (path: string, diff: string) => Promise<boolean>;
+  onIterationApprovalNeeded?: (
+    iteration: number,
+    toolCalls: Array<{ name: string; input: Record<string, unknown> }>,
+  ) => Promise<boolean>;
 }
+
+// ─── Agent tool executor ────────────────────────────────────────────────────
 
 /**
- * Execute a bash command with safety constraints.
- * - spawnSync with 30s timeout
- * - 64KB output cap
- * - cwd enforced
- */
-function executeBash(command: string, cwd: string, timeout = 30000): string {
-  const result = spawnSync('sh', ['-c', command], {
-    cwd,
-    encoding: 'utf8',
-    timeout,
-    maxBuffer: 64 * 1024, // 64KB cap
-  });
-
-  const stdout = (result.stdout ?? '').slice(0, 64000);
-  const stderr = (result.stderr ?? '').slice(0, 4000);
-  const exitCode = result.status ?? 0;
-
-  if (result.error) {
-    const errMsg = result.error.message ?? 'Unknown error';
-    if (errMsg.includes('ETIMEDOUT') || errMsg.includes('timeout')) {
-      return `[ERROR] Command timed out after ${timeout}ms`;
-    }
-    return `[ERROR] ${errMsg}`;
-  }
-
-  let output = '';
-  if (stdout) output += stdout;
-  if (stderr) output += (output ? '\n[stderr] ' : '[stderr] ') + stderr;
-  if (!output) output = `[exit ${exitCode}]`;
-  else if (exitCode !== 0) output += `\n[exit ${exitCode}]`;
-
-  return output;
-}
-
-function executeReadFile(filePath: string, cwd: string): string {
-  try {
-    const abs = assertInCwd(filePath, cwd);
-    if (!existsSync(abs)) {
-      return `[ERROR] File not found: ${filePath}`;
-    }
-    const content = readFileSync(abs, 'utf8');
-    if (content.length > 64000) {
-      return content.slice(0, 64000) + '\n... [truncated at 64KB]';
-    }
-    return content;
-  } catch (err) {
-    return `[ERROR] ${err instanceof Error ? err.message : String(err)}`;
-  }
-}
-
-function executeWriteFile(filePath: string, content: string, cwd: string): string {
-  try {
-    const abs = assertInCwd(filePath, cwd);
-    writeFileSync(abs, content, 'utf8');
-    return `[OK] Written ${content.length} chars to ${filePath}`;
-  } catch (err) {
-    return `[ERROR] ${err instanceof Error ? err.message : String(err)}`;
-  }
-}
-
-function executeEditFile(filePath: string, oldText: string, newText: string, cwd: string): string {
-  try {
-    const abs = assertInCwd(filePath, cwd);
-    if (!existsSync(abs)) {
-      return `[ERROR] File not found: ${filePath}`;
-    }
-    const current = readFileSync(abs, 'utf8');
-    if (!current.includes(oldText)) {
-      return `[ERROR] old_text not found in ${filePath}. Make sure the text matches exactly.`;
-    }
-    const updated = current.replace(oldText, newText);
-    writeFileSync(abs, updated, 'utf8');
-    return `[OK] Replaced text in ${filePath}`;
-  } catch (err) {
-    return `[ERROR] ${err instanceof Error ? err.message : String(err)}`;
-  }
-}
-
-async function executeFindFiles(pattern: string, dir?: string, cwd = '.'): Promise<string> {
-  try {
-    const searchDir = dir ?? cwd;
-    const matches = await glob(pattern, { cwd: searchDir, nodir: false });
-    if (matches.length === 0) {
-      return `[OK] No files found matching: ${pattern}`;
-    }
-    return matches.join('\n');
-  } catch (err) {
-    return `[ERROR] ${err instanceof Error ? err.message : String(err)}`;
-  }
-}
-
-function executeGrepFiles(pattern: string, dir?: string, fileGlob?: string, cwd = '.'): string {
-  try {
-    const searchDir = resolve(cwd, dir ?? '.');
-    const args = ['-rn', '-E', pattern];
-    if (fileGlob) args.push(`--include=${fileGlob}`);
-    args.push(searchDir);
-    const result = execFileSync('grep', args, { encoding: 'utf8', timeout: 15000 });
-    const lines = result.split('\n').slice(0, 100);
-    return lines.join('\n') || '[OK] No matches found';
-  } catch (err: unknown) {
-    // grep exits 1 when no matches — not an error
-    const spawnErr = err as { status?: number; stdout?: string };
-    if (spawnErr.status === 1) return '[OK] No matches found';
-    return `[ERROR] ${err instanceof Error ? err.message : String(err)}`;
-  }
-}
-
-/**
- * Execute a tool call by name with input arguments.
+ * Execute a tool call with agent-mode policy (plan/diff/auto/yolo).
  */
 export async function executeTool(
   toolName: string,
   input: Record<string, unknown>,
   toolCallId: string,
-  options: AgentOptions
+  options: AgentOptions,
 ): Promise<ToolResult> {
-  const cwd = options.cwd;
-  const isDestructive = ['write_file', 'edit_file', 'bash'].includes(toolName);
   const mode = options.mode ?? 'auto';
+  const destructive = isDestructiveTool(toolName);
+  const diffApprovalTools = new Set(['write_file', 'edit_file', 'search_replace']);
 
   // --plan mode: block all writes
-  if (mode === 'plan' && isDestructive) {
+  if (mode === 'plan' && destructive) {
     return {
       toolCallId,
       toolName,
@@ -245,94 +71,62 @@ export async function executeTool(
   }
 
   // --diff mode: for write_file/edit_file, show diff and ask
-  if (mode === 'diff' && (toolName === 'write_file' || toolName === 'edit_file')) {
-    const diffPreview = await generateDiffPreview(toolName, input, cwd);
+  if (mode === 'diff' && diffApprovalTools.has(toolName)) {
+    const diffPreview = await generateDiffPreview(toolName, input, options.cwd);
     if (options.onDiffProposed) {
-      const approved = await options.onDiffProposed(String(input.path ?? ''), diffPreview);
+      const target = String(input.path ?? input.file ?? '(working tree)');
+      const approved = await options.onDiffProposed(target, diffPreview);
       if (!approved) {
         return {
           toolCallId,
           toolName,
-          content: `[DIFF MODE] Change rejected by user for ${input.path}`,
+          content: `[DIFF MODE] Change rejected by user for ${target}`,
           isError: false,
         };
       }
     }
   }
 
-  // --auto mode (default): prompt for risky bash commands
-  if (mode === 'auto' && toolName === 'bash') {
-    const cmd = String(input.command ?? '');
-    const isRisky = /\b(rm|mv|del|format|truncate|drop|delete|unlink)\b/.test(cmd);
-    if (isRisky && options.onApprovalNeeded) {
-      const approved = await options.onApprovalNeeded(toolName, input);
-      if (!approved) {
-        return {
-          toolCallId,
-          toolName,
-          content: `[AUTO MODE] Command rejected by user: ${cmd}`,
-          isError: false,
-        };
-      }
+  if (
+    mode !== 'yolo' &&
+    !diffApprovalTools.has(toolName) &&
+    toolRequiresApproval(toolName, input) &&
+    options.onApprovalNeeded
+  ) {
+    const approved = await options.onApprovalNeeded(toolName, input);
+    if (!approved) {
+      return {
+        toolCallId,
+        toolName,
+        content: `[${mode.toUpperCase()} MODE] Action rejected by user for ${toolName}`,
+        isError: false,
+      };
     }
   }
 
-  try {
-    let content: string;
+  // Execute through the tools registry
+  const ctx: ToolContext = {
+    cwd: options.cwd,
+    projectRoot: options.cwd,
+    abortSignal: options.signal,
+  };
 
-    switch (toolName) {
-      case 'bash': {
-        const command = input.command as string;
-        const timeout = (input.timeout as number | undefined) ?? 30000;
-        content = executeBash(command, cwd, timeout);
-        break;
-      }
-      case 'read_file': {
-        const filePath = input.path as string;
-        content = executeReadFile(filePath, cwd);
-        break;
-      }
-      case 'write_file': {
-        const filePath = input.path as string;
-        const fileContent = input.content as string;
-        content = executeWriteFile(filePath, fileContent, cwd);
-        break;
-      }
-      case 'edit_file': {
-        const filePath = input.path as string;
-        const oldText = input.old_text as string;
-        const newText = input.new_text as string;
-        content = executeEditFile(filePath, oldText, newText, cwd);
-        break;
-      }
-      case 'find_files': {
-        const pattern = input.pattern as string;
-        const dir = input.dir as string | undefined;
-        content = await executeFindFiles(pattern, dir, cwd);
-        break;
-      }
-      case 'grep_files': {
-        const pattern = input.pattern as string;
-        const dir = input.dir as string | undefined;
-        const fileGlob = input.glob as string | undefined;
-        content = executeGrepFiles(pattern, dir, fileGlob, cwd);
-        break;
-      }
-      default:
-        content = `[ERROR] Unknown tool: ${toolName}`;
-    }
+  const result = await executeToolRaw(toolName, input, ctx);
 
-    return { toolCallId, toolName, content, isError: content.startsWith('[ERROR]') };
-  } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    return { toolCallId, toolName, content: `[ERROR] ${errMsg}`, isError: true };
-  }
+  return {
+    toolCallId,
+    toolName,
+    content: result.success ? result.output : `[ERROR] ${result.error ?? result.output}`,
+    isError: !result.success,
+  };
 }
+
+// ─── Diff preview ───────────────────────────────────────────────────────────
 
 async function generateDiffPreview(
   toolName: string,
   input: Record<string, unknown>,
-  cwd: string
+  cwd: string,
 ): Promise<string> {
   const { createTwoFilesPatch } = await import('diff');
   const { readFile } = await import('node:fs/promises');
@@ -352,7 +146,42 @@ async function generateDiffPreview(
     const path = String(input.path ?? '');
     const oldStr = String(input.old_text ?? '');
     const newStr = String(input.new_text ?? '');
+    try {
+      const current = await readFile(join(cwd, path), 'utf-8');
+      const firstMatch = current.indexOf(oldStr);
+      const secondMatch = firstMatch === -1 ? -1 : current.indexOf(oldStr, firstMatch + oldStr.length);
+
+      if (firstMatch !== -1 && secondMatch === -1) {
+        const updated = current.slice(0, firstMatch) + newStr + current.slice(firstMatch + oldStr.length);
+        return createTwoFilesPatch(path, path, current, updated, 'old', 'new');
+      }
+    } catch {
+      // Fall back to the local snippet preview below if the file cannot be read.
+    }
+
     return createTwoFilesPatch(path, path, oldStr, newStr, 'old', 'new');
+  }
+
+  if (toolName === 'search_replace') {
+    const path = String(input.path ?? '');
+    const current = await readFile(join(cwd, path), 'utf-8');
+    const { buildSearchReplacePlan, buildSearchReplacePreview } = await import('../tools/search-replace.js');
+    const plan = buildSearchReplacePlan(current, {
+      path,
+      search: String(input.search ?? ''),
+      replace: String(input.replace ?? ''),
+      regex: Boolean(input.regex),
+      all: Boolean(input.all),
+    });
+    return buildSearchReplacePreview(path, current, plan.updated);
+  }
+
+  if (toolName === 'git_diff') {
+    const { buildGitDiffOutput } = await import('../tools/git-diff.js');
+    return buildGitDiffOutput({
+      staged: Boolean(input.staged),
+      file: typeof input.file === 'string' ? input.file : undefined,
+    }, cwd);
   }
 
   return '';

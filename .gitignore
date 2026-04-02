@@ -5,3 +5,13 @@ dist/
 .env.*
 .DS_Store
 *.tgz
+
+# Local runtime state
+.mint/
+
+# Plugin / tooling state
+.superpowers/
+
+# Reference / research code (not part of the product)
+claude-code-src/
+collection-claude-code-source-code-main/

@@ -31,6 +31,11 @@ You have access to these tools:
 - edit_file: Replace exact text in a file
 - find_files: Find files by glob pattern
 - grep_files: Search file contents with regex
+- list_dir: Inspect directory structure
+- search_replace: Replace targeted or regex matches with preview support
+- run_tests: Run the detected project test suite or a custom test command
+- git_diff: Inspect working tree changes and git status
+- web_fetch: Fetch HTTP(S) documentation pages as plain text
 </capabilities>
 
 <rules>
@@ -70,8 +75,24 @@ export interface RunAgentOptions {
   verbose?: boolean;
   onChunk?: (chunk: AgentLoopChunk) => void;
   mode?: AgentMode;
+  toolNames?: string[];
   onApprovalNeeded?: (toolName: string, toolInput: Record<string, unknown>) => Promise<boolean>;
   onDiffProposed?: (path: string, diff: string) => Promise<boolean>;
+  onIterationApprovalNeeded?: (
+    iteration: number,
+    toolCalls: Array<{ name: string; input: Record<string, unknown> }>,
+  ) => Promise<boolean>;
+}
+
+export interface RunAgentSessionResult {
+  output: string;
+  model: ModelId;
+  duration: number;
+  inputTokens: number;
+  outputTokens: number;
+  cost: number;
+  stoppedReason: 'done' | 'error';
+  error?: string;
 }
 
 /**
@@ -89,8 +110,10 @@ export async function runAgent(task: string, options: RunAgentOptions = {}): Pro
     signal: options.signal,
     verbose: options.verbose ?? false,
     mode: options.mode,
+    toolNames: options.toolNames,
     onApprovalNeeded: options.onApprovalNeeded,
     onDiffProposed: options.onDiffProposed,
+    onIterationApprovalNeeded: options.onIterationApprovalNeeded,
   };
 
   const onChunk = options.onChunk ?? defaultRenderer;
@@ -122,6 +145,8 @@ export async function runAgent(task: string, options: RunAgentOptions = {}): Pro
         savedAmount: Math.max(0, opusCost - cost),
         routingReason: routing.reason,
         taskPreview: task,
+        latencyMs: 0,
+        costSonnet: 0,
       });
       break;
     }
@@ -129,6 +154,57 @@ export async function runAgent(task: string, options: RunAgentOptions = {}): Pro
       break;
     }
   }
+}
+
+export async function runAgentSession(
+  task: string,
+  options: RunAgentOptions & { systemPrompt?: string; maxIterations?: number } = {},
+): Promise<RunAgentSessionResult> {
+  const startTime = Date.now();
+  const cwd = options.cwd ?? process.cwd();
+  const resolvedModel = (options.model ?? 'deepseek-v3') as ModelId;
+  const systemPrompt = options.systemPrompt ?? await buildEnrichedSystemPrompt(task, cwd, resolvedModel);
+
+  const agentOptions: AgentOptions = {
+    cwd,
+    model: options.model,
+    signal: options.signal,
+    verbose: options.verbose ?? false,
+    mode: options.mode,
+    toolNames: options.toolNames,
+    onApprovalNeeded: options.onApprovalNeeded,
+    onDiffProposed: options.onDiffProposed,
+    onIterationApprovalNeeded: options.onIterationApprovalNeeded,
+  };
+
+  let output = '';
+
+  for await (const chunk of agentLoop(task, {
+    ...agentOptions,
+    systemPrompt,
+    maxIterations: options.maxIterations,
+  })) {
+    await Promise.resolve(options.onChunk?.(chunk));
+    if (chunk.type === 'text' && chunk.text) {
+      output += chunk.text;
+    }
+    if (chunk.type === 'done') {
+      const usage = estimateSessionUsage(resolvedModel, systemPrompt, task, output, startTime);
+      return { ...usage, output, stoppedReason: 'done' };
+    }
+    if (chunk.type === 'error') {
+      const usage = estimateSessionUsage(resolvedModel, systemPrompt, task, output, startTime);
+      return {
+        ...usage,
+        output,
+        stoppedReason: 'error',
+        error: chunk.error ?? 'Agent session failed',
+      };
+    }
+  }
+
+  const usage = estimateSessionUsage(resolvedModel, systemPrompt, task, output, startTime);
+  return { ...usage, output, stoppedReason: 'done' };
 }
 
 // ─── Default Terminal Renderer ────────────────────────────────────────────────
@@ -172,4 +248,27 @@ function defaultRenderer(chunk: AgentLoopChunk): void {
       process.stderr.write(chalk.red(`\n[agent error] ${chunk.error}\n`));
       break;
   }
+}
+
+function estimateSessionUsage(
+  model: ModelId,
+  systemPrompt: string,
+  task: string,
+  output: string,
+  startTime: number,
+): Pick<RunAgentSessionResult, 'model' | 'duration' | 'inputTokens' | 'outputTokens' | 'cost'> {
+  const inputTokens = Math.ceil((systemPrompt.length + task.length) / 4);
+  const outputTokens = Math.ceil(output.length / 4);
+  const modelInfo = MODELS[model];
+  const cost = modelInfo
+    ? (inputTokens / 1_000_000) * modelInfo.inputPrice + (outputTokens / 1_000_000) * modelInfo.outputPrice
+    : 0;
+
+  return {
+    model,
+    duration: Date.now() - startTime,
+    inputTokens,
+    outputTokens,
+    cost,
+  };
 }

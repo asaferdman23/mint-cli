@@ -1,7 +1,7 @@
 export type TaskTier = 'simple' | 'medium' | 'complex'
 
 export type ProviderTarget = {
-  provider: 'groq' | 'deepseek' | 'grok'
+  provider: 'groq' | 'deepseek' | 'grok' | 'mistral'
   model: string         // provider's native model ID
   modelLabel: string    // human label for logging
   inputPrice: number    // per 1M tokens
@@ -11,19 +11,19 @@ export type ProviderTarget = {
 
 const TIERS: Record<TaskTier, ProviderTarget> = {
   simple: {
-    provider: 'groq',
-    model: 'llama-3.1-8b-instant',
-    modelLabel: 'groq-llama-8b',
-    inputPrice: 0.05,
-    outputPrice: 0.08,
+    provider: 'mistral',
+    model: 'mistral-small-2603',
+    modelLabel: 'mistral-small',
+    inputPrice: 0.15,
+    outputPrice: 0.60,
     tier: 'simple',
   },
   medium: {
     provider: 'deepseek',
     model: 'deepseek-chat',
     modelLabel: 'deepseek-v3',
-    inputPrice: 0.27,
-    outputPrice: 1.10,
+    inputPrice: 0.28,
+    outputPrice: 0.42,
     tier: 'medium',
   },
   complex: {

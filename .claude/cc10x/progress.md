@@ -28,10 +28,18 @@ PLAN → ready for BUILD
   - [ ] Task 4.3: Add --yolo/--plan/--diff CLI flags + interactive approvals
 
 ## Completed
+- [x] Specialist builder system + skills system — 7 specialists, skills loader, detection logic, CLI commands, mint init integration. TDD RED=1, GREEN=0, build=0
+- [x] Multi-agent pipeline rewrite (agents/index.ts + types/architect/builder/reviewer) - TDD RED exit=1, GREEN exit=0, build exit=0
 - [x] Plan saved - docs/plans/2026-03-30-axon-v2-context-plan.md
 - [x] Task 28: Usage tracking system — src/usage/db.ts, tracker.ts, dashboard.tsx, router.ts extended, cli commands added
 
 ## Verification
+- `npx tsx src/agents/__tests__/specialists-skills.test.ts` -> exit 0 (7/7 test groups pass)
+- `npx tsx src/agents/__tests__/agents-pipeline.test.ts` -> exit 0 (5/5 still passing)
+- `npm run build` -> exit 0 (dist/cli/index.js 268.07 KB)
+- `node dist/cli/index.js skills` -> exit 0 (shows "No skills found" correctly)
+- `npx tsx src/agents/__tests__/agents-pipeline.test.ts` → exit 0 (5/5 test groups pass)
+- `npm run build` → exit 0 (dist/cli/index.js 228.46 KB)
 - Plan file exists at docs/plans/2026-03-30-axon-v2-context-plan.md
 - Task 28 TDD: RED exit=1 (14/19 FAIL), GREEN exit=0 (19/19 PASS)
 - `npm run build` → exit 0 (dist/cli/index.js 121.52 KB)
