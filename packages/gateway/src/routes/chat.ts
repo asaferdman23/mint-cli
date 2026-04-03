@@ -5,9 +5,10 @@ import { groqStream } from '../providers/groq.js'
 import { deepseekStream } from '../providers/deepseek.js'
 import { grokStream } from '../providers/grok.js'
 import { mistralStream } from '../providers/mistral.js'
+import { kimiStream } from '../providers/kimi.js'
 import { insertRequest, insertRoutingDecision, insertError } from '../db.js'
 import { log, logError } from '../logger.js'
-import type { ChatRequest, Message } from '../types.js'
+import type { ChatRequest, Message, AppEnv } from '../types.js'
 
 // Sonnet 4.6 pricing for savings calculation
 const SONNET_INPUT  = 3.0   // per 1M
@@ -21,10 +22,11 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4)
 }
 
-export const chatRoute = new Hono()
+export const chatRoute = new Hono<AppEnv>()
 
 chatRoute.post('/chat', async (c) => {
   const requestId = uuid()
+  const userId = c.get('userId')
   const body = await c.req.json<ChatRequest>()
   const { session_id, messages, system } = body
 
@@ -58,6 +60,7 @@ chatRoute.post('/chat', async (c) => {
   const streamFn =
     target.provider === 'groq' ? groqStream :
     target.provider === 'deepseek' ? deepseekStream :
+    target.provider === 'kimi' ? kimiStream :
     target.provider === 'mistral' ? mistralStream :
     grokStream
 
@@ -106,6 +109,7 @@ chatRoute.post('/chat', async (c) => {
           task_type: target.tier, input_tok: inputTok, output_tok: outputTok,
           cost_actual: costActual, cost_sonnet: costSonnet, latency_ms: latencyMs,
           error: streamError,
+          user_id: userId ?? undefined,
         }).catch(() => {})
 
         controller.close()

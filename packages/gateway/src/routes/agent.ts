@@ -1,12 +1,13 @@
 import { Hono } from 'hono'
 import { v4 as uuid } from 'uuid'
-import { selectTarget } from '../router.js'
+import { selectTarget, FALLBACK, type ProviderTarget } from '../router.js'
 import { groqStreamRaw } from '../providers/groq.js'
 import { deepseekStreamRaw } from '../providers/deepseek.js'
 import { grokStreamRaw } from '../providers/grok.js'
 import { mistralStreamRaw } from '../providers/mistral.js'
+import { kimiStreamRaw } from '../providers/kimi.js'
 import { log } from '../logger.js'
-import type { Message, ToolDefinition } from '../types.js'
+import type { Message, ToolDefinition, AppEnv } from '../types.js'
 
 interface AgentRequest {
   session_id: string
@@ -15,7 +16,15 @@ interface AgentRequest {
   tools?: ToolDefinition[]
 }
 
-export const agentRoute = new Hono()
+export const agentRoute = new Hono<AppEnv>()
+
+function getRawStreamForTarget(target: ProviderTarget) {
+  return target.provider === 'groq' ? groqStreamRaw :
+    target.provider === 'deepseek' ? deepseekStreamRaw :
+    target.provider === 'kimi' ? kimiStreamRaw :
+    target.provider === 'mistral' ? mistralStreamRaw :
+    grokStreamRaw
+}
 
 agentRoute.post('/agent', async (c) => {
   const requestId = uuid()
@@ -37,24 +46,43 @@ agentRoute.post('/agent', async (c) => {
     ...messages,
   ]
 
-  // Select raw stream function (returns raw SSE JSON, preserving tool_calls)
-  const streamFn =
-    target.provider === 'groq' ? groqStreamRaw :
-    target.provider === 'deepseek' ? deepseekStreamRaw :
-    target.provider === 'mistral' ? mistralStreamRaw :
-    grokStreamRaw
-
   const stream = new ReadableStream({
     async start(controller) {
+      let sentAnyChunks = false
       try {
-        const gen = streamFn(target.model, allMessages, tools, undefined)
+        const gen = getRawStreamForTarget(target)(target.model, allMessages, tools, undefined)
         for await (const rawJson of gen) {
           // Forward raw OpenAI SSE chunk to client
+          sentAnyChunks = true
           controller.enqueue(new TextEncoder().encode(`data: ${rawJson}\n\n`))
         }
         controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'))
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
+
+        if (!sentAnyChunks && target.provider !== FALLBACK.provider) {
+          try {
+            log({
+              event: 'agent_fallback',
+              request_id: requestId,
+              session_id,
+              from_model: target.modelLabel,
+              to_model: FALLBACK.modelLabel,
+              reason: msg,
+            })
+            const fallbackGen = getRawStreamForTarget(FALLBACK)(FALLBACK.model, allMessages, tools, undefined)
+            for await (const rawJson of fallbackGen) {
+              controller.enqueue(new TextEncoder().encode(`data: ${rawJson}\n\n`))
+            }
+            controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'))
+            return
+          } catch (fallbackErr) {
+            const fallbackMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)
+            controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ error: fallbackMsg })}\n\n`))
+            return
+          }
+        }
+
         controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ error: msg })}\n\n`))
       } finally {
         controller.close()
