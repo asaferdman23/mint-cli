@@ -58,7 +58,7 @@ const LANGUAGE_MAP: Record<string, string> = {
 };
 
 const DEFAULT_IGNORES = [
-  'node_modules', '.git', 'dist', 'build', '.next', '.nuxt',
+  'node_modules', '.git', 'dist', 'build', '.next', '.nuxt', 'landing/dist',
   'coverage', '__pycache__', '.venv', 'venv', 'target',
   '.mint', '.axon', '.claude',
   // Common vendored / reference directories

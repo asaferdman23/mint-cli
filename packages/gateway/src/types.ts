@@ -1,3 +1,12 @@
+// Hono context variables (for c.set/c.get type safety)
+export type AppEnv = {
+  Variables: {
+    userId: string
+    userEmail: string
+    tokenId: string
+  }
+}
+
 export interface Message {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string | null

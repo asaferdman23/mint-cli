@@ -11,5 +11,6 @@ export const grokProvider = new OpenAICompatibleProvider({
     'grok-3-fast':      'grok-3-fast',
     'grok-3-mini-fast': 'grok-3-mini-fast',
     'grok-4-beta':      'grok-4.20-beta',
+    'grok-4.1-fast':    'grok-4.1-fast-reasoning',
   },
 });

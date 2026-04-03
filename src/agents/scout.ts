@@ -7,12 +7,13 @@
 import { complete } from '../providers/index.js';
 import { calculateCost } from '../providers/router.js';
 import { loadIndex, indexProject, searchRelevantFiles } from '../context/index.js';
+import { extractHotspots } from '../context/search.js';
 import { SCOUT_PROMPT } from './prompts/scout.js';
 import { selectAgentModel } from './model-selector.js';
 import type { AgentInput, ScoutOutput, TaskComplexity } from './types.js';
 
 // Fast heuristic classification — avoids an LLM call for obvious cases
-const TRIVIAL_PATTERNS = /^(hey|hi|hello|thanks|ok|yes|no|help|what|how)\b/i;
+const TRIVIAL_PATTERNS = /^(hey+|hi+|hello+|yo+|thanks|thank you|thx|ok(?:ay)?|yes|no)(?:[!?.\s]*)$/i;
 const COMPLEX_PATTERNS = /\b(architect|redesign|migrate|rewrite|refactor.*entire|new system|multi.?file)\b/i;
 const MODERATE_PATTERNS = /\b(fix all|all.*bugs|multiple.*fix|several.*change|each.*file|both.*files|security.*bugs)\b/i;
 
@@ -93,6 +94,7 @@ export async function runScout(input: AgentInput): Promise<ScoutOutput> {
     }
   }
 
+  const hotspots = extractHotspots(relevantFiles, task);
   const duration = Date.now() - startTime;
   const fileSummary = relevantFiles.length > 0
     ? `${relevantFiles.length} files: ${relevantFiles.map(f => f.path).join(', ')}`
@@ -102,6 +104,7 @@ export async function runScout(input: AgentInput): Promise<ScoutOutput> {
     result: `complexity=${complexity}, ${fileSummary}`,
     complexity,
     relevantFiles,
+    hotspots,
     fileSummary,
     model: usedLLM ? selectAgentModel('scout', 'simple') : 'groq-llama-8b',
     inputTokens: 0,

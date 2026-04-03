@@ -3,13 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mint — Agentic Coding CLI In Active Beta</title>
+  <title>Mint — Agentic Coding CLI | Cost-Aware Multi-Agent Pipeline</title>
   <meta name="description" content="Mint is an agentic coding CLI with project indexing, built-in code tools, a Scout → Architect → Builder → Reviewer pipeline, and cost-aware model routing.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Oxanium:wght@300;400;600;700;800&family=Fira+Code:wght@300;400;500&family=DM+Sans:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
-  <link rel="icon" type="image/png" href="mint_logo.png">
-  <link rel="apple-touch-icon" href="mint_logo.png">
+  <link rel="icon" type="image/svg+xml" href="/noise.svg">
 
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -58,7 +57,7 @@
       pointer-events: none;
       z-index: 0;
       opacity: 0.035;
-      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+      background-image: url("/noise.svg");
       background-repeat: repeat;
       background-size: 128px 128px;
     }
@@ -940,12 +939,31 @@
       .nav-links { display: none; }
       .hero-logo-wrap { display: flex; justify-content: center; margin-bottom: 8px; }
     }
+    @media (max-width: 860px) {
+      .footer-inner {
+        flex-direction: column;
+        gap: 16px;
+        text-align: center;
+      }
+      .footer-links { justify-content: center; flex-wrap: wrap; }
+      #waitlist { padding: 80px 0; }
+    }
     @media (max-width: 560px) {
       .pricing-grid { grid-template-columns: 1fr; }
       h1 { font-size: 1.8rem !important; }
       .hero-desc { font-size: 0.92rem; }
       .terminal-body { font-size: 0.65rem !important; padding: 14px 12px !important; }
       .t-banner { font-size: 0.5rem !important; }
+      .waitlist-input-wrap {
+        flex-direction: column;
+      }
+      .waitlist-input {
+        padding: 14px 16px;
+      }
+      .waitlist-btn {
+        padding: 14px 20px;
+      }
+      .footer-links { gap: 16px; }
     }
 
     /* ── WAITLIST ── */
@@ -1108,7 +1126,7 @@
       <div class="hero-left">
         <p class="hero-eyebrow">agentic coding cli · active beta</p>
         <h1>Talk to your code.<br>Agents do the work.<br><span class="accent">In parallel.</span></h1>
-        <p class="hero-desc">Mint is an agentic coding CLI. Have a conversation, and Mint dispatches parallel workers, subagents, and a Scout → Architect → Builder → Reviewer pipeline — all with cost-aware model routing.</p>
+        <p class="hero-desc">Mint is an agentic coding CLI. Have a conversation, and Mint dispatches parallel workers, subagents, and a Scout → Architect → Builder → Reviewer pipeline — all with cost-aware model routing that chooses the right model for each task.</p>
         <div class="hero-actions">
           <a href="#waitlist" class="btn-primary">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
@@ -1127,7 +1145,7 @@
           </div>
           <div class="stat-item">
             <div class="stat-num">init</div>
-            <div class="stat-label">index + rules bootstrap</div>
+            <div class="stat-label">project index + rules</div>
           </div>
         </div>
       </div>
@@ -1156,11 +1174,12 @@
     <div class="reveal">
       <p class="section-label">why routing matters</p>
       <h2>Agentic doesn't need<br>premium-everywhere pricing.</h2>
+      <p style="color:var(--text-muted);font-size:0.95rem;margin-top:12px;font-weight:300;">Mint routes each task to the right model — cheap for classification, strong for complex reasoning.</p>
     </div>
     <div class="math-grid reveal">
       <!-- PREMIUM-ONLY -->
       <div class="math-card bad">
-        <div class="math-card-label">Premium-Only Workflow</div>
+        <div class="math-card-label">Premium-Only Workflow<br><span style="font-size:0.6rem;opacity:0.75">(all tasks use Opus)</span></div>
         <div class="math-row">
           <span class="math-model">Scout pass</span>
           <span class="math-price-bad">Claude Opus · $15/1M</span>
@@ -1181,6 +1200,10 @@
           <span class="math-model">Retry / follow-up</span>
           <span class="math-price-bad">Claude Opus · $15/1M</span>
         </div>
+        <div class="math-row">
+          <span class="math-model">Total for premium-only</span>
+          <span class="math-price-bad">$60/1M tokens</span>
+        </div>
         <div class="math-total bad">
           <div class="math-total-num">1 model</div>
           <div class="math-total-label">used for every step</div>
@@ -1191,7 +1214,7 @@
 
       <!-- WITH MINT -->
       <div class="math-card good">
-        <div class="math-card-label">Mint Beta Workflow</div>
+        <div class="math-card-label">Mint Beta Workflow<br><span style="font-size:0.6rem;opacity:0.75">(cost-aware routing)</span></div>
         <div class="math-row">
           <span class="math-model">Scout pass</span>
           <span class="math-price-good">Groq 8B · $0.05/1M</span>
@@ -1212,6 +1235,10 @@
           <span class="math-model">Large-context fallback</span>
           <span class="math-price-good">Gemini Flash · $0.075/1M</span>
         </div>
+        <div class="math-row">
+          <span class="math-model">Total for Mint routing</span>
+          <span class="math-price-good">$1.256/1M tokens</span>
+        </div>
         <div class="math-total good">
           <div class="math-total-num">fit-to-task</div>
           <div class="math-total-label">cheap where possible, strong where needed</div>
@@ -1223,6 +1250,7 @@
       <div class="savings-badge-num" id="savings-counter">0%</div>
       <div class="savings-badge-label">typical routing savings vs premium-everywhere flow</div>
     </div>
+    <p style="color:var(--text-muted);font-size:0.85rem;margin-top:12px;font-weight:300;text-align:center;">Mint saves ~87% on typical agentic workflows by routing intelligently.</p>
   </div>
 </section>
 
@@ -1236,18 +1264,18 @@
     <div class="steps">
       <div class="step reveal" style="transition-delay:0s">
         <div class="step-num">01</div>
-        <h3>Bootstrap project context</h3>
-        <p>Run <code style="font-family:var(--font-mono);color:var(--cyan);font-size:0.85em">mint init</code> once. Mint scans the repo, writes <code style="font-family:var(--font-mono);color:var(--cyan);font-size:0.85em">.mint/context.json</code>, and generates <code style="font-family:var(--font-mono);color:var(--cyan);font-size:0.85em">MINT.md</code> project rules.</p>
+        <h3>Index your project</h3>
+        <p>Run <code style="font-family:var(--font-mono);color:var(--cyan);font-size:0.85em">mint init</code> once. Mint scans your repo, builds a dependency graph, and generates <code style="font-family:var(--font-mono);color:var(--cyan);font-size:0.85em">MINT.md</code> project rules that guide all subsequent tasks.</p>
       </div>
       <div class="step reveal" style="transition-delay:0.1s">
         <div class="step-num">02</div>
         <h3>Run the agent pipeline</h3>
-        <p>For real coding work, Mint narrows the file set, routes each phase to a cheaper capable model, and runs Scout → Architect → Builder → Reviewer instead of one blind completion.</p>
+        <p>For real coding work, Mint narrows the file set, routes each phase to the right model (cheap for classification, strong for reasoning), and runs Scout → Architect → Builder → Reviewer instead of one blind completion.</p>
       </div>
       <div class="step reveal" style="transition-delay:0.2s">
         <div class="step-num">03</div>
         <h3>Review and apply locally</h3>
-        <p>Mint prints unified diffs, tracks savings, and can apply changes from the terminal. The beta already supports diff application; history and undo are the next hardening step.</p>
+        <p>Mint prints unified diffs, tracks cost savings, and can apply changes from the terminal. The beta already supports diff application; history and undo are the next hardening step.</p>
       </div>
     </div>
   </div>
@@ -1482,7 +1510,10 @@
 
       <div class="waitlist-success" id="waitlist-success" style="display:none;">
         <div class="waitlist-success-icon">✓</div>
-        <div class="waitlist-success-text">You're on the list. We'll send beta updates.</div>
+        <div class="waitlist-success-text">
+          <strong style="font-size:1.15rem;display:block;margin-bottom:6px;">You're in!</strong>
+          Thanks for signing up. We'll be in touch soon with early access details and next steps.
+        </div>
       </div>
 
       <div class="waitlist-count" id="waitlist-count">
@@ -1496,12 +1527,12 @@
 <footer>
   <div class="container">
     <div class="footer-inner">
-      <div class="footer-logo"><img src="mint_logo.png" alt="Mint" style="height:24px;width:auto;opacity:0.85;"></div>
+      <div class="footer-logo"><img src="mint_logo_small.png" alt="Mint" style="height:24px;width:auto;opacity:0.85;"></div>
       <div class="footer-text">usemint.dev · active beta · agentic cli in progress</div>
       <ul class="footer-links">
         <li><a href="https://github.com/asaferdman23/mint-cli/blob/main/README.md" target="_blank">Docs</a></li>
         <li><a href="https://github.com/asaferdman23/mint-cli" target="_blank">GitHub</a></li>
-        <li><a href="mailto:hello@usemint.dev">hello@usemint.dev</a></li>
+        <li><a href="mailto:support@usemint.dev">support@usemint.dev</a></li>
       </ul>
     </div>
   </div>

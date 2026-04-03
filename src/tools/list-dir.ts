@@ -18,7 +18,11 @@ export const listDirTool: Tool = {
 
   async execute(params: z.infer<typeof parameters>, ctx: ToolContext): Promise<ToolResult> {
     try {
+      const cwdAbs = resolve(ctx.cwd);
       const targetDir = resolve(ctx.cwd, params.path ?? '.');
+      if (!targetDir.startsWith(cwdAbs + sep) && targetDir !== cwdAbs) {
+        return { success: false, output: '', error: `Path outside working directory: ${params.path}` };
+      }
       const maxDepth = params.depth ?? 3;
       const entries: string[] = [];
 

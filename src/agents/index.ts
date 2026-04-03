@@ -1,23 +1,26 @@
 /**
  * Multi-agent pipeline orchestrator.
  *
- * Scout → [Architect] → Builder task graph → [Reviewer with retry]
+ * Scout → Architect → Builder task graph → [Reviewer with retry]
  *
  * Trivial tasks:         Scout → Builder (skip architect + reviewer)
- * Simple tasks:          Scout → Builder → Reviewer
- * Moderate/Complex:      Scout → Architect → Builder task graph → Reviewer (with retry, max 2)
+ * Simple/Moderate/Complex:
+ *                        Scout → Architect → Builder task graph → Reviewer (with retry, max 2)
  *
  * Yields PipelineChunks for progressive TUI rendering.
  */
 import { parseDiffs } from '../pipeline/diff-parser.js';
 import { calculateOpusCost } from '../usage/tracker.js';
-import { detectSpecialist } from './specialists/index.js';
+import { complete } from '../providers/index.js';
+import { persistSessionMemory, type SessionMemorySnapshot } from '../context/session-memory.js';
+import { detectSpecialist, detectSpecialistFromTask } from './specialists/index.js';
 import { selectAgentModel } from './model-selector.js';
+import { resolveAdaptiveGate, type AdaptiveGateDecision } from './adaptive-gate.js';
+import { generateClarifyingQuestions } from './clarifier.js';
 import {
   runArchitectWorkerAgent,
   runBuilderWorkerAgent,
   runReviewerWorkerAgent,
-  runScoutWorkerAgent,
 } from './worker-agent.js';
 import {
   createInitialSubtasks,
@@ -32,7 +35,6 @@ import type {
   ArchitectOutput,
   MultiAgentResult,
   ReviewerOutput,
-  ScoutOutput,
   Subtask,
   SubtaskBuilderResult,
   TaskComplexity,
@@ -50,19 +52,126 @@ export async function* runAgentPipeline(
 ): AsyncGenerator<PipelineChunk> {
   const { cwd, signal, history = [] } = options;
   const startTime = Date.now();
-  const runtime = await createOrchestrationRuntime(cwd, task);
-  const totals = {
-    cost: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-  };
 
-  const agentInput: AgentInput = { task, cwd, signal, history };
+  let agentInput: AgentInput = { task, cwd, signal, history };
   const workerExecutionOptions = {
     mode: options.agentMode,
     onApprovalNeeded: options.onApprovalNeeded,
     onDiffProposed: options.onDiffProposed,
     onIterationApprovalNeeded: options.onIterationApprovalNeeded,
+  };
+
+  let gateDecision: AdaptiveGateDecision;
+  let clarificationAttempts = 0;
+
+  while (true) {
+    gateDecision = await resolveAdaptiveGate({ input: agentInput });
+
+    if (gateDecision.mode === 'chat') {
+      const result = buildImmediateResult(
+        gateDecision.response ?? 'Ready when you are.',
+        [],
+        startTime,
+        options.model ?? selectAgentModel('scout', 'trivial'),
+      );
+      yield { type: 'text', text: result.response };
+      yield { type: 'done', result };
+      return;
+    }
+
+    if (gateDecision.mode === 'question') {
+      const files = gateDecision.searchResults;
+      const fileContext = files.length > 0
+        ? files.map((f) => `--- ${f.path} ---\n${f.content}`).join('\n\n')
+        : 'No relevant files found in this project.';
+      const model = options.model ?? selectAgentModel('scout', 'simple');
+      const llmResponse = await complete({
+        model,
+        messages: [
+          {
+            role: 'system',
+            content: [
+              'You are an assistant that answers questions about a codebase.',
+              'Answer the user\'s question based on the file contents below.',
+              'Be concise and direct. If the files don\'t contain the answer, say so.',
+              '',
+              fileContext,
+            ].join('\n'),
+          },
+          { role: 'user', content: task },
+        ],
+        maxTokens: 1024,
+        temperature: 0,
+        signal,
+      });
+      const result: PipelineResult = {
+        response: llmResponse.content,
+        diffs: [],
+        filesSearched: files.map((f) => f.path),
+        model,
+        cost: llmResponse.cost.total,
+        inputTokens: llmResponse.usage.inputTokens,
+        outputTokens: llmResponse.usage.outputTokens,
+        duration: Date.now() - startTime,
+        opusCost: 0,
+      };
+      yield { type: 'text', text: result.response };
+      yield { type: 'done', result };
+      return;
+    }
+
+    if (gateDecision.mode === 'spec_required') {
+      const result = buildImmediateResult(
+        gateDecision.response ?? 'Please provide a more concrete spec.',
+        gateDecision.searchResults.map((file) => file.path),
+        startTime,
+        options.model ?? selectAgentModel('scout', 'simple'),
+      );
+      yield { type: 'text', text: result.response };
+      yield { type: 'done', result };
+      return;
+    }
+
+    if (gateDecision.mode === 'clarify') {
+      const projectContext = gateDecision.searchResults.length > 0
+        ? `Existing files: ${gateDecision.searchResults.map((f) => f.path).join(', ')}`
+        : 'Empty project — no existing files.';
+      const questions = await generateClarifyingQuestions(agentInput.task, signal, projectContext);
+
+      // If clarifier says no questions needed → just proceed, don't show fallback questions
+      if (questions.length === 0) {
+        break;
+      }
+
+      if (options.onClarificationNeeded && clarificationAttempts < 2) {
+        yield { type: 'clarification', questions };
+        const answer = await options.onClarificationNeeded(questions);
+        clarificationAttempts += 1;
+
+        // User dismissed clarification — proceed with what we have
+        if (!answer.trim() || isDismissal(answer)) {
+          break;
+        }
+
+        agentInput = {
+          ...agentInput,
+          task: `${agentInput.task}\n\nUser clarifications:\n${answer.trim()}`,
+        };
+        continue;
+      }
+
+      // Clarification attempts exhausted — proceed anyway instead of stopping
+      break;
+    }
+
+    break;
+  }
+
+  const runtime = await createOrchestrationRuntime(cwd, agentInput.task);
+  const totals = {
+    cost: 0,
+    inputTokens: 0,
+    outputTokens: 0,
   };
 
   const emit = async (chunk: PipelineChunk): Promise<PipelineChunk> => {
@@ -73,53 +182,31 @@ export async function* runAgentPipeline(
     return chunk;
   };
 
-  // ── SCOUT ─────────────────────────────────────────────────────────────────
-  const scoutTask = createScoutTask({
-    agentInput,
-    workerOptions: workerExecutionOptions,
-  });
+  const complexity: TaskComplexity = gateDecision.complexity;
+  const searchResults = gateDecision.searchResults;
+  const hotspots = gateDecision.hotspots;
 
   yield await emit({
     type: 'phase-start',
     phase: 'SCOUT',
-    phaseModel: selectAgentModel('scout', 'simple'),
-    subtasks: createInitialSubtasks([scoutTask]),
+    phaseModel: gateDecision.scoutModelLabel,
   });
-
-  const scoutStates = yield* runTaskGraph(runtime, [scoutTask], { signal });
-  throwOnFailedTasks(scoutStates, 'scout');
-
-  const scoutState = scoutStates[0];
-  if (!scoutState?.result) {
-    throw new Error('Missing scout result');
-  }
-
-  const scoutResult = scoutState.result.value;
-  totals.cost += scoutState.result.cost ?? 0;
-  totals.inputTokens += scoutState.result.inputTokens ?? 0;
-  totals.outputTokens += scoutState.result.outputTokens ?? 0;
-
   yield await emit({
     type: 'phase-done',
     phase: 'SCOUT',
-    phaseDuration: scoutState.duration,
-    phaseCost: scoutState.cost,
-    phaseSummary: scoutState.progressSummary ?? `${scoutResult.complexity} · ${scoutResult.relevantFiles.length} files`,
-    subtasks: scoutStates.map((state) => toSubtaskInfo(state)),
+    phaseSummary: `${complexity} · ${gateDecision.scoutSummary || `${searchResults.length} files`}`,
   });
-  yield await emit({ type: 'search', filesFound: scoutResult.relevantFiles.map((file) => file.path) });
+  yield await emit({ type: 'search', filesFound: searchResults.map((file) => file.path) });
 
-  const complexity: TaskComplexity = scoutResult.complexity;
-  const searchResults = scoutResult.relevantFiles;
-
-  // ── ARCHITECT (moderate/complex only) ─────────────────────────────────────
+  // ── ARCHITECT (only when the adaptive gate requires planning) ─────────────
   let architectResult: ArchitectOutput | undefined;
 
-  if (complexity === 'moderate' || complexity === 'complex') {
+  if (complexity !== 'trivial' && gateDecision.mode === 'architect_pipeline') {
     const architectTask = createArchitectTask({
       agentInput: { ...agentInput, searchResults },
       complexity,
       searchResults,
+      hotspots,
       workerOptions: workerExecutionOptions,
     });
 
@@ -161,6 +248,7 @@ export async function* runAgentPipeline(
 
   // ── BUILDER(S) — single or task graph ─────────────────────────────────────
   let builderResults: SubtaskBuilderResult[];
+  let allWriteTargets: string[] = [];
 
   if (
     architectResult?.type === 'split' &&
@@ -173,6 +261,7 @@ export async function* runAgentPipeline(
       subtask,
       searchResults,
       attempt: 1,
+      gateMode: gateDecision.mode,
       workerOptions: workerExecutionOptions,
     }));
 
@@ -196,6 +285,10 @@ export async function* runAgentPipeline(
       totals.outputTokens += state.result.outputTokens ?? 0;
       return state.result.value;
     });
+    allWriteTargets = architectResult.subtasks.flatMap((s) => [
+      ...(s.writeTargets ?? []),
+      ...s.relevantFiles,
+    ]);
 
     const combinedText = builderResults
       .map((result) => `**Subtask ${result.subtaskId}:**\n${result.response}`)
@@ -210,19 +303,37 @@ export async function* runAgentPipeline(
       subtasks: builderStates.map((task) => toSubtaskInfo(task)),
     });
   } else {
+    const directBuilderSubtask = gateDecision.directSubtask ?? {
+      id: '0',
+      description: describeBuilderScope(
+        searchResults.map((file) => file.path),
+        'Work on the requested change',
+      ),
+      relevantFiles: searchResults.map((file) => file.path),
+      plan: architectResult?.plan ?? '',
+      specialist: resolveSpecialist(searchResults.map((file) => file.path), agentInput.task),
+      scopeDirectory: deriveBuilderScopeDirectory(searchResults.map((file) => file.path)),
+      entryFiles: deriveBuilderEntryFiles(searchResults.map((file) => file.path)),
+      researchSummary: buildBuilderResearchSummary(
+        searchResults.map((file) => file.path),
+        describeBuilderScope(searchResults.map((file) => file.path), 'Work on the requested change'),
+        architectResult?.plan ?? '',
+      ),
+      builderBrief: buildBuilderBrief(
+        deriveBuilderScopeDirectory(searchResults.map((file) => file.path)),
+        deriveBuilderEntryFiles(searchResults.map((file) => file.path)),
+        architectResult?.plan ?? '',
+      ),
+      writeTargets: searchResults.map((file) => file.path),
+    };
+
     const singleBuilderTask = createBuilderTask({
       agentInput: { ...agentInput, searchResults, history },
       complexity,
-      subtask: {
-        id: '0',
-        description: task.slice(0, 80),
-        relevantFiles: searchResults.map((file) => file.path),
-        plan: architectResult?.plan ?? '',
-        specialist: detectSpecialist(searchResults.map((file) => file.path)),
-        writeTargets: searchResults.map((file) => file.path),
-      },
+      subtask: directBuilderSubtask,
       searchResults,
       attempt: 1,
+      gateMode: gateDecision.mode,
       workerOptions: workerExecutionOptions,
     });
 
@@ -256,15 +367,21 @@ export async function* runAgentPipeline(
     });
 
     builderResults = [state.result.value];
+    allWriteTargets = [
+      ...(directBuilderSubtask.writeTargets ?? []),
+      ...directBuilderSubtask.relevantFiles,
+    ];
   }
 
   // ── REVIEWER with retry loop (not trivial) ─────────────────────────────────
-  const MAX_RETRIES = 2;
+  const MAX_RETRIES = 2; // invest in planning upfront, not retrying after
   let retryCount = 0;
   let currentResults = builderResults;
+  let finalReviewerResult: ReviewerOutput | undefined;
 
+  const COST_CAP = 2.0; // stop iterating if total cost exceeds $2 (safety net)
   if (complexity !== 'trivial') {
-    while (retryCount <= MAX_RETRIES) {
+    while (retryCount <= MAX_RETRIES && totals.cost < COST_CAP) {
       const reviewTaskId = `review-${retryCount + 1}`;
       const reviewerTasks: WorkerTaskDefinition<ReviewerOutput>[] = [
         {
@@ -283,6 +400,7 @@ export async function* runAgentPipeline(
               complexity,
               allDiffs,
               subtaskIds,
+              writeTargets: [...new Set(allWriteTargets)],
               cwd,
               signal,
               reporter,
@@ -321,6 +439,7 @@ export async function* runAgentPipeline(
       }
 
       const reviewerResult = reviewerState.result.value;
+      finalReviewerResult = reviewerResult;
       totals.cost += reviewerState.result.cost ?? 0;
       totals.inputTokens += reviewerState.result.inputTokens ?? 0;
       totals.outputTokens += reviewerState.result.outputTokens ?? 0;
@@ -344,9 +463,10 @@ export async function* runAgentPipeline(
 
       const retryTasks = toRetry.map((previous) => {
         const subtask = architectResult?.subtasks?.find((entry) => entry.id === previous.subtaskId);
-        const retryTask = subtask
-          ? `${subtask.description}\n\nReviewer feedback: ${reviewerResult.subtaskFeedback![previous.subtaskId]}`
-          : `${task}\n\nReviewer feedback: ${reviewerResult.feedback}`;
+        const feedback = reviewerResult.subtaskFeedback?.[previous.subtaskId] ?? reviewerResult.feedback;
+        // Keep the original spec and append feedback — don't replace
+        const originalPlan = subtask?.plan ?? task;
+        const retryTask = `${originalPlan}\n\n---\nREVIEWER FEEDBACK (fix these issues, do not re-investigate):\n${feedback}`;
 
         const retrySubtask: Subtask = subtask
           ? {
@@ -355,10 +475,25 @@ export async function* runAgentPipeline(
             }
           : {
               id: previous.subtaskId,
-              description: task.slice(0, 60),
+              description: describeBuilderScope(
+                searchResults.map((file) => file.path),
+                'Apply reviewer-requested changes',
+              ),
               relevantFiles: searchResults.map((file) => file.path),
               plan: retryTask,
-              specialist: detectSpecialist(searchResults.map((file) => file.path)),
+              specialist: resolveSpecialist(searchResults.map((file) => file.path), agentInput.task),
+              scopeDirectory: deriveBuilderScopeDirectory(searchResults.map((file) => file.path)),
+              entryFiles: deriveBuilderEntryFiles(searchResults.map((file) => file.path)),
+              researchSummary: buildBuilderResearchSummary(
+                searchResults.map((file) => file.path),
+                describeBuilderScope(searchResults.map((file) => file.path), 'Apply reviewer-requested changes'),
+                retryTask,
+              ),
+              builderBrief: buildBuilderBrief(
+                deriveBuilderScopeDirectory(searchResults.map((file) => file.path)),
+                deriveBuilderEntryFiles(searchResults.map((file) => file.path)),
+                retryTask,
+              ),
               writeTargets: searchResults.map((file) => file.path),
             };
 
@@ -369,6 +504,7 @@ export async function* runAgentPipeline(
           searchResults,
           attempt: retryCount + 2,
           phaseSummaryPrefix: 'retry',
+          gateMode: gateDecision.mode,
           workerOptions: workerExecutionOptions,
         });
       });
@@ -448,62 +584,38 @@ export async function* runAgentPipeline(
     totalCost: result.cost,
     totalDurationMs: result.duration,
   });
+  if (complexity !== 'trivial' && (searchResults.length > 0 || diffs.length > 0 || architectResult)) {
+    await persistSessionMemory(
+      cwd,
+      buildSessionMemorySnapshot({
+        cwd,
+        runId: runtime.runId,
+        task: agentInput.task,
+        complexity,
+        filesSearched: searchResults.map((file) => file.path),
+        architectResult,
+        directBuilderSubtask: architectResult ? undefined : gateDecision.directSubtask,
+        finalResponse,
+        diffs,
+        reviewerResult: finalReviewerResult,
+      }),
+    );
+  }
 
   yield await emit({ type: 'done', result });
-}
-
-function createScoutTask(args: {
-  agentInput: AgentInput;
-  workerOptions: Pick<
-    PipelineOptions,
-    'agentMode' | 'onApprovalNeeded' | 'onDiffProposed' | 'onIterationApprovalNeeded'
-  >;
-}): WorkerTaskDefinition<ScoutOutput> {
-  const { agentInput, workerOptions } = args;
-
-  return {
-    id: 'scout',
-    phase: 'SCOUT',
-    role: 'scout',
-    transcriptName: 'scout',
-    title: 'Scout repository',
-    description: 'Classify task complexity and find the most relevant files.',
-    run: async (reporter) => {
-      const scoutResult = await runScoutWorkerAgent({
-        input: agentInput,
-        cwd: agentInput.cwd,
-        signal: agentInput.signal,
-        reporter,
-        mode: workerOptions.agentMode,
-        onApprovalNeeded: workerOptions.onApprovalNeeded,
-        onDiffProposed: workerOptions.onDiffProposed,
-        onIterationApprovalNeeded: workerOptions.onIterationApprovalNeeded,
-      });
-
-      return {
-        value: scoutResult,
-        responseText: scoutResult.result,
-        summary: `${scoutResult.complexity} · ${scoutResult.relevantFiles.length} files`,
-        model: scoutResult.model,
-        duration: scoutResult.duration,
-        cost: scoutResult.cost,
-        inputTokens: scoutResult.inputTokens,
-        outputTokens: scoutResult.outputTokens,
-      };
-    },
-  };
 }
 
 function createArchitectTask(args: {
   agentInput: AgentInput;
   complexity: TaskComplexity;
   searchResults: NonNullable<AgentInput['searchResults']>;
+  hotspots: import('../context/search.js').Hotspot[];
   workerOptions: Pick<
     PipelineOptions,
     'agentMode' | 'onApprovalNeeded' | 'onDiffProposed' | 'onIterationApprovalNeeded'
   >;
 }): WorkerTaskDefinition<ArchitectOutput> {
-  const { agentInput, complexity, searchResults, workerOptions } = args;
+  const { agentInput, complexity, searchResults, hotspots, workerOptions } = args;
 
   return {
     id: 'architect',
@@ -517,6 +629,7 @@ function createArchitectTask(args: {
         input: agentInput,
         complexity,
         searchResults,
+        hotspots,
         cwd: agentInput.cwd,
         signal: agentInput.signal,
         reporter,
@@ -549,20 +662,23 @@ function createBuilderTask(args: {
   searchResults: NonNullable<AgentInput['searchResults']>;
   attempt: number;
   phaseSummaryPrefix?: string;
+  gateMode?: string;
   workerOptions: Pick<
     PipelineOptions,
     'agentMode' | 'onApprovalNeeded' | 'onDiffProposed' | 'onIterationApprovalNeeded'
   >;
 }): WorkerTaskDefinition<SubtaskBuilderResult> {
-  const { agentInput, complexity, subtask, searchResults, attempt, phaseSummaryPrefix, workerOptions } = args;
+  const { agentInput, complexity, subtask, searchResults, attempt, phaseSummaryPrefix, gateMode, workerOptions } = args;
 
   return {
     id: subtask.id,
     phase: 'BUILDER',
     role: 'builder',
     transcriptName: buildBuilderTranscriptName(subtask.id, phaseSummaryPrefix),
-    title: phaseSummaryPrefix ? `${phaseSummaryPrefix} #${subtask.id}` : `Build #${subtask.id}`,
-    description: subtask.description,
+    title: phaseSummaryPrefix
+      ? `${phaseSummaryPrefix} #${subtask.id}`
+      : `Build #${subtask.id} [${subtask.specialist}]`,
+    description: `[${subtask.specialist} specialist] ${subtask.description}`,
     dependsOn: subtask.dependsOn,
     writeTargets: subtask.writeTargets ?? subtask.relevantFiles,
     verificationTargets: subtask.verificationTargets,
@@ -577,6 +693,12 @@ function createBuilderTask(args: {
         plan: subtask.plan,
         searchResults: subtaskFiles,
         specialist: subtask.specialist,
+        scopeDirectory: subtask.scopeDirectory,
+        entryFiles: subtask.entryFiles,
+        researchSummary: subtask.researchSummary,
+        builderBrief: subtask.builderBrief,
+        writeTargets: subtask.writeTargets,
+        gateMode,
         cwd: agentInput.cwd,
         signal: agentInput.signal,
         reporter,
@@ -610,6 +732,63 @@ function createBuilderTask(args: {
   };
 }
 
+function resolveSpecialist(files: string[], task: string): import('./specialists/types.js').SpecialistType {
+  const fromFiles = detectSpecialist(files);
+  if (fromFiles !== 'general') return fromFiles;
+  return detectSpecialistFromTask(task);
+}
+
+function describeBuilderScope(files: string[], fallback: string): string {
+  if (files.length === 0) {
+    return fallback;
+  }
+
+  if (files.length === 1) {
+    return `Work on ${files[0]}`;
+  }
+
+  const preview = files.slice(0, 2).join(', ');
+  const remaining = files.length - 2;
+  return remaining > 0
+    ? `Work on ${preview}, +${remaining} more`
+    : `Work on ${preview}`;
+}
+
+function deriveBuilderScopeDirectory(files: string[]): string | undefined {
+  const first = files.find((file) => file.includes('/'));
+  if (!first) return undefined;
+  const segments = first.split('/');
+  return segments.length > 1 ? segments.slice(0, -1).join('/') : undefined;
+}
+
+function deriveBuilderEntryFiles(files: string[]): string[] | undefined {
+  const ordered = files.filter(Boolean).slice(0, 3);
+  return ordered.length > 0 ? ordered : undefined;
+}
+
+function buildBuilderResearchSummary(files: string[], description: string, plan: string): string | undefined {
+  if (files.length === 0 && !description && !plan) return undefined;
+  const fileLine = files.length > 0 ? `Relevant files: ${files.join(', ')}.` : undefined;
+  const descriptionLine = description ? `Task scope: ${description}.` : undefined;
+  const planLine = plan ? `Planned work: ${plan}` : undefined;
+  return [fileLine, descriptionLine, planLine].filter(Boolean).join(' ');
+}
+
+function buildBuilderBrief(
+  scopeDirectory: string | undefined,
+  entryFiles: string[] | undefined,
+  plan: string,
+): string | undefined {
+  const startLine = scopeDirectory
+    ? `Start in ${scopeDirectory}.`
+    : 'Start in the assigned files.';
+  const filesLine = entryFiles && entryFiles.length > 0
+    ? `Read ${entryFiles.join(', ')} first.`
+    : undefined;
+  const planLine = plan ? `Then execute: ${plan}` : undefined;
+  return [startLine, filesLine, planLine].filter(Boolean).join(' ');
+}
+
 function createRetrySubtasks(
   tasks: WorkerTaskDefinition<SubtaskBuilderResult>[],
 ): SubtaskInfo[] {
@@ -640,4 +819,115 @@ function sumTaskCost<TResult>(tasks: WorkerTaskState<TResult>[]): number {
 function buildBuilderTranscriptName(subtaskId: string, phaseSummaryPrefix?: string): string {
   const safeId = subtaskId.toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
   return phaseSummaryPrefix ? `builder-${phaseSummaryPrefix}-${safeId}` : `builder-${safeId}`;
+}
+
+function buildSessionMemorySnapshot(args: {
+  cwd: string;
+  runId: string;
+  task: string;
+  complexity: TaskComplexity;
+  filesSearched: string[];
+  architectResult?: ArchitectOutput;
+  directBuilderSubtask?: Subtask;
+  finalResponse: string;
+  diffs: PipelineResult['diffs'];
+  reviewerResult?: ReviewerOutput;
+}): SessionMemorySnapshot {
+  const architectSubtasks = args.architectResult?.subtasks ?? [];
+  const directSubtasks = args.directBuilderSubtask ? [args.directBuilderSubtask] : [];
+  const memorySubtasks = architectSubtasks.length > 0 ? architectSubtasks : directSubtasks;
+  const scopeDirectories = uniqueStrings([
+    ...memorySubtasks.map((subtask) => subtask.scopeDirectory ?? ''),
+    deriveBuilderScopeDirectory(args.filesSearched) ?? '',
+  ]);
+  const entryFiles = uniqueStrings([
+    ...memorySubtasks.flatMap((subtask) => subtask.entryFiles ?? []),
+    ...(deriveBuilderEntryFiles(args.filesSearched) ?? []),
+  ]);
+  const writeTargets = uniqueStrings([
+    ...memorySubtasks.flatMap((subtask) => subtask.writeTargets ?? []),
+    ...args.diffs.map((diff) => diff.filePath),
+  ]);
+  const architectResearch = uniqueStrings(
+    memorySubtasks.flatMap((subtask) => subtask.researchSummary ? [subtask.researchSummary] : []),
+  );
+  const builderBriefs = uniqueStrings(
+    memorySubtasks.flatMap((subtask) => subtask.builderBrief ? [subtask.builderBrief] : []),
+  );
+  const architectPlan = args.architectResult?.type === 'single'
+    ? args.architectResult.plan
+    : architectSubtasks.length > 0
+      ? architectSubtasks.map((subtask) => `#${subtask.id} ${subtask.description}: ${subtask.plan}`).join('\n')
+      : args.directBuilderSubtask
+        ? args.directBuilderSubtask.plan
+      : undefined;
+
+  return {
+    updatedAt: new Date().toISOString(),
+    runId: args.runId,
+    cwd: args.cwd,
+    task: args.task,
+    complexity: args.complexity,
+    filesSearched: uniqueStrings(args.filesSearched),
+    scopeDirectories,
+    entryFiles,
+    writeTargets,
+    architectPlan,
+    architectResearch,
+    builderBriefs,
+    finalResponseSummary: summarizeSessionOutcome(args.finalResponse),
+    reviewerFeedback: args.reviewerResult && !args.reviewerResult.approved
+      ? args.reviewerResult.feedback
+      : undefined,
+  };
+}
+
+function buildImmediateResult(
+  response: string,
+  filesSearched: string[],
+  startTime: number,
+  model = selectAgentModel('scout', 'simple'),
+): PipelineResult {
+  return {
+    response,
+    diffs: [],
+    filesSearched,
+    model,
+    cost: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    duration: Date.now() - startTime,
+    opusCost: 0,
+  };
+}
+
+function summarizeSessionOutcome(text: string): string | undefined {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (!normalized) return undefined;
+  return normalized.slice(0, 320);
+}
+
+// Detect answers that contain no actionable information — short, no technical
+// terms, no file paths, no error descriptions. These are dismissals.
+const TECHNICAL_CONTENT =
+  /\b(file|error|bug|crash|broken|missing|wrong|css|html|js|tsx?|component|route|api|button|form|header|footer|nav|style|color|font|layout|margin|padding|import|function|class|div|section|page|image|link|url|database|server|port|env|config|deploy)\b|[/.#{}()<>]|\d{3,}/i;
+
+function isDismissal(answer: string): boolean {
+  const normalized = answer.trim();
+  if (!normalized) return true;
+  // Short answer with no technical content = dismissal
+  if (normalized.length < 40 && !TECHNICAL_CONTENT.test(normalized)) return true;
+  return false;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const normalized = value.trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
 }

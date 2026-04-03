@@ -8,6 +8,7 @@ export interface SubtaskData {
   id: string;
   description: string;
   status: PipelineTaskStatus;
+  startedAt?: number;
   duration?: number;
   cost?: number;
   taskId?: string;

@@ -12,12 +12,46 @@ import { getTier } from '../providers/tiers.js';
 import type { ModelId } from '../providers/types.js';
 import { MODELS } from '../providers/types.js';
 import { config } from '../utils/config.js';
-import { createUsageTracker, calculateSonnetCost } from '../usage/tracker.js';
+import { createUsageTracker, calculateSonnetCost, getMonthCost } from '../usage/tracker.js';
 import { runPipeline, type PipelineChunk } from '../pipeline/index.js';
 import type { PipelineTaskInfo } from '../pipeline/types.js';
 import type { PipelinePhaseData, ContextChip, SubtaskData } from './types.js';
 
 initChalkLevel();
+
+// ── Diff approval selector (arrow keys + enter) ─────────────────────────────
+
+const APPROVAL_OPTIONS = [
+  { label: 'Apply all changes', key: 'apply' },
+  { label: 'Skip — tell me what to change', key: 'skip' },
+] as const;
+
+function DiffApprovalSelect({ onSelect }: { onSelect: (key: 'apply' | 'skip') => void }): React.ReactElement {
+  const [selected, setSelected] = useState(0);
+
+  useInput((input, key) => {
+    if (key.upArrow || key.leftArrow) setSelected((s) => (s - 1 + APPROVAL_OPTIONS.length) % APPROVAL_OPTIONS.length);
+    if (key.downArrow || key.rightArrow) setSelected((s) => (s + 1) % APPROVAL_OPTIONS.length);
+    if (key.return) onSelect(APPROVAL_OPTIONS[selected].key);
+    if (input === 'y' || input === 'Y') onSelect('apply');
+    if (input === 'n' || input === 'N') onSelect('skip');
+  });
+
+  return (
+    <Box flexDirection="column" paddingX={1} borderStyle="round" borderColor="cyan">
+      {APPROVAL_OPTIONS.map((opt, i) => (
+        <Box key={opt.key}>
+          <Text color={i === selected ? 'cyan' : undefined} bold={i === selected}>
+            {i === selected ? '❯ ' : '  '}{opt.label}
+          </Text>
+        </Box>
+      ))}
+      <Box marginTop={0}>
+        <Text dimColor>  ↑↓ select · Enter confirm · y/n shortcut</Text>
+      </Box>
+    </Box>
+  );
+}
 
 interface AppProps {
   initialPrompt?: string;
@@ -28,6 +62,32 @@ interface AppProps {
 let messageIdCounter = 0;
 function nextId(): string {
   return `msg-${++messageIdCounter}`;
+}
+
+function formatDiffForDisplay(diffs: import('../pipeline/types.js').ParsedDiff[]): string {
+  return diffs.map((d) => {
+    const isNew = d.oldContent === '';
+    const added = d.hunks.flatMap((h) => h.lines.filter((l) => l.type === 'add'));
+    const removed = d.hunks.flatMap((h) => h.lines.filter((l) => l.type === 'remove'));
+    const header = isNew
+      ? `+++ ${d.filePath} (new file · ${added.length} lines)`
+      : `--- ${d.filePath} (+${added.length} -${removed.length})`;
+
+    const lines: string[] = [];
+    for (const hunk of d.hunks) {
+      for (const line of hunk.lines) {
+        if (lines.length >= 20) { break; }
+        if (line.type === 'add') lines.push(`+ ${line.content}`);
+        else if (line.type === 'remove') lines.push(`- ${line.content}`);
+      }
+    }
+    const totalChanged = added.length + removed.length;
+    if (totalChanged > lines.length) {
+      lines.push(`  ... ${totalChanged - lines.length} more lines`);
+    }
+
+    return `${header}\n${lines.join('\n')}`;
+  }).join('\n\n');
 }
 
 function estimateContextChipLines(contextChips: ContextChip[] | null | undefined, terminalWidth: number): number {
@@ -85,6 +145,7 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
   const [currentModel, setCurrentModel] = useState<ModelId | null>(null);
   const [sessionTokens, setSessionTokens] = useState(0);
   const [sessionCost, setSessionCost] = useState(0);
+  const [monthlyCost, setMonthlyCost] = useState(0);
   const [streamingContent, setStreamingContent] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [savingsPct, setSavingsPct] = useState<number | undefined>(undefined);
@@ -106,12 +167,17 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
   const streamRef = useRef('');
   const busyRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  const clarificationResolveRef = useRef<((answer: string) => void) | null>(null);
+  const pendingDiffsRef = useRef<{ diffs: import('../pipeline/types.js').ParsedDiff[]; resolve: (apply: boolean) => void } | null>(null);
+  const assistantMsgIdRef = useRef('');
   const trackerRef = useRef(createUsageTracker(Date.now().toString(36), 'chat'));
   const pipelinePhasesRef = useRef<PipelinePhaseData[]>([]);
+  const lastIdleInputHeightRef = useRef(3);
 
-  // Load context chips from .mint/context.json on mount
+  // Load context chips + monthly cost on mount
   useEffect(() => {
     loadContextChips().then(setContextChips).catch(() => {});
+    try { setMonthlyCost(getMonthCost().cost); } catch { /* ignore */ }
   }, []);
 
   useEffect(() => {
@@ -181,7 +247,32 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
 
   const handleSubmit = useCallback(async (userInput: string) => {
     const trimmed = userInput.trim();
-    if (!trimmed || busyRef.current) return;
+    if (!trimmed) return;
+
+    // If pipeline is paused waiting for clarification answers, resolve it
+    if (clarificationResolveRef.current) {
+      const resolve = clarificationResolveRef.current;
+      clarificationResolveRef.current = null;
+      // Add user's answer
+      setMessages((prev) => [...prev, { id: nextId(), role: 'user', content: trimmed }]);
+      // Create a FRESH streaming message for the resumed pipeline (below the Q&A)
+      assistantMsgIdRef.current = nextId();
+      setMessages((prev) => [
+        ...prev,
+        { id: assistantMsgIdRef.current, role: 'assistant', content: '', isStreaming: true, phases: [] },
+      ]);
+      setInput('');
+      setScrollOffset(0);
+      resetPhases();
+      streamRef.current = '';
+      busyRef.current = true;
+      setIsBusy(true);
+      setIsRouting(true);
+      resolve(trimmed);
+      return;
+    }
+
+    if (busyRef.current) return;
 
     // Handle slash commands
     if (trimmed === '/help') {
@@ -235,6 +326,33 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
       return;
     }
 
+    if (trimmed === '/usage') {
+      setScrollOffset(0);
+      const month = getMonthCost();
+      const formatUsd = (n: number) => n < 0.01 ? `${(n * 100).toFixed(3)}¢` : `$${n.toFixed(4)}`;
+      const savPct = month.opusCost > 0 ? Math.round((1 - month.cost / month.opusCost) * 100) : 0;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: nextId(),
+          role: 'assistant',
+          content: [
+            `This month:`,
+            `  Workflows:  ${month.requests}`,
+            `  Spent:      ${formatUsd(month.cost)}`,
+            `  Opus equiv: ${formatUsd(month.opusCost)}`,
+            `  Saved:      ${formatUsd(month.saved)}${savPct > 0 ? ` (-${savPct}%)` : ''}`,
+            '',
+            `This session:`,
+            `  Spent:      ${formatUsd(sessionCost)}`,
+            `  Tokens:     ${sessionTokens.toLocaleString()}`,
+          ].join('\n'),
+        },
+      ]);
+      setInput('');
+      return;
+    }
+
     // Add user message
     const userMsgId = nextId();
     setMessages((prev) => [
@@ -258,10 +376,10 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
       : undefined;
 
     // Create streaming placeholder with phase tracking
-    const assistantMsgId = nextId();
+    assistantMsgIdRef.current = nextId();
     setMessages((prev) => [
       ...prev,
-      { id: assistantMsgId, role: 'assistant', content: '', isStreaming: true, phases: [] },
+      { id: assistantMsgIdRef.current, role: 'assistant', content: '', isStreaming: true, phases: [] },
     ]);
 
     streamRef.current = '';
@@ -281,6 +399,33 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
         model: preferredModel,
         signal: controller.signal,
         history,
+        agentMode,
+        onClarificationNeeded: async (questions: string[]) => {
+          return new Promise<string>((resolve) => {
+            // Finalize the current streaming message (phases rendered so far)
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantMsgIdRef.current
+                  ? { ...m, content: streamRef.current, isStreaming: false, phases: [...pipelinePhasesRef.current] }
+                  : m
+              )
+            );
+
+            // Show clarification questions as a new message
+            const questionsText = questions.map((q, i) => `${i + 1}. ${q}`).join('\n');
+            setMessages((prev) => [...prev, {
+              id: nextId(),
+              role: 'assistant',
+              content: `Before I keep going, I need a few quick answers:\n\n${questionsText}\n\nAnswer all of the above to proceed.`,
+            }]);
+
+            // Release the input box while we wait
+            setIsRouting(false);
+            busyRef.current = false;
+            setIsBusy(false);
+            clarificationResolveRef.current = resolve;
+          });
+        },
       })) {
         switch (chunk.type) {
           case 'search':
@@ -331,12 +476,7 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
 
           case 'text':
             if (chunk.text) {
-              // First text chunk means model is generating — start BUILDER phase
-              if (streamRef.current === '') {
-                onPhaseStart('BUILDER');
-              }
               streamRef.current += chunk.text;
-              setStreamingContent(streamRef.current);
             }
             break;
 
@@ -345,6 +485,7 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
             setCurrentModel(r.model);
             setSessionTokens((t) => t + r.inputTokens + r.outputTokens);
             setSessionCost((c) => c + r.cost);
+            setMonthlyCost((m) => m + r.cost);
             onCostUpdate(r.cost, r.inputTokens + r.outputTokens);
 
             const savPct = r.opusCost > 0
@@ -377,7 +518,7 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
             // Finalize message with phases
             setMessages((prev) =>
               prev.map((m) =>
-                m.id === assistantMsgId
+                m.id === assistantMsgIdRef.current
                   ? {
                       ...m,
                       content: streamRef.current,
@@ -390,6 +531,78 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
               )
             );
             setStreamingContent('');
+
+            // If diffs were generated, apply or ask
+            if (r.diffs && r.diffs.length > 0) {
+              const autoApply = agentMode === 'auto' || agentMode === 'yolo';
+
+              // Build a recap with diffs so user sees what changed (original output may have scrolled off)
+              const phaseRecap = pipelinePhasesRef.current
+                .filter((p) => p.status === 'done' && p.summary)
+                .map((p) => `  ${p.name} · ${p.summary}`)
+                .join('\n');
+
+              const diffSummary = r.diffs.map((d) => {
+                const isNew = d.oldContent === '';
+                const added = d.hunks.flatMap((h) => h.lines.filter((l) => l.type === 'add'));
+                const removed = d.hunks.flatMap((h) => h.lines.filter((l) => l.type === 'remove'));
+                const header = isNew
+                  ? `+ ${d.filePath} (new · ${added.length} lines)`
+                  : `~ ${d.filePath} (+${added.length} -${removed.length})`;
+
+                // Show a compact preview: up to 8 changed lines per file
+                const previewLines: string[] = [];
+                for (const hunk of d.hunks) {
+                  for (const line of hunk.lines) {
+                    if (previewLines.length >= 8) break;
+                    if (line.type === 'add') previewLines.push(`    + ${line.content}`);
+                    else if (line.type === 'remove') previewLines.push(`    - ${line.content}`);
+                  }
+                }
+                const moreCount = added.length + removed.length - previewLines.length;
+                if (moreCount > 0) previewLines.push(`    ... ${moreCount} more lines`);
+
+                return `  ${header}\n${previewLines.join('\n')}`;
+              }).join('\n\n');
+
+              const costLine = `Cost: ${r.cost < 0.01 ? (r.cost * 100).toFixed(3) + '¢' : '$' + r.cost.toFixed(4)} · ${(r.duration / 1000).toFixed(1)}s`;
+
+              if (autoApply) {
+                const { applyDiffsToProject } = await import('../pipeline/diff-apply.js');
+                const results = applyDiffsToProject(r.diffs, process.cwd());
+                const resultLines = results.map((res) => {
+                  if (res.ok) return res.action === 'created' ? `  + ${res.file}` : `  ~ ${res.file}`;
+                  return `  ! ${res.file}: ${res.error}`;
+                }).join('\n');
+                const diffDisplay = formatDiffForDisplay(r.diffs);
+                setMessages((prev) => [...prev, {
+                  id: nextId(),
+                  role: 'assistant',
+                  content: [
+                    phaseRecap ? `Pipeline:\n${phaseRecap}` : null,
+                    `Applied ${results.filter((res) => res.ok).length}/${results.length} files:\n${resultLines}`,
+                    `\`\`\`diff\n${diffDisplay}\n\`\`\``,
+                    costLine,
+                  ].filter(Boolean).join('\n\n'),
+                }]);
+              } else {
+                setMessages((prev) => [...prev, {
+                  id: nextId(),
+                  role: 'assistant',
+                  content: [
+                    phaseRecap ? `Pipeline:\n${phaseRecap}` : null,
+                    `Changes:\n\n${diffSummary}`,
+                    costLine,
+                  ].filter(Boolean).join('\n\n'),
+                }]);
+                busyRef.current = false;
+                setIsBusy(false);
+                pendingDiffsRef.current = {
+                  diffs: r.diffs,
+                  resolve: () => {},
+                };
+              }
+            }
             break;
           }
 
@@ -400,14 +613,18 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       setErrorMsg(`Error: ${errMsg}`);
-      setMessages((prev) => prev.filter((m) => m.id !== assistantMsgId));
+      setMessages((prev) => prev.filter((m) => m.id !== assistantMsgIdRef.current));
     } finally {
-      busyRef.current = false;
-      setIsBusy(false);
+      clarificationResolveRef.current = null;
+      // Don't clear pendingDiffsRef here — it persists after pipeline completes
+      if (!pendingDiffsRef.current) {
+        busyRef.current = false;
+        setIsBusy(false);
+      }
       setIsRouting(false);
       streamRef.current = '';
     }
-  }, [messages, currentModel, modelPreference, pipelinePhases]);
+  }, [messages, currentModel, modelPreference, agentMode, pipelinePhases]);
 
   // Auto-submit initialPrompt on mount
   useEffect(() => {
@@ -417,14 +634,50 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
     }
   }, []);
 
+  const showApproval = pendingDiffsRef.current != null && !isBusy;
+
+  const handleDiffApproval = useCallback(async (choice: 'apply' | 'skip') => {
+    if (!pendingDiffsRef.current) return;
+    const { diffs } = pendingDiffsRef.current;
+    pendingDiffsRef.current = null;
+
+    if (choice === 'apply') {
+      const { applyDiffsToProject } = await import('../pipeline/diff-apply.js');
+      const results = applyDiffsToProject(diffs, process.cwd());
+      const resultLines = results.map((res) => {
+        if (res.ok) return res.action === 'created' ? `  + ${res.file}` : `  ~ ${res.file}`;
+        return `  ! ${res.file}: ${res.error}`;
+      }).join('\n');
+      const diffDisplay = formatDiffForDisplay(diffs);
+      setMessages((prev) => [...prev, {
+        id: nextId(),
+        role: 'assistant',
+        content: `Applied ${results.filter((res) => res.ok).length}/${results.length} files:\n${resultLines}\n\n\`\`\`diff\n${diffDisplay}\n\`\`\``,
+      }]);
+    } else {
+      setMessages((prev) => [...prev, {
+        id: nextId(),
+        role: 'assistant',
+        content: 'Got it — changes skipped, your files are untouched. Tell me what to change and I\'ll rebuild it.',
+      }]);
+    }
+  }, []);
+
   const showWelcome = messages.length === 0 && !isBusy && !isRouting;
   const inspectorHeight = isInspectorOpen && pipelinePhases.length > 0
     ? Math.min(10, Math.max(6, Math.floor(termSize.rows * 0.28)))
     : 0;
+  const estimatedInputHeight = estimateInputAreaHeight(input, isBusy, isRouting, contextChips, termSize.cols);
+  if (!isBusy && !isRouting) {
+    lastIdleInputHeightRef.current = estimatedInputHeight;
+  }
+  const inputAreaHeight = (isBusy || isRouting)
+    ? Math.max(estimatedInputHeight, lastIdleInputHeightRef.current)
+    : estimatedInputHeight;
   const reservedRows =
     (errorMsg ? 1 : 0)
     + inspectorHeight
-    + estimateInputAreaHeight(input, isBusy, isRouting, contextChips, termSize.cols)
+    + inputAreaHeight
     + 1;
   const messageAreaHeight = Math.max(1, termSize.rows - reservedRows);
   const effectiveSelectedTaskId = selectedTaskId ?? selectDefaultInspectorTaskId(pipelinePhases);
@@ -457,23 +710,32 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
         />
       )}
 
-      <InputBox
-        value={input}
-        onChange={setInput}
-        onSubmit={handleSubmit}
-        isBusy={isBusy}
-        isRouting={isRouting}
-        contextChips={contextChips}
-      />
+      <Box height={inputAreaHeight} overflow="hidden" flexDirection="column">
+        {showApproval ? (
+          <DiffApprovalSelect onSelect={handleDiffApproval} />
+        ) : (
+          <InputBox
+            value={input}
+            onChange={setInput}
+            onSubmit={handleSubmit}
+            isBusy={isBusy}
+            isRouting={isRouting}
+            contextChips={contextChips}
+          />
+        )}
+      </Box>
 
-      <StatusBar
-        currentModel={currentModel}
-        sessionTokens={sessionTokens}
-        sessionCost={sessionCost}
-        savingsPct={savingsPct}
-        agentMode={agentMode ?? 'auto'}
-        inspectorHint={pipelinePhases.length > 0 ? 'Tab inspector' : undefined}
-      />
+      <Box height={1} overflow="hidden">
+        <StatusBar
+          currentModel={currentModel}
+          sessionTokens={sessionTokens}
+          sessionCost={sessionCost}
+          monthlyCost={monthlyCost}
+          savingsPct={savingsPct}
+          agentMode={agentMode ?? 'auto'}
+          inspectorHint={pipelinePhases.length > 0 ? 'Tab inspector' : undefined}
+        />
+      </Box>
     </Box>
   );
 }

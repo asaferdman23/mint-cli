@@ -4,6 +4,7 @@ import chalk from 'chalk';
 import { agentLoop, type AgentLoopChunk } from './loop.js';
 import type { AgentOptions, AgentMode } from './tools.js';
 import { buildContextPack } from '../context/pack.js';
+import { loadSessionMemory, formatSessionMemoryForPrompt } from '../context/session-memory.js';
 import type { ModelId } from '../providers/types.js';
 import { MODELS } from '../providers/types.js';
 import { getTier } from '../providers/tiers.js';
@@ -57,12 +58,14 @@ export async function buildEnrichedSystemPrompt(
   modelId: ModelId,
 ): Promise<string> {
   const base = buildSystemPrompt(cwd);
+  const sessionMemory = await loadSessionMemory(cwd).catch(() => null);
+  const memoryBlock = sessionMemory ? `\n\n${formatSessionMemoryForPrompt(sessionMemory)}` : '';
   try {
     const pack = await buildContextPack(cwd, modelId, task);
-    return pack.systemContext + '\n\n' + base;
+    return pack.systemContext + memoryBlock + '\n\n' + base;
   } catch {
     // Context pack failed (e.g. not a git repo) — fall back to base prompt
-    return base;
+    return memoryBlock ? `${memoryBlock}\n\n${base}` : base;
   }
 }
 
@@ -76,6 +79,10 @@ export interface RunAgentOptions {
   onChunk?: (chunk: AgentLoopChunk) => void;
   mode?: AgentMode;
   toolNames?: string[];
+  /** Max output tokens per LLM turn. Default: 16384. */
+  maxTokens?: number;
+  /** Provider-specific options (e.g. Grok reasoning toggle, Mistral reasoning_effort). */
+  providerOptions?: Record<string, unknown>;
   onApprovalNeeded?: (toolName: string, toolInput: Record<string, unknown>) => Promise<boolean>;
   onDiffProposed?: (path: string, diff: string) => Promise<boolean>;
   onIterationApprovalNeeded?: (
@@ -183,6 +190,8 @@ export async function runAgentSession(
     ...agentOptions,
     systemPrompt,
     maxIterations: options.maxIterations,
+    maxTokens: options.maxTokens,
+    providerOptions: options.providerOptions,
   })) {
     await Promise.resolve(options.onChunk?.(chunk));
     if (chunk.type === 'text' && chunk.text) {

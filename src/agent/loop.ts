@@ -47,10 +47,10 @@ interface AgentMessage {
  */
 export async function* agentLoop(
   task: string,
-  options: AgentOptions & { systemPrompt?: string; maxIterations?: number }
+  options: AgentOptions & { systemPrompt?: string; maxIterations?: number; maxTokens?: number; providerOptions?: Record<string, unknown> }
 ): AsyncGenerator<AgentLoopChunk> {
   const messages: AgentMessage[] = [{ role: 'user', content: task }];
-  const maxIterations = options.maxIterations ?? 20;
+  const maxIterations = options.maxIterations ?? 40;
   const toolDefinitions = options.toolNames
     ? getAgentToolDefinitions(options.toolNames)
     : TOOLS;
@@ -86,8 +86,9 @@ export async function* agentLoop(
         messages: messages as Message[],
         systemPrompt: options.systemPrompt,
         tools: toolDefinitions,
-        maxTokens: 8192,
+        maxTokens: options.maxTokens ?? 16384,
         signal: options.signal,
+        providerOptions: options.providerOptions,
       })) {
         if (chunk.type === 'text' && chunk.text) {
           fullText += chunk.text;

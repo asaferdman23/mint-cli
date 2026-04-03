@@ -8,7 +8,7 @@ export async function showConfig(): Promise<void> {
   const configPath = config.getConfigPath();
 
   console.log(boxen(
-    chalk.bold('Axon Configuration') + '\n\n' +
+    chalk.bold('Mint Configuration') + '\n\n' +
     chalk.dim(`Path: ${configPath}`),
     { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
   ));
@@ -21,7 +21,8 @@ export async function showConfig(): Promise<void> {
   // Auth
   table.push(
     [chalk.bold('Authentication'), ''],
-    ['  apiKey', currentConfig.apiKey ? chalk.green('••••' + currentConfig.apiKey.slice(-4)) : chalk.dim('Not set')],
+    ['  apiKey', currentConfig.apiKey ? chalk.green('[configured]') : chalk.dim('Not set')],
+    ['  gatewayToken', currentConfig.gatewayToken ? chalk.green('[configured]') : chalk.dim('Not set')],
     ['  email', currentConfig.email || chalk.dim('Not set')],
     ['  orgId', currentConfig.orgId || chalk.dim('Personal')],
   );
@@ -33,6 +34,12 @@ export async function showConfig(): Promise<void> {
     ['  defaultModel', currentConfig.defaultModel || 'auto'],
     ['  autoContext', String(currentConfig.autoContext ?? true)],
     ['  maxContextTokens', String(currentConfig.maxContextTokens || 100000)],
+  );
+
+  table.push(
+    ['', ''],
+    [chalk.bold('Gateway'), ''],
+    ['  apiBaseUrl', currentConfig.apiBaseUrl || 'https://api.usemint.dev'],
   );
 
   // Providers

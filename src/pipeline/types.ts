@@ -44,6 +44,7 @@ export interface PipelineTaskInfo {
   isBackground?: boolean;
   requiresApproval?: boolean;
   model?: string;
+  startedAt?: number;
   duration?: number;
   cost?: number;
   attempt?: number;
@@ -61,6 +62,7 @@ export interface PipelineChunk {
   type:
     | 'search'
     | 'context'
+    | 'clarification'
     | 'phase-start'
     | 'phase-done'
     | 'task-start'
@@ -92,6 +94,8 @@ export interface PipelineChunk {
   result?: PipelineResult;
   /** Error message (only on type: 'error'). */
   error?: string;
+  /** Clarifying questions (for type: 'clarification'). */
+  questions?: string[];
   /** Subtask info for parallel builders. */
   subtasks?: SubtaskInfo[];
   /** Task-level event payload. */
@@ -104,6 +108,7 @@ export interface SubtaskInfo {
   id: string;
   description: string;
   status: PipelineTaskStatus;
+  startedAt?: number;
   duration?: number;
   cost?: number;
   taskId?: string;
@@ -158,4 +163,9 @@ export interface PipelineOptions {
     iteration: number,
     toolCalls: Array<{ name: string; input: Record<string, unknown> }>,
   ) => Promise<boolean>;
+  /**
+   * Called in plan mode when the pipeline has clarifying questions.
+   * Return the user's free-form answer — it will be injected into the task.
+   */
+  onClarificationNeeded?: (questions: string[]) => Promise<string>;
 }

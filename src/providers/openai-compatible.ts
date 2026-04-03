@@ -3,6 +3,10 @@ import OpenAI from 'openai';
 import type { Provider, CompletionRequest, CompletionResponse, ModelId, AgentStreamChunk } from './types.js';
 import { calculateCost } from './router.js';
 import { config } from '../utils/config.js';
+import {
+  buildOpenAICompatibleAgentMessages,
+  buildOpenAICompatibleToolDefinitions,
+} from './openai-agent-format.js';
 
 export interface OpenAICompatibleConfig {
   providerId: string;
@@ -59,7 +63,8 @@ export class OpenAICompatibleProvider implements Provider {
       max_tokens: request.maxTokens ?? 4096,
       temperature: request.temperature ?? 0.7,
       messages,
-    });
+      ...request.providerOptions as Record<string, unknown>,
+    } as Parameters<typeof client.chat.completions.create>[0]);
 
     const latency = Date.now() - startTime;
     const inputTokens = response.usage?.prompt_tokens ?? 0;
@@ -86,7 +91,8 @@ export class OpenAICompatibleProvider implements Provider {
       temperature: request.temperature ?? 0.7,
       messages,
       stream: true,
-    }, { signal: request.signal });
+      ...request.providerOptions as Record<string, unknown>,
+    } as Parameters<typeof client.chat.completions.create>[0], { signal: request.signal });
 
     for await (const chunk of stream) {
       const content = chunk.choices[0]?.delta?.content;
@@ -97,12 +103,8 @@ export class OpenAICompatibleProvider implements Provider {
   async *streamAgent(request: CompletionRequest): AsyncIterable<AgentStreamChunk> {
     const client = this.getClient();
     const modelString = this.resolveModel(request.model);
-    const messages = buildOAIAgentMessages(request);
-
-    const tools: OpenAI.Chat.ChatCompletionTool[] | undefined = request.tools?.map(t => ({
-      type: 'function' as const,
-      function: { name: t.name, description: t.description, parameters: t.input_schema },
-    }));
+    const messages = buildOpenAICompatibleAgentMessages(request);
+    const tools = buildOpenAICompatibleToolDefinitions(request.tools);
 
     const stream = await client.chat.completions.create({
       model: modelString,
@@ -112,7 +114,8 @@ export class OpenAICompatibleProvider implements Provider {
       tools,
       tool_choice: tools && tools.length > 0 ? 'auto' : undefined,
       stream: true,
-    }, { signal: request.signal });
+      ...request.providerOptions as Record<string, unknown>,
+    } as Parameters<typeof client.chat.completions.create>[0], { signal: request.signal });
 
     const toolCallAccumulators: Map<number, { id: string; name: string; arguments: string }> = new Map();
 
@@ -156,48 +159,6 @@ function buildOAIMessages(request: CompletionRequest): OpenAI.Chat.ChatCompletio
   if (request.systemPrompt) out.push({ role: 'system', content: request.systemPrompt });
   for (const m of request.messages) {
     out.push({ role: m.role as 'user' | 'assistant' | 'system', content: m.content });
-  }
-  return out;
-}
-
-type AgentMessage = {
-  role: string;
-  content: string;
-  toolCalls?: Array<{ id: string; name: string; input: Record<string, unknown> }>;
-  toolResults?: Array<{ toolCallId: string; content: string }>;
-};
-
-function buildOAIAgentMessages(request: CompletionRequest): OpenAI.Chat.ChatCompletionMessageParam[] {
-  const out: OpenAI.Chat.ChatCompletionMessageParam[] = [];
-  if (request.systemPrompt) out.push({ role: 'system', content: request.systemPrompt });
-
-  for (const m of request.messages) {
-    const am = m as AgentMessage;
-    if (m.role === 'system') {
-      out.push({ role: 'system', content: m.content });
-    } else if (m.role === 'user') {
-      out.push({ role: 'user', content: m.content });
-    } else if (m.role === 'assistant') {
-      if (am.toolCalls && am.toolCalls.length > 0) {
-        out.push({
-          role: 'assistant',
-          content: m.content || null,
-          tool_calls: am.toolCalls.map(tc => ({
-            id: tc.id, type: 'function' as const,
-            function: { name: tc.name, arguments: JSON.stringify(tc.input) },
-          })),
-        });
-      } else {
-        out.push({ role: 'assistant', content: m.content });
-      }
-    } else if (m.role === 'tool') {
-      const results = am.toolResults;
-      if (results) {
-        for (const r of results) {
-          out.push({ role: 'tool', content: r.content, tool_call_id: r.toolCallId });
-        }
-      }
-    }
   }
   return out;
 }

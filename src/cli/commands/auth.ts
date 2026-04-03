@@ -1,60 +1,169 @@
 import chalk from 'chalk';
-import open from 'open';
-import ora from 'ora';
-import { config } from '../../utils/config.js';
 import boxen from 'boxen';
+import { createInterface } from 'node:readline';
+import { config } from '../../utils/config.js';
 
-const AUTH_URL = 'https://axon.dev/auth/cli';
-const POLL_INTERVAL = 2000; // 2 seconds
-const POLL_TIMEOUT = 120000; // 2 minutes
+function prompt(question: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
+function promptHidden(question: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    // Disable echo for password input
+    if (process.stdin.isTTY) process.stdin.setRawMode?.(true);
+    process.stdout.write(question);
+    let password = '';
+    const onData = (ch: Buffer) => {
+      const c = ch.toString();
+      if (c === '\n' || c === '\r') {
+        process.stdin.removeListener('data', onData);
+        if (process.stdin.isTTY) process.stdin.setRawMode?.(false);
+        process.stdout.write('\n');
+        rl.close();
+        resolve(password);
+      } else if (c === '\u007f' || c === '\b') {
+        if (password.length > 0) {
+          password = password.slice(0, -1);
+          process.stdout.write('\b \b');
+        }
+      } else if (c === '\u0003') {
+        // Ctrl+C
+        process.exit(1);
+      } else {
+        password += c;
+        process.stdout.write('*');
+      }
+    };
+    process.stdin.on('data', onData);
+  });
+}
+
+export async function signup(): Promise<void> {
+  if (config.isAuthenticated()) {
+    console.log(chalk.yellow('Already logged in. Run `mint logout` first.'));
+    return;
+  }
+
+  console.log(chalk.bold.cyan('\n  Create your Mint account\n'));
+
+  const email = await prompt('  Email: ');
+  const password = await promptHidden('  Password (min 8 chars): ');
+  const name = await prompt('  Name (optional): ');
+
+  if (!email || !password) {
+    console.log(chalk.red('\n  Email and password are required.'));
+    return;
+  }
+
+  if (password.length < 8) {
+    console.log(chalk.red('\n  Password must be at least 8 characters.'));
+    return;
+  }
+
+  const gatewayUrl = config.getGatewayUrl();
+
+  try {
+    const res = await fetch(`${gatewayUrl}/auth/signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, name: name || undefined }),
+    });
+
+    const data = await res.json() as any;
+
+    if (!res.ok) {
+      console.log(chalk.red(`\n  Signup failed: ${data.error || res.statusText}`));
+      return;
+    }
+
+    // Store credentials
+    config.setAll({
+      apiKey: data.api_token,
+      userId: data.user.id,
+      email: data.user.email,
+    });
+
+    console.log(boxen(
+      `${chalk.bold.green('Account created!')}\n\n` +
+      `Email: ${chalk.cyan(data.user.email)}\n` +
+      `API Token: ${chalk.dim(data.api_token.slice(0, 20))}...\n\n` +
+      `${chalk.dim('Token saved. You can now use mint commands.')}`,
+      { padding: 1, borderColor: 'green', borderStyle: 'round' }
+    ));
+  } catch (err) {
+    console.log(chalk.red(`\n  Network error: ${(err as Error).message}`));
+  }
+}
 
 export async function login(): Promise<void> {
   if (config.isAuthenticated()) {
     const email = config.get('email');
     console.log(chalk.yellow(`Already logged in as ${email}`));
-    console.log(chalk.dim('Run `axon logout` to switch accounts'));
+    console.log(chalk.dim('Run `mint logout` to switch accounts'));
     return;
   }
 
-  // Generate a device code
-  const deviceCode = generateDeviceCode();
-  const authUrl = `${AUTH_URL}?code=${deviceCode}`;
+  console.log(chalk.bold.cyan('\n  Login to Mint\n'));
 
-  console.log(boxen(
-    `${chalk.bold('Login to Axon')}\n\n` +
-    `Opening browser to complete authentication...\n\n` +
-    `If browser doesn't open, visit:\n` +
-    chalk.cyan(authUrl) + '\n\n' +
-    `Device code: ${chalk.bold(deviceCode)}`,
-    { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
-  ));
+  const email = await prompt('  Email: ');
+  const password = await promptHidden('  Password: ');
 
-  // Open browser
-  await open(authUrl);
+  if (!email || !password) {
+    console.log(chalk.red('\n  Email and password are required.'));
+    return;
+  }
 
-  // Poll for completion
-  const spinner = ora('Waiting for authentication...').start();
-  
+  const gatewayUrl = config.getGatewayUrl();
+
   try {
-    const result = await pollForAuth(deviceCode);
-    spinner.succeed('Authentication successful!');
-    
-    // Save credentials
-    config.setAll({
-      apiKey: result.apiKey,
-      userId: result.userId,
-      email: result.email,
-      orgId: result.orgId,
+    const res = await fetch(`${gatewayUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
     });
 
-    console.log(chalk.green(`\n✓ Logged in as ${result.email}`));
-    if (result.orgId) {
-      console.log(chalk.dim(`  Organization: ${result.orgName || result.orgId}`));
+    const data = await res.json() as any;
+
+    if (!res.ok) {
+      console.log(chalk.red(`\n  Login failed: ${data.error || res.statusText}`));
+      return;
     }
-  } catch (error) {
-    spinner.fail('Authentication failed');
-    console.error(chalk.red((error as Error).message));
-    process.exit(1);
+
+    // Login returns JWT but we need an API token for CLI use
+    // Request a new API token using the JWT
+    const tokenRes = await fetch(`${gatewayUrl}/auth/tokens`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${data.jwt}`,
+      },
+      body: JSON.stringify({ name: 'cli' }),
+    });
+
+    const tokenData = await tokenRes.json() as any;
+
+    if (!tokenRes.ok) {
+      console.log(chalk.red(`\n  Failed to create API token: ${tokenData.error}`));
+      return;
+    }
+
+    // Store credentials
+    config.setAll({
+      apiKey: tokenData.token,
+      userId: data.user.id,
+      email: data.user.email,
+    });
+
+    console.log(chalk.green(`\n  Logged in as ${data.user.email}`));
+  } catch (err) {
+    console.log(chalk.red(`\n  Network error: ${(err as Error).message}`));
   }
 }
 
@@ -66,85 +175,23 @@ export async function logout(): Promise<void> {
 
   const email = config.get('email');
   config.clear();
-  console.log(chalk.green(`✓ Logged out from ${email}`));
+  console.log(chalk.green(`Logged out from ${email}`));
 }
 
 export async function whoami(): Promise<void> {
   if (!config.isAuthenticated()) {
     console.log(chalk.yellow('Not logged in'));
-    console.log(chalk.dim('Run `axon login` to authenticate'));
+    console.log(chalk.dim('Run `mint login` or `mint signup` to authenticate'));
     return;
   }
 
   const email = config.get('email');
-  const orgId = config.get('orgId');
   const configPath = config.getConfigPath();
 
   console.log(boxen(
     `${chalk.bold('Current User')}\n\n` +
     `Email: ${chalk.cyan(email)}\n` +
-    `Organization: ${orgId || chalk.dim('Personal')}\n` +
     `Config: ${chalk.dim(configPath)}`,
     { padding: 1, borderColor: 'green', borderStyle: 'round' }
   ));
-}
-
-// Helper functions
-
-function generateDeviceCode(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for (let i = 0; i < 8; i++) {
-    code += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return code;
-}
-
-interface AuthResult {
-  apiKey: string;
-  userId: string;
-  email: string;
-  orgId?: string;
-  orgName?: string;
-}
-
-async function pollForAuth(deviceCode: string): Promise<AuthResult> {
-  const startTime = Date.now();
-  const apiBaseUrl = config.get('apiBaseUrl') || 'https://api.axon.dev';
-
-  while (Date.now() - startTime < POLL_TIMEOUT) {
-    try {
-      const response = await fetch(`${apiBaseUrl}/auth/device/${deviceCode}`);
-      
-      if (response.status === 200) {
-        const data = await response.json() as AuthResult;
-        return data;
-      }
-      
-      if (response.status === 404) {
-        // Not yet authenticated, continue polling
-        await sleep(POLL_INTERVAL);
-        continue;
-      }
-
-      if (response.status === 410) {
-        throw new Error('Device code expired. Please try again.');
-      }
-
-      throw new Error(`Unexpected response: ${response.status}`);
-    } catch (error) {
-      if ((error as Error).message.includes('fetch')) {
-        // Network error, continue polling
-        await sleep(POLL_INTERVAL);
-        continue;
-      }
-      throw error;
-    }
-  }
-
-  throw new Error('Authentication timed out. Please try again.');
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
 }

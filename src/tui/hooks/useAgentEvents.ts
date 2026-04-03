@@ -113,7 +113,7 @@ export function useAgentEvents() {
         const subtaskIndex = subtasks.findIndex((subtask) => (subtask.taskId ?? subtask.id) === task.taskId);
         const existingSubtask = subtaskIndex >= 0 ? subtasks[subtaskIndex] : undefined;
         const recentLogs = log
-          ? [...(existingSubtask?.recentLogs ?? []).slice(-5), log]
+          ? [...(existingSubtask?.recentLogs ?? []).slice(-11), log]
           : existingSubtask?.recentLogs;
         const nextSubtask: SubtaskData = {
           id: task.subtaskId ?? task.taskId,
@@ -123,6 +123,7 @@ export function useAgentEvents() {
           title: task.title,
           description: task.description,
           status: task.status,
+          startedAt: task.startedAt,
           duration: task.duration,
           cost: task.cost,
           progressSummary: task.progressSummary,

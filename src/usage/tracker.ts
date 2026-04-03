@@ -71,3 +71,16 @@ export function createUsageTracker(sessionId: string, command: string) {
 export function getUsageDb(): UsageDb {
   return getDb();
 }
+
+/**
+ * Get the total cost for the current calendar month.
+ * Safe to call at startup — returns 0 if no data.
+ */
+export function getMonthCost(): { cost: number; opusCost: number; saved: number; requests: number } {
+  try {
+    const summary = getDb().getMonthSummary();
+    return { cost: summary.cost, opusCost: summary.opusCost, saved: summary.saved, requests: summary.requests };
+  } catch {
+    return { cost: 0, opusCost: 0, saved: 0, requests: 0 };
+  }
+}

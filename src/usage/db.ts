@@ -141,7 +141,84 @@ export class UsageDb {
     return row?.total ?? 0;
   }
 
+  /**
+   * Get cost summary for the current calendar month.
+   */
+  getMonthSummary(): MonthSummary {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const row = this.db.prepare(`
+      SELECT
+        COUNT(*)          as requests,
+        COALESCE(SUM(cost), 0)        as cost,
+        COALESCE(SUM(opusCost), 0)    as opusCost,
+        COALESCE(SUM(savedAmount), 0) as saved,
+        COALESCE(SUM(inputTokens), 0) as inputTokens,
+        COALESCE(SUM(outputTokens), 0) as outputTokens
+      FROM usage
+      WHERE timestamp >= ?
+    `).get(monthStart) as { requests: number; cost: number; opusCost: number; saved: number; inputTokens: number; outputTokens: number };
+
+    return {
+      month: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`,
+      requests: row.requests,
+      cost: row.cost,
+      opusCost: row.opusCost,
+      saved: row.saved,
+      inputTokens: row.inputTokens,
+      outputTokens: row.outputTokens,
+    };
+  }
+
+  /**
+   * Get cost breakdown per day for the current month.
+   */
+  getDailyBreakdown(): DailyCost[] {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const rows = this.db.prepare(`
+      SELECT
+        date(timestamp / 1000, 'unixepoch', 'localtime') as day,
+        COUNT(*) as requests,
+        SUM(cost) as cost,
+        SUM(opusCost) as opusCost
+      FROM usage
+      WHERE timestamp >= ?
+      GROUP BY day
+      ORDER BY day
+    `).all(monthStart) as Array<{ day: string; requests: number; cost: number; opusCost: number }>;
+
+    return rows;
+  }
+
+  /**
+   * Get the running cost for the current session.
+   */
+  getSessionCost(sessionId: string): number {
+    const row = this.db.prepare(
+      'SELECT COALESCE(SUM(cost), 0) as total FROM usage WHERE sessionId = ?'
+    ).get(sessionId) as { total: number };
+    return row.total;
+  }
+
   close(): void {
     this.db.close();
   }
+}
+
+export interface MonthSummary {
+  month: string;
+  requests: number;
+  cost: number;
+  opusCost: number;
+  saved: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+export interface DailyCost {
+  day: string;
+  requests: number;
+  cost: number;
+  opusCost: number;
 }

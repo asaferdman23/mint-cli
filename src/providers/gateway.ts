@@ -1,8 +1,38 @@
 import type { Provider, CompletionRequest, CompletionResponse, AgentStreamChunk } from './types.js'
+import { config } from '../utils/config.js'
+import {
+  buildOpenAICompatibleAgentMessages,
+  buildOpenAICompatibleToolDefinitions,
+  getCombinedSystemPrompt,
+} from './openai-agent-format.js'
 
-// Compiled in at build time via tsup define
-const GATEWAY_URL = process.env.MINT_GATEWAY_URL ?? 'https://api.usemint.dev'
-const GATEWAY_TOKEN = process.env.MINT_API_TOKEN ?? ''
+const AUTH_HELP =
+  'Run `mint login` for a personal token, or for local testing set a shared gateway token with `mint config:set gatewayToken <token>`.'
+
+function getGatewayUrl(): string {
+  return process.env.MINT_GATEWAY_URL ?? config.getGatewayUrl()
+}
+
+function getToken(): string {
+  const gatewayToken = config.get('gatewayToken')
+  if (gatewayToken) return gatewayToken as string
+
+  const userToken = config.get('apiKey')
+  if (userToken) return userToken as string
+
+  const envToken = process.env.MINT_GATEWAY_TOKEN ?? process.env.MINT_API_TOKEN ?? ''
+  if (envToken) return envToken
+
+  throw new Error(`Mint Gateway auth is not configured. ${AUTH_HELP}`)
+}
+
+function buildGatewayError(kind: 'chat' | 'agent', status: number, body: string): Error {
+  if (status === 401) {
+    return new Error(`Gateway ${kind} error 401: Unauthorized. ${AUTH_HELP}`)
+  }
+
+  return new Error(`Gateway ${kind} error ${status}: ${body}`)
+}
 
 export const gatewayProvider: Provider = {
   id: 'groq', // reported provider — gateway decides actual provider
@@ -26,26 +56,26 @@ export const gatewayProvider: Provider = {
   },
 
   async *streamComplete(req: CompletionRequest): AsyncIterable<string> {
-    const systemMsg = req.messages.find(m => m.role === 'system')
     const chatMessages = req.messages.filter(m => m.role !== 'system')
+    const systemPrompt = getCombinedSystemPrompt(req)
 
-    const res = await fetch(`${GATEWAY_URL}/v1/chat`, {
+    const res = await fetch(`${getGatewayUrl()}/v1/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GATEWAY_TOKEN}`,
+        'Authorization': `Bearer ${getToken()}`,
       },
       body: JSON.stringify({
         session_id: req.sessionId ?? 'cli',
         messages: chatMessages,
-        system: systemMsg?.content,
+        system: systemPrompt,
       }),
       signal: req.signal,
     })
 
     if (!res.ok) {
       const body = await res.text()
-      throw new Error(`Gateway error ${res.status}: ${body}`)
+      throw buildGatewayError('chat', res.status, body)
     }
 
     if (!res.body) throw new Error('No response body from gateway')
@@ -81,27 +111,29 @@ export const gatewayProvider: Provider = {
   },
 
   async *streamAgent(req: CompletionRequest): AsyncIterable<AgentStreamChunk> {
-    const systemMsg = req.messages.find(m => m.role === 'system');
-    const chatMessages = req.messages.filter(m => m.role !== 'system');
+    const systemPrompt = getCombinedSystemPrompt(req);
+    const chatMessages = buildOpenAICompatibleAgentMessages(req)
+      .filter((message) => message.role !== 'system');
+    const tools = buildOpenAICompatibleToolDefinitions(req.tools);
 
-    const res = await fetch(`${GATEWAY_URL}/v1/agent`, {
+    const res = await fetch(`${getGatewayUrl()}/v1/agent`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GATEWAY_TOKEN}`,
+        'Authorization': `Bearer ${getToken()}`,
       },
       body: JSON.stringify({
         session_id: req.sessionId ?? 'cli',
         messages: chatMessages,
-        system: systemMsg?.content,
-        tools: req.tools,
+        system: systemPrompt,
+        tools,
       }),
       signal: req.signal,
     });
 
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`Gateway agent error ${res.status}: ${body}`);
+      throw buildGatewayError('agent', res.status, body);
     }
 
     if (!res.body) throw new Error('No response body from gateway agent');

@@ -1,9 +1,9 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve, sep } from 'node:path';
 import { runPrompt } from './commands/run.js';
-import { login, logout, whoami } from './commands/auth.js';
+import { login, logout, whoami, signup } from './commands/auth.js';
 import { showConfig, setConfig } from './commands/config.js';
 import { compareModels } from './commands/compare.js';
 import { showUsage } from './commands/usage.js';
@@ -23,8 +23,13 @@ program
   .option('--no-context', 'Disable automatic context gathering')
   .option('-v, --verbose', 'Show detailed output including tokens and cost')
   .option('--legacy', 'Use legacy single-call mode instead of pipeline')
+  .option('--auto', 'Auto mode — apply changes without asking')
+  .option('--yolo', 'Full autonomy — no approvals at all')
+  .option('--plan', 'Plan mode — ask clarifying questions first')
+  .option('--diff', 'Diff mode — review each file change')
   .action(async (promptParts: string[], options) => {
     const prompt = promptParts.join(' ').trim();
+    const agentMode = options.yolo ? 'yolo' : options.plan ? 'plan' : options.diff ? 'diff' : options.auto ? 'auto' : undefined;
     if (!prompt) {
       // No args → open TUI directly
       const { render } = await import('ink');
@@ -33,6 +38,7 @@ program
       const app = render(
         React.default.createElement(App, {
           modelPreference: options.model,
+          agentMode,
         })
       );
       await app.waitUntilExit();
@@ -50,8 +56,13 @@ program
 
 // Auth commands
 program
+  .command('signup')
+  .description('Create a new Mint account')
+  .action(signup);
+
+program
   .command('login')
-  .description('Login via SSO (opens browser)')
+  .description('Login with email and password')
   .action(login);
 
 program
@@ -126,15 +137,21 @@ program
   .description('Start interactive AI chat session')
   .argument('[prompt...]', 'Optional initial prompt')
   .option('-m, --model <model>', 'Model to use (auto, deepseek, sonnet, opus)', 'auto')
+  .option('--auto', 'Auto mode — apply changes without asking')
+  .option('--yolo', 'Full autonomy — no approvals at all')
+  .option('--plan', 'Plan mode — ask clarifying questions first')
+  .option('--diff', 'Diff mode — review each file change')
   .action(async (promptParts: string[], options) => {
     const { render } = await import('ink');
     const React = await import('react');
     const { App } = await import('../tui/App.js');
     const initialPrompt = promptParts.join(' ').trim();
+    const agentMode = options.yolo ? 'yolo' : options.plan ? 'plan' : options.diff ? 'diff' : options.auto ? 'auto' : undefined;
     const app = render(
       React.default.createElement(App, {
         initialPrompt: initialPrompt || undefined,
         modelPreference: options.model,
+        agentMode,
       })
     );
     await app.waitUntilExit();
@@ -538,8 +555,13 @@ function applyDiffs(
   diffs: import('../pipeline/types.js').ParsedDiff[],
   cwd: string,
 ): void {
+  const cwdAbs = resolve(cwd);
   for (const diff of diffs) {
-    const fullPath = join(cwd, diff.filePath);
+    const fullPath = resolve(cwdAbs, diff.filePath);
+    if (!fullPath.startsWith(cwdAbs + sep) && fullPath !== cwdAbs) {
+      console.log(chalk.red(`  ! Blocked path outside project: ${diff.filePath}`));
+      continue;
+    }
 
     try {
       // New file (old was /dev/null)

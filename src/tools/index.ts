@@ -92,7 +92,6 @@ const READ_ONLY_TOOLS = new Set([
   'find_files',
   'grep_files',
   'list_dir',
-  'run_tests',
   'git_diff',
   'web_fetch',
 ]);
@@ -102,7 +101,6 @@ const CONCURRENCY_SAFE_TOOLS = new Set([
   'find_files',
   'grep_files',
   'list_dir',
-  'run_tests',
   'git_diff',
   'web_fetch',
 ]);
@@ -110,8 +108,20 @@ const CONCURRENCY_SAFE_TOOLS = new Set([
 const ROLE_TOOL_ALLOWLIST: Record<ToolRole, string[]> = {
   scout: ['grep_files', 'find_files', 'list_dir', 'read_file'],
   architect: ['read_file', 'grep_files', 'web_fetch'],
-  builder: ['read_file', 'write_file', 'edit_file', 'search_replace', 'bash'],
-  reviewer: ['read_file', 'run_tests', 'git_diff', 'bash'],
+  builder: [
+    'read_file',
+    'grep_files',
+    'find_files',
+    'list_dir',
+    'write_file',
+    'edit_file',
+    'search_replace',
+    'git_diff',
+    'run_tests',
+    'web_fetch',
+    'bash',
+  ],
+  reviewer: ['read_file', 'grep_files', 'find_files', 'list_dir', 'run_tests', 'git_diff', 'web_fetch', 'bash'],
   general: getAllTools().map((tool) => tool.name),
 };
 

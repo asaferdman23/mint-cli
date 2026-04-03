@@ -6,6 +6,10 @@ import { testingSpecialist } from './testing.js';
 import { devopsSpecialist } from './devops.js';
 import { docsSpecialist } from './docs.js';
 import { generalSpecialist } from './general.js';
+import { mobileSpecialist } from './mobile.js';
+import { aiSpecialist } from './ai.js';
+import { fullstackSpecialist } from './fullstack.js';
+import { debuggingSpecialist } from './debugging.js';
 
 export type { SpecialistType, SpecialistConfig };
 
@@ -17,6 +21,10 @@ const specialists: Record<SpecialistType, SpecialistConfig> = {
   devops: devopsSpecialist,
   docs: docsSpecialist,
   general: generalSpecialist,
+  mobile: mobileSpecialist,
+  ai: aiSpecialist,
+  fullstack: fullstackSpecialist,
+  debugging: debuggingSpecialist,
 };
 
 /**
@@ -33,17 +41,35 @@ export function getSpecialist(type: SpecialistType): SpecialistConfig {
 export function detectSpecialist(files: string[]): SpecialistType {
   if (files.length === 0) return 'general';
 
-  // Count matches per specialist
-  let frontend = 0;
-  let backend = 0;
-  let database = 0;
-  let testing = 0;
-  let devops = 0;
-  let docs = 0;
+  const counts: Record<string, number> = {
+    frontend: 0, backend: 0, database: 0, testing: 0,
+    devops: 0, docs: 0, mobile: 0, ai: 0,
+  };
 
   for (const file of files) {
     const lower = file.toLowerCase();
     const parts = lower.split('/');
+
+    // Mobile patterns
+    if (
+      lower.endsWith('.swift') || lower.endsWith('.kt') || lower.endsWith('.dart') ||
+      lower.includes('android') || lower.includes('ios') ||
+      parts.some(p => ['screens', 'navigation'].includes(p)) ||
+      lower.includes('app.json') || lower.includes('pubspec.yaml')
+    ) {
+      counts.mobile++;
+      continue;
+    }
+
+    // AI/ML patterns
+    if (
+      parts.some(p => ['agents', 'prompts', 'embeddings', 'rag', 'llm', 'ai', 'ml'].includes(p)) ||
+      lower.includes('openai') || lower.includes('anthropic') || lower.includes('langchain') ||
+      lower.endsWith('.ipynb')
+    ) {
+      counts.ai++;
+      continue;
+    }
 
     // Frontend patterns
     if (
@@ -52,7 +78,7 @@ export function detectSpecialist(files: string[]): SpecialistType {
       lower.endsWith('.css') || lower.endsWith('.scss') ||
       parts.some(p => p === 'components')
     ) {
-      frontend++;
+      counts.frontend++;
       continue;
     }
 
@@ -61,7 +87,7 @@ export function detectSpecialist(files: string[]): SpecialistType {
       parts.some(p => ['routes', 'controllers', 'middleware', 'api'].includes(p)) ||
       lower.match(/^server\.\w+$/)
     ) {
-      backend++;
+      counts.backend++;
       continue;
     }
 
@@ -71,7 +97,7 @@ export function detectSpecialist(files: string[]): SpecialistType {
       lower.endsWith('.sql') ||
       lower.includes('schema.prisma')
     ) {
-      database++;
+      counts.database++;
       continue;
     }
 
@@ -80,7 +106,7 @@ export function detectSpecialist(files: string[]): SpecialistType {
       lower.match(/\.test\.\w+$/) || lower.match(/\.spec\.\w+$/) ||
       parts.some(p => p === '__tests__')
     ) {
-      testing++;
+      counts.testing++;
       continue;
     }
 
@@ -90,7 +116,7 @@ export function detectSpecialist(files: string[]): SpecialistType {
       parts.some(p => p === '.github') ||
       lower.match(/^docker-compose\./)
     ) {
-      devops++;
+      counts.devops++;
       continue;
     }
 
@@ -99,21 +125,63 @@ export function detectSpecialist(files: string[]): SpecialistType {
       lower.match(/^readme/i) || lower.match(/^changelog/i) ||
       parts.some(p => p === 'docs')
     ) {
-      docs++;
+      counts.docs++;
       continue;
     }
   }
 
   // Return the type with highest count
-  const counts: Array<[SpecialistType, number]> = [
-    ['frontend', frontend],
-    ['backend', backend],
-    ['database', database],
-    ['testing', testing],
-    ['devops', devops],
-    ['docs', docs],
+  const ranked: Array<[SpecialistType, number]> = [
+    ['mobile', counts.mobile],
+    ['ai', counts.ai],
+    ['frontend', counts.frontend],
+    ['backend', counts.backend],
+    ['database', counts.database],
+    ['testing', counts.testing],
+    ['devops', counts.devops],
+    ['docs', counts.docs],
   ];
 
-  const best = counts.reduce((a, b) => a[1] >= b[1] ? a : b);
+  const best = ranked.reduce((a, b) => a[1] >= b[1] ? a : b);
   return best[1] > 0 ? best[0] : 'general';
+}
+
+/**
+ * Detect specialist from the TASK DESCRIPTION when no files are available.
+ * Used for empty/new projects where file-based detection returns 'general'.
+ */
+export function detectSpecialistFromTask(task: string): SpecialistType {
+  const lower = task.toLowerCase();
+
+  // Frontend signals
+  if (/\b(landing\s*page|website|homepage|web\s*app|frontend|react|next\.?js|vue|svelte|tailwind|css|ui|ux|dashboard|portfolio)\b/.test(lower)) {
+    return 'frontend';
+  }
+
+  // Mobile signals
+  if (/\b(mobile\s*app|android|ios|react\s*native|expo|flutter|swift|kotlin)\b/.test(lower)) {
+    return 'mobile';
+  }
+
+  // AI signals
+  if (/\b(ai|ml|llm|gpt|claude|openai|anthropic|embedding|rag|agent|prompt|chatbot|fine.?tun)\b/.test(lower)) {
+    return 'ai';
+  }
+
+  // Backend signals
+  if (/\b(api|endpoint|server|backend|express|fastify|rest|graphql|middleware|auth|database|crud)\b/.test(lower)) {
+    return 'backend';
+  }
+
+  // DevOps signals
+  if (/\b(docker|ci.?cd|deploy|pipeline|kubernetes|k8s|github\s*action|nginx|terraform)\b/.test(lower)) {
+    return 'devops';
+  }
+
+  // Debug signals
+  if (/\b(fix|bug|debug|broken|crash|error|not\s*working|fails|issue)\b/.test(lower)) {
+    return 'debugging';
+  }
+
+  return 'general';
 }

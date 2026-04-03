@@ -7,6 +7,7 @@ interface StatusBarProps {
   currentModel: ModelId | null;
   sessionTokens: number;
   sessionCost: number;
+  monthlyCost?: number;
   savingsPct?: number;
   agentMode?: string;
   inspectorHint?: string;
@@ -37,6 +38,7 @@ export function StatusBar({
   currentModel,
   sessionTokens,
   sessionCost,
+  monthlyCost,
   savingsPct,
   agentMode = 'auto',
   inspectorHint,
@@ -44,13 +46,19 @@ export function StatusBar({
   const model = currentModel ?? 'auto';
 
   return (
-    <Box paddingX={1} justifyContent="space-between">
-      <Box gap={0}>
+    <Box paddingX={1}>
+      <Box flexGrow={1} flexShrink={1} gap={0} overflow="hidden">
         <Text dimColor>{model}</Text>
         <Text dimColor> │ </Text>
         <Text dimColor>{formatTokens(sessionTokens)} tokens</Text>
         <Text dimColor> │ </Text>
-        <Text dimColor>{formatCost(sessionCost)}</Text>
+        <Text dimColor>session {formatCost(sessionCost)}</Text>
+        {monthlyCost != null && monthlyCost > 0 && (
+          <>
+            <Text dimColor> │ </Text>
+            <Text color="cyan">month {formatCost(monthlyCost)}</Text>
+          </>
+        )}
         {savingsPct != null && savingsPct > 0 && (
           <>
             <Text dimColor> │ </Text>
@@ -58,7 +66,8 @@ export function StatusBar({
           </>
         )}
       </Box>
-      <Box gap={0}>
+      <Box flexShrink={0} gap={0}>
+        <Text dimColor> │ </Text>
         <Text color={modeColor(agentMode) as Parameters<typeof Text>[0]['color']}>{agentMode}</Text>
         <Text dimColor> │ v0.2.0</Text>
         {inspectorHint && (

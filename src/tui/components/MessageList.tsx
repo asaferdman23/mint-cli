@@ -1,7 +1,12 @@
 // src/tui/components/MessageList.tsx
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Box, Text } from 'ink';
-import { PipelinePhase, countPhaseRenderLines, renderPipelinePhaseLines } from './PipelinePhase.js';
+import {
+  ACTIVE_TASK_AUTO_EXPAND_DELAY_MS,
+  PipelinePhase,
+  countPhaseRenderLines,
+  renderPipelinePhaseLines,
+} from './PipelinePhase.js';
 import { MarkdownContent, countContentLines, renderMarkdownLineElements } from './MarkdownContent.js';
 import type { PipelinePhaseData } from '../types.js';
 
@@ -26,11 +31,16 @@ interface MessageListProps {
   scrollOffset?: number;
 }
 
+function hasVisibleAssistantBody(msg: ChatMessage): boolean {
+  return msg.content.trim().length > 0;
+}
+
 function estimateMessageHeight(
   msg: ChatMessage,
   termWidth: number,
   isFirst: boolean,
   livePhases?: PipelinePhaseData[],
+  nowMs = Date.now(),
 ): number {
   const contentWidth = Math.max(20, termWidth - 4);
   const phases = msg.isStreaming ? livePhases : msg.phases;
@@ -41,13 +51,10 @@ function estimateMessageHeight(
     return lines;
   }
 
-  lines += countPhaseRenderLines(phases, contentWidth);
-  if (msg.content || msg.isStreaming) {
+  lines += countPhaseRenderLines(phases, contentWidth, nowMs);
+  if (hasVisibleAssistantBody(msg)) {
     lines += 1;
     lines += countContentLines(msg.content, contentWidth);
-    if (msg.isStreaming) {
-      lines += 1;
-    }
   }
 
   return lines;
@@ -58,6 +65,7 @@ function buildAssistantRenderLines(
   termWidth: number,
   isFirst: boolean,
   livePhases?: PipelinePhaseData[],
+  nowMs = Date.now(),
 ): React.ReactElement[] {
   const contentWidth = Math.max(20, termWidth - 4);
   const phases = msg.isStreaming ? livePhases : msg.phases;
@@ -74,12 +82,12 @@ function buildAssistantRenderLines(
   if (phases && phases.length > 0) {
     lines.push(
       ...phases.flatMap((phase, phaseIndex) =>
-        renderPipelinePhaseLines(phase, contentWidth, `${msg.id}-phase-${phaseIndex}`),
+        renderPipelinePhaseLines(phase, contentWidth, `${msg.id}-phase-${phaseIndex}`, nowMs),
       ),
     );
   }
 
-  if (msg.content || msg.isStreaming) {
+  if (hasVisibleAssistantBody(msg)) {
     lines.push(
       <Text key={`${msg.id}-assistant-header`} color="green" bold>
         {'Mint'}
@@ -87,11 +95,6 @@ function buildAssistantRenderLines(
       </Text>,
     );
     lines.push(...renderMarkdownLineElements(msg.content, contentWidth, `${msg.id}-content`));
-    if (msg.isStreaming) {
-      lines.push(
-        <Text key={`${msg.id}-assistant-cursor`} color="cyan">▋</Text>,
-      );
-    }
   }
 
   return lines;
@@ -106,6 +109,26 @@ export function MessageList({
 }: MessageListProps): React.ReactElement {
   const termWidth = process.stdout.columns ?? 80;
   const maxHeight = availableHeight ?? (process.stdout.rows ?? 24) - 6;
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const hasActiveSingleTask = (livePhases ?? []).some((phase) =>
+      phase.status === 'active'
+      && phase.subtasks?.length === 1
+      && phase.subtasks[0]?.status === 'running'
+      && phase.subtasks[0]?.startedAt != null,
+    );
+
+    if (!hasActiveSingleTask) {
+      return undefined;
+    }
+
+    const timer = setInterval(() => {
+      setNowMs(Date.now());
+    }, Math.max(250, ACTIVE_TASK_AUTO_EXPAND_DELAY_MS / 6));
+
+    return () => clearInterval(timer);
+  }, [livePhases]);
 
   const allMessages = messages.map((msg) => {
     if (msg.isStreaming) {
@@ -122,7 +145,7 @@ export function MessageList({
 
     for (let i = allMessages.length - 1; i >= 0; i--) {
       const isFirst = i === 0;
-      const msgHeight = estimateMessageHeight(allMessages[i], termWidth, isFirst, livePhases);
+      const msgHeight = estimateMessageHeight(allMessages[i], termWidth, isFirst, livePhases, nowMs);
       if (totalLines + msgHeight > maxHeight && i < allMessages.length - 1) {
         break;
       }
@@ -150,10 +173,10 @@ export function MessageList({
   ) {
     const linesBeforeLastMessage = visibleMessages.slice(0, -1).reduce((total, msg, idx) => {
       const isFirst = idx === 0 && !truncated;
-      return total + estimateMessageHeight(msg, termWidth, isFirst, livePhases);
+      return total + estimateMessageHeight(msg, termWidth, isFirst, livePhases, nowMs);
     }, 0);
     const lastIsFirst = lastVisibleIndex === 0 && !truncated;
-    const totalMessageLines = estimateMessageHeight(lastVisibleMessage, termWidth, lastIsFirst, livePhases);
+    const totalMessageLines = estimateMessageHeight(lastVisibleMessage, termWidth, lastIsFirst, livePhases, nowMs);
 
     const computeViewport = (showScrollNotice: boolean) => {
       const noticeLines = baseNoticeLines + (showScrollNotice ? 1 : 0);
@@ -197,7 +220,7 @@ export function MessageList({
         const isLast = idx === visibleMessages.length - 1;
 
         if (msg.role === 'assistant' && isLast) {
-          const assistantLines = buildAssistantRenderLines(msg, termWidth, isFirst, livePhases);
+          const assistantLines = buildAssistantRenderLines(msg, termWidth, isFirst, livePhases, nowMs);
           const visibleLines = assistantLines.slice(
             lastMessageLineOffset,
             lastMessageMaxLines !== undefined ? lastMessageLineOffset + lastMessageMaxLines : undefined,
@@ -231,8 +254,8 @@ export function MessageList({
                   if (phases && phases.length > 0) {
                     return (
                       <Box flexDirection="column" marginBottom={0}>
-                        {phases.map((phase) => (
-                          <PipelinePhase key={phase.name} phase={phase} />
+                        {phases.map((phase, phaseIndex) => (
+                          <PipelinePhase key={`${phase.name}-${phaseIndex}`} phase={phase} />
                         ))}
                       </Box>
                     );
@@ -241,7 +264,7 @@ export function MessageList({
                 })()}
 
                 {/* Assistant response text */}
-                {(msg.content || msg.isStreaming) && (
+                {hasVisibleAssistantBody(msg) && (
                   <Box flexDirection="column">
                     <Text color="green" bold>
                       {'Mint'}
@@ -259,9 +282,6 @@ export function MessageList({
                         />
                       );
                     })()}
-                    {msg.isStreaming && (
-                      <Text color="cyan">▋</Text>
-                    )}
                   </Box>
                 )}
               </Box>

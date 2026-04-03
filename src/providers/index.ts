@@ -60,7 +60,8 @@ export async function* streamComplete(request: CompletionRequest): AsyncIterable
 function isRetryableError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   return err.message.includes('429') || err.message.includes('500') ||
-    err.message.includes('timeout') || err.message.includes('ECONNREFUSED');
+    err.message.includes('timeout') || err.message.includes('ECONNREFUSED') ||
+    err.message.includes('402') || /insufficient balance/i.test(err.message);
 }
 
 export async function completeWithFallback(request: CompletionRequest): Promise<CompletionResponse> {
@@ -114,13 +115,24 @@ export async function* streamAgent(request: CompletionRequest): AsyncIterable<Ag
   const hasAgent = (p: Provider): p is AgentProvider =>
     typeof (p as AgentProvider).streamAgent === 'function';
 
+  const candidates: Array<{ label: string; request: CompletionRequest; provider: AgentProvider }> = [];
+
+  const pushCandidate = (label: string, model: ModelId, provider: Provider | undefined) => {
+    if (!provider || !hasAgent(provider)) return;
+    if (candidates.some((candidate) => candidate.label === label)) return;
+    candidates.push({
+      label,
+      request: { ...request, model },
+      provider,
+    });
+  };
+
   // Try the requested model's direct provider first
   const modelInfo = MODELS[request.model];
   if (modelInfo) {
     const directProvider = providers.get(modelInfo.provider);
     if (directProvider && hasProviderKey(modelInfo.provider) && hasAgent(directProvider)) {
-      yield* directProvider.streamAgent(request);
-      return;
+      pushCandidate(`${modelInfo.provider}/${request.model}`, request.model, directProvider);
     }
   }
 
@@ -132,9 +144,7 @@ export async function* streamAgent(request: CompletionRequest): AsyncIterable<Ag
     if (!fbInfo) continue;
     const fbProvider = providers.get(fbInfo.provider);
     if (fbProvider && hasProviderKey(fbInfo.provider) && hasAgent(fbProvider)) {
-      console.error(`[agent] No direct key for ${request.model}, using ${fallbackModel}`);
-      yield* fbProvider.streamAgent({ ...request, model: fallbackModel });
-      return;
+      pushCandidate(`${fbInfo.provider}/${fallbackModel}`, fallbackModel, fbProvider);
     }
   }
 
@@ -144,9 +154,32 @@ export async function* streamAgent(request: CompletionRequest): AsyncIterable<Ag
       // Find any model this provider supports
       const anyModel = Object.entries(MODELS).find(([, info]) => info.provider === providerId);
       if (anyModel) {
-        console.error(`[agent] Falling back to ${providerId}/${anyModel[0]}`);
-        yield* provider.streamAgent({ ...request, model: anyModel[0] as ModelId });
+        pushCandidate(`${providerId}/${anyModel[0]}`, anyModel[0] as ModelId, provider);
+      }
+    }
+  }
+
+  if (candidates.length > 0) {
+    for (let index = 0; index < candidates.length; index++) {
+      const candidate = candidates[index]!;
+      let emittedAny = false;
+
+      try {
+        if (index > 0) {
+          console.error(`[agent] Falling back to ${candidate.label}`);
+        }
+
+        for await (const chunk of candidate.provider.streamAgent(candidate.request)) {
+          emittedAny = true;
+          yield chunk;
+        }
         return;
+      } catch (err) {
+        const isLast = index === candidates.length - 1;
+        if (emittedAny || !isRetryableError(err) || isLast) {
+          throw err;
+        }
+        console.error(`[agent] ${candidate.label} failed, trying next...`);
       }
     }
   }

@@ -20,6 +20,7 @@ export type ModelId =
   | 'groq-gpt-oss-120b'
   | 'groq-gpt-oss-20b'
   | 'grok-4-beta'
+  | 'grok-4.1-fast'
   | 'mistral-small';
 
 export type ProviderId = 'anthropic' | 'deepseek' | 'openrouter' | 'gemini' | 'openai' | 'kimi' | 'grok' | 'groq' | 'mistral';
@@ -228,6 +229,15 @@ export const MODELS: Record<ModelId, ModelInfo> = {
     contextWindow: 131072,
     capabilities: { coding: 9, reasoning: 10, speed: 7 },
   },
+  'grok-4.1-fast': {
+    id: 'grok-4.1-fast',
+    provider: 'grok',
+    name: 'Grok 4.1 Fast (Reasoning)',
+    inputPrice: 0.20,
+    outputPrice: 0.50,
+    contextWindow: 131072,
+    capabilities: { coding: 8, reasoning: 9, speed: 10 },
+  },
   'mistral-small': {
     id: 'mistral-small',
     provider: 'mistral',
@@ -240,7 +250,7 @@ export const MODELS: Record<ModelId, ModelInfo> = {
 };
 
 export interface Message {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
 }
 
@@ -272,6 +282,8 @@ export interface CompletionRequest {
   sessionId?: string;
   tools?: ToolDefinition[];
   systemPrompt?: string;
+  /** Provider-specific options (e.g. Grok reasoning toggle, Mistral reasoning_effort). */
+  providerOptions?: Record<string, unknown>;
 }
 
 export interface CompletionResponse {

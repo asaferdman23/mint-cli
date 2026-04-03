@@ -5,6 +5,7 @@ import { z } from 'zod';
 const configSchema = z.object({
   // Auth
   apiKey: z.string().optional(),
+  gatewayToken: z.string().optional(),
   userId: z.string().optional(),
   email: z.string().optional(),
   orgId: z.string().optional(),
@@ -32,6 +33,7 @@ const conf = new Conf<Config>({
   projectName: 'mint-cli',
   schema: {
     apiKey: { type: 'string' },
+    gatewayToken: { type: 'string' },
     userId: { type: 'string' },
     email: { type: 'string' },
     orgId: { type: 'string' },
@@ -86,6 +88,10 @@ export function getConfigPath(): string {
   return conf.path;
 }
 
+export function getGatewayUrl(): string {
+  return conf.get('apiBaseUrl') ?? 'https://api.usemint.dev';
+}
+
 export const config = {
   get,
   set,
@@ -94,4 +100,5 @@ export const config = {
   getConfig,
   isAuthenticated,
   getConfigPath,
+  getGatewayUrl,
 };

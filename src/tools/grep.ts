@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { resolve, sep } from 'node:path';
 import { z } from 'zod';
 import type { Tool, ToolContext, ToolResult } from './types.js';
 
@@ -18,7 +18,11 @@ export const grepTool: Tool = {
 
   async execute(params: z.infer<typeof parameters>, ctx: ToolContext): Promise<ToolResult> {
     try {
+      const cwdAbs = resolve(ctx.cwd);
       const searchDir = resolve(ctx.cwd, params.dir ?? '.');
+      if (!searchDir.startsWith(cwdAbs + sep) && searchDir !== cwdAbs) {
+        return { success: false, output: '', error: `Path outside working directory: ${params.dir}` };
+      }
       const args = ['-rn', '-E', params.pattern];
 
       // Respect common ignore patterns

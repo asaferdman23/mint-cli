@@ -39,6 +39,18 @@ export function parseArchitectResponse(text: string): Pick<ArchitectOutput, 'typ
           const dependsOn = Array.isArray(subtask.dependsOn)
             ? (subtask.dependsOn as unknown[]).map(String).filter(Boolean)
             : undefined;
+          const entryFiles = Array.isArray(subtask.entryFiles)
+            ? (subtask.entryFiles as unknown[]).map(String).filter(Boolean)
+            : (relevantFiles.length > 0 ? relevantFiles.slice(0, 3) : undefined);
+          const scopeDirectory = typeof subtask.scopeDirectory === 'string' && subtask.scopeDirectory.trim().length > 0
+            ? subtask.scopeDirectory.trim()
+            : deriveScopeDirectory(relevantFiles);
+          const researchSummary = typeof subtask.researchSummary === 'string' && subtask.researchSummary.trim().length > 0
+            ? subtask.researchSummary.trim()
+            : buildDefaultResearchSummary(relevantFiles, subtask.description, subtask.plan);
+          const builderBrief = typeof subtask.builderBrief === 'string' && subtask.builderBrief.trim().length > 0
+            ? subtask.builderBrief.trim()
+            : buildDefaultBuilderBrief(scopeDirectory, entryFiles, subtask.plan);
           const writeTargets = Array.isArray(subtask.writeTargets)
             ? (subtask.writeTargets as unknown[]).map(String).filter(Boolean)
             : (relevantFiles.length > 0 ? [...relevantFiles] : undefined);
@@ -54,6 +66,10 @@ export function parseArchitectResponse(text: string): Pick<ArchitectOutput, 'typ
             relevantFiles,
             plan: String(subtask.plan ?? ''),
             specialist,
+            ...(scopeDirectory ? { scopeDirectory } : {}),
+            ...(entryFiles && entryFiles.length > 0 ? { entryFiles } : {}),
+            ...(researchSummary ? { researchSummary } : {}),
+            ...(builderBrief ? { builderBrief } : {}),
             ...(dependsOn && dependsOn.length > 0 ? { dependsOn } : {}),
             ...(writeTargets && writeTargets.length > 0 ? { writeTargets } : {}),
             ...(verificationTargets && verificationTargets.length > 0 ? { verificationTargets } : {}),
@@ -72,6 +88,67 @@ const SPECIALIST_TYPES = new Set(['frontend', 'backend', 'database', 'testing', 
 
 function isSpecialistType(value: string): value is SpecialistType {
   return SPECIALIST_TYPES.has(value);
+}
+
+function deriveScopeDirectory(files: string[]): string | undefined {
+  if (files.length === 0) return undefined;
+
+  const splitPaths = files
+    .map((file) => file.split('/').filter(Boolean))
+    .filter((segments) => segments.length > 1);
+  if (splitPaths.length === 0) return undefined;
+
+  const first = splitPaths[0];
+  const shared: string[] = [];
+  for (let index = 0; index < first.length - 1; index++) {
+    const segment = first[index];
+    if (splitPaths.every((parts) => parts[index] === segment)) {
+      shared.push(segment);
+      continue;
+    }
+    break;
+  }
+
+  if (shared.length > 0) {
+    return shared.join('/');
+  }
+
+  const fallback = first.slice(0, -1).join('/');
+  return fallback || undefined;
+}
+
+function buildDefaultResearchSummary(
+  files: string[],
+  description: unknown,
+  plan: unknown,
+): string | undefined {
+  const scope = files.length > 0 ? files.join(', ') : 'the assigned scope';
+  const descriptionText = typeof description === 'string' && description.trim().length > 0
+    ? description.trim()
+    : 'the requested task';
+  const planText = typeof plan === 'string' && plan.trim().length > 0
+    ? plan.trim()
+    : 'Follow the assigned files and existing local patterns.';
+
+  return `Focus on ${scope}. This subtask covers ${descriptionText}. ${planText}`;
+}
+
+function buildDefaultBuilderBrief(
+  scopeDirectory: string | undefined,
+  entryFiles: string[] | undefined,
+  plan: unknown,
+): string | undefined {
+  const orderedFiles = entryFiles && entryFiles.length > 0
+    ? entryFiles.join(', ')
+    : 'the assigned files';
+  const start = scopeDirectory
+    ? `Start in ${scopeDirectory}.`
+    : 'Start in the assigned scope.';
+  const planText = typeof plan === 'string' && plan.trim().length > 0
+    ? plan.trim()
+    : 'Follow the existing local implementation patterns.';
+
+  return `${start} Read ${orderedFiles} first. ${planText}`;
 }
 
 export async function runArchitect(

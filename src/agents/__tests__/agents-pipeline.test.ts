@@ -26,6 +26,10 @@ const _subtask: Subtask = {
   relevantFiles: ['src/auth.ts'],
   plan: '1. In src/auth.ts add expiresIn option',
   specialist: 'backend',
+  scopeDirectory: 'src',
+  entryFiles: ['src/auth.ts'],
+  researchSummary: 'src/auth.ts owns token expiry behavior.',
+  builderBrief: 'Read src/auth.ts first, then add expiresIn handling.',
 };
 
 const _architectOutputSingle: ArchitectOutput = {
@@ -98,6 +102,10 @@ import { parseArchitectResponse } from '../architect.js';
         description: 'Auth fix',
         relevantFiles: ['src/auth.ts'],
         plan: '1. Add expiry',
+        scopeDirectory: 'src',
+        entryFiles: ['src/auth.ts'],
+        researchSummary: 'src/auth.ts already owns auth token handling.',
+        builderBrief: 'Start in src/auth.ts and update the expiry path.',
         writeTargets: ['src/auth.ts'],
       },
       {
@@ -105,6 +113,10 @@ import { parseArchitectResponse } from '../architect.js';
         description: 'UI update',
         relevantFiles: ['src/ui.tsx'],
         plan: '1. Update button',
+        scopeDirectory: 'src',
+        entryFiles: ['src/ui.tsx'],
+        researchSummary: 'src/ui.tsx is the main UI entry for this change.',
+        builderBrief: 'Read src/ui.tsx first and update the button in place.',
         dependsOn: ['1'],
         writeTargets: ['src/ui.tsx'],
         verificationTargets: ['src/ui.test.tsx'],
@@ -117,6 +129,10 @@ import { parseArchitectResponse } from '../architect.js';
   assert.strictEqual(result.subtasks!.length, 2, 'architect: should have 2 subtasks');
   assert.strictEqual(result.subtasks![0].id, '1', 'architect: first subtask id');
   assert.deepEqual(result.subtasks![0].relevantFiles, ['src/auth.ts'], 'architect: relevantFiles');
+  assert.strictEqual(result.subtasks![0].scopeDirectory, 'src', 'architect: scopeDirectory');
+  assert.deepEqual(result.subtasks![0].entryFiles, ['src/auth.ts'], 'architect: entryFiles');
+  assert.strictEqual(result.subtasks![0].researchSummary, 'src/auth.ts already owns auth token handling.', 'architect: researchSummary');
+  assert.strictEqual(result.subtasks![0].builderBrief, 'Start in src/auth.ts and update the expiry path.', 'architect: builderBrief');
   assert.deepEqual(result.subtasks![0].writeTargets, ['src/auth.ts'], 'architect: writeTargets');
   assert.deepEqual(result.subtasks![1].dependsOn, ['1'], 'architect: dependsOn');
   assert.deepEqual(result.subtasks![1].verificationTargets, ['src/ui.test.tsx'], 'architect: verificationTargets');

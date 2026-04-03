@@ -213,6 +213,7 @@ export function createInitialSubtasks<TResult>(
       writeTargets: task.writeTargets,
       verificationTargets: task.verificationTargets,
       model: undefined,
+      startedAt: undefined,
     };
   });
 }
@@ -418,6 +419,7 @@ function toPipelineTaskInfo<TResult>(task: WorkerTaskState<TResult>): PipelineTa
     isBackground: task.isBackground,
     requiresApproval: task.requiresApproval,
     model: task.model,
+    startedAt: task.startedAt,
     duration: task.duration,
     cost: task.cost,
     attempt: task.attempt,
@@ -440,6 +442,7 @@ export function toSubtaskInfo<TResult>(task: WorkerTaskState<TResult>): SubtaskI
     title: task.title,
     description: task.description,
     status: task.status,
+    startedAt: task.startedAt,
     duration: task.duration,
     cost: task.cost,
     progressSummary: task.progressSummary,

@@ -169,6 +169,7 @@ function detectFramework(cwd: string): string | null {
     { file: 'svelte.config.js', name: 'SvelteKit' },
     { file: 'astro.config.mjs', name: 'Astro' },
     { file: 'vite.config.ts', name: 'Vite' },
+    { file: 'vite.config.js', name: 'Vite' },
     { file: 'angular.json', name: 'Angular' },
     { file: 'remix.config.js', name: 'Remix' },
     { file: 'Cargo.toml', name: 'Rust/Cargo' },
@@ -178,6 +179,10 @@ function detectFramework(cwd: string): string | null {
     { file: 'Gemfile', name: 'Ruby' },
     { file: 'build.gradle', name: 'Gradle' },
     { file: 'pom.xml', name: 'Maven' },
+    // Landing page frameworks
+    { file: 'landing/vite.config.ts', name: 'Landing (Vite + React)' },
+    { file: 'landing/vite.config.js', name: 'Landing (Vite + React)' },
+    { file: 'landing/package.json', name: 'Landing (React)' },
   ];
 
   for (const { file, name } of checks) {
@@ -343,6 +348,34 @@ applies_to: [backend, testing]
 - Use virtual environments, never install globally
 - Prefer list comprehensions over map/filter for simple transformations
 - Handle exceptions specifically, never bare except
+`, 'utf-8');
+      created.push(skillPath);
+    }
+  }
+
+  // Landing page skills
+  if (existsSync(join(cwd, 'landing', 'package.json'))) {
+    const skillPath = join(skillsDir, 'landing-page.md');
+    if (!existsSync(skillPath)) {
+      await writeFile(skillPath, `---applies_to: [frontend, landing]
+---
+# Landing Page Patterns
+# Edit this file to teach Mint your project's conventions for the landing page
+
+- Use functional React components with TypeScript
+- Keep components small and focused (under 200 lines)
+- Co-locate component, styles, and tests in the same directory
+- Use Tailwind CSS for styling (if configured)
+- Prefer CSS-in-JS or styled-components for complex animations
+- Handle loading states and error boundaries gracefully
+- Optimize images and assets for web performance
+- Use semantic HTML elements (button, section, header, footer)
+- Keep hero sections and CTAs above the fold
+- Minimize third-party scripts and trackers
+- Test responsiveness across mobile, tablet, and desktop
+- Use lazy loading for non-critical assets
+- Implement proper SEO meta tags in the head
+- Keep bundle size under control — audit with webpack-bundle-analyzer
 `, 'utf-8');
       created.push(skillPath);
     }

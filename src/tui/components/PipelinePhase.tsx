@@ -1,5 +1,5 @@
 // src/tui/components/PipelinePhase.tsx
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import Spinner from 'ink-spinner';
 import type { PipelinePhaseData, SubtaskData } from '../types.js';
@@ -22,6 +22,8 @@ interface PhaseRenderLine {
   spinnerColor?: TextColor;
   segments: InlineSegment[];
 }
+
+export const ACTIVE_TASK_AUTO_EXPAND_DELAY_MS = 3000;
 
 function formatDuration(ms: number): string {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
@@ -99,8 +101,9 @@ function buildSubtaskLines(
   const lines: PhaseRenderLine[] = [];
   const branch = isLast ? '└─ ' : '├─ ';
   const outerPrefix = active ? '│   ' : '  ';
+  const innerContinue = isLast ? '   ' : '│  ';
   const firstPrefixText = `${outerPrefix}${branch}`;
-  const continuationPrefixText = `${outerPrefix}   `;
+  const continuationPrefixText = `${outerPrefix}${innerContinue}`;
   const suffix = [
     subtask.model ?? null,
     subtask.duration != null ? formatDuration(subtask.duration) : null,
@@ -163,7 +166,7 @@ function buildSubtaskLines(
     lines[0]!.segments.unshift({ text: '' });
   }
 
-  const detailPrefix = `${outerPrefix}   `;
+  const detailPrefix = `${outerPrefix}${innerContinue}`;
   const details: string[] = [];
   if (subtask.progressSummary) details.push(subtask.progressSummary);
   if (subtask.blockedBy && subtask.blockedBy.length > 0 && subtask.status === 'blocked') {
@@ -185,16 +188,103 @@ function buildSubtaskLines(
     );
   }
 
+  const visibleLogs = getVisibleSubtaskLogs(subtask);
+  if (visibleLogs.length > 0) {
+    const logPrefix = `${outerPrefix}${innerContinue}`;
+    const logStyle: Omit<InlineSegment, 'text'> =
+      subtask.status === 'failed'
+        ? { color: 'red', dimColor: false }
+        : subtask.status === 'waiting_approval'
+          ? { color: 'magenta', dimColor: false }
+          : { dimColor: true };
+
+    visibleLogs.forEach((logLine, logIndex) => {
+      pushWrappedTextLines(
+        lines,
+        `${keyPrefix}-log-${logIndex}`,
+        logLine,
+        maxWidth,
+        { text: `${logPrefix}· `, dimColor: true },
+        { text: `${logPrefix}  `, dimColor: true },
+        logStyle,
+      );
+    });
+  }
+
   return lines;
+}
+
+function getVisibleSubtaskLogs(subtask: SubtaskData): string[] {
+  const logs = subtask.recentLogs ?? [];
+  if (logs.length === 0) return [];
+
+  switch (subtask.status) {
+    case 'running':
+    case 'retry':
+    case 'waiting_approval':
+      return logs.slice(-2);
+    case 'failed':
+      return logs.slice(-2);
+    default:
+      return [];
+  }
+}
+
+export function shouldCompactSubtasks(
+  phase: PipelinePhaseData,
+  nowMs = Date.now(),
+): boolean {
+  if (!phase.subtasks || phase.subtasks.length !== 1) return false;
+
+  const [subtask] = phase.subtasks;
+  if (
+    phase.status === 'active' &&
+    subtask.status === 'running' &&
+    subtask.startedAt != null &&
+    nowMs - subtask.startedAt >= ACTIVE_TASK_AUTO_EXPAND_DELAY_MS
+  ) {
+    return false;
+  }
+
+  return subtask.status !== 'waiting_approval'
+    && subtask.status !== 'failed'
+    && subtask.status !== 'blocked';
+}
+
+function getCompactActiveSummary(phase: PipelinePhaseData): string | undefined {
+  if (!phase.subtasks || phase.subtasks.length !== 1) return undefined;
+
+  const [subtask] = phase.subtasks;
+  return subtask.progressSummary;
+}
+
+function getCompactActiveDetails(phase: PipelinePhaseData): string[] {
+  if (!phase.subtasks || phase.subtasks.length !== 1) return [];
+
+  const [subtask] = phase.subtasks;
+  const details: string[] = [];
+
+  if (subtask.description) {
+    details.push(subtask.description);
+  }
+
+  const logs = getVisibleSubtaskLogs(subtask);
+  if (logs.length > 0) {
+    details.push(...logs.slice(-2));
+  }
+
+  return details;
 }
 
 function buildPhaseRenderLines(
   phase: PipelinePhaseData,
   maxWidth: number,
   keyPrefix: string,
+  nowMs: number,
 ): PhaseRenderLine[] {
   const lines: PhaseRenderLine[] = [];
   const hasSubtasks = phase.subtasks && phase.subtasks.length > 0;
+  const compactSubtasks = shouldCompactSubtasks(phase, nowMs);
 
   switch (phase.status) {
     case 'done':
@@ -219,7 +309,7 @@ function buildPhaseRenderLines(
           { dimColor: true },
         );
       }
-      if (hasSubtasks) {
+      if (hasSubtasks && !compactSubtasks) {
         phase.subtasks!.forEach((subtask, index) => {
           lines.push(...buildSubtaskLines(subtask, index === phase.subtasks!.length - 1, maxWidth, `${keyPrefix}-subtask-${subtask.id}`, false));
         });
@@ -236,7 +326,32 @@ function buildPhaseRenderLines(
           ...(phase.model ? [{ text: ` · ${phase.model}`, dimColor: true }] : []),
         ],
       });
-      if (hasSubtasks) {
+      if (compactSubtasks) {
+        const compactSummary = getCompactActiveSummary(phase);
+        if (compactSummary) {
+          pushWrappedTextLines(
+            lines,
+            `${keyPrefix}-compact-summary`,
+            compactSummary,
+            maxWidth,
+            { text: '│ ', color: 'cyan' },
+            { text: '│ ', color: 'cyan' },
+            { dimColor: true },
+          );
+        }
+        const compactDetails = getCompactActiveDetails(phase);
+        compactDetails.forEach((detail, index) => {
+          pushWrappedTextLines(
+            lines,
+            `${keyPrefix}-compact-detail-${index}`,
+            detail,
+            maxWidth,
+            { text: '│ ', dimColor: true },
+            { text: '│ ', dimColor: true },
+            { dimColor: true },
+          );
+        });
+      } else if (hasSubtasks) {
         phase.subtasks!.forEach((subtask, index) => {
           lines.push(...buildSubtaskLines(subtask, index === phase.subtasks!.length - 1, maxWidth, `${keyPrefix}-subtask-${subtask.id}`, true));
         });
@@ -305,11 +420,15 @@ function renderPhaseLine(line: PhaseRenderLine, keyPrefix: string): React.ReactE
   );
 }
 
-export function countPhaseRenderLines(phases: PipelinePhaseData[] | undefined, maxWidth: number): number {
+export function countPhaseRenderLines(
+  phases: PipelinePhaseData[] | undefined,
+  maxWidth: number,
+  nowMs = Date.now(),
+): number {
   if (!phases || phases.length === 0) return 0;
 
   return phases.reduce(
-    (total, phase, index) => total + buildPhaseRenderLines(phase, Math.max(20, maxWidth), `phase-${index}`).length,
+    (total, phase, index) => total + buildPhaseRenderLines(phase, Math.max(20, maxWidth), `phase-${index}`, nowMs).length,
     0,
   );
 }
@@ -318,8 +437,9 @@ export function renderPipelinePhaseLines(
   phase: PipelinePhaseData,
   maxWidth: number,
   keyPrefix = 'phase',
+  nowMs = Date.now(),
 ): React.ReactElement[] {
-  return buildPhaseRenderLines(phase, Math.max(20, maxWidth), keyPrefix).map((line) =>
+  return buildPhaseRenderLines(phase, Math.max(20, maxWidth), keyPrefix, nowMs).map((line) =>
     renderPhaseLine(line, keyPrefix),
   );
 }
@@ -327,9 +447,24 @@ export function renderPipelinePhaseLines(
 export function PipelinePhase({ phase }: PipelinePhaseProps): React.ReactElement {
   const maxWidth = Math.max(20, (process.stdout.columns ?? 80) - 4);
 
+  // Force re-render after ACTIVE_TASK_AUTO_EXPAND_DELAY_MS so auto-expand is deterministic
+  const [, forceUpdate] = useState(0);
+  useEffect(() => {
+    if (!phase.subtasks || phase.subtasks.length !== 1 || phase.status !== 'active') return;
+    const [subtask] = phase.subtasks;
+    if (subtask.status !== 'running' || subtask.startedAt == null) return;
+    const elapsed = Date.now() - subtask.startedAt;
+    if (elapsed >= ACTIVE_TASK_AUTO_EXPAND_DELAY_MS) return; // already past threshold
+    const timer = setTimeout(
+      () => forceUpdate((n) => n + 1),
+      ACTIVE_TASK_AUTO_EXPAND_DELAY_MS - elapsed + 50,
+    );
+    return () => clearTimeout(timer);
+  }, [phase.subtasks, phase.status]);
+
   return (
     <Box flexDirection="column" marginBottom={0}>
-      {renderPipelinePhaseLines(phase, maxWidth, `${phase.name.toLowerCase()}-${phase.status}`)}
+      {renderPipelinePhaseLines(phase, maxWidth, `${phase.name.toLowerCase()}-${phase.status}`, Date.now())}
     </Box>
   );
 }

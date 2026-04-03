@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+/* Mint design tokens as Tailwind theme */
+@theme {
+  --color-bg: #07090d;
+  --color-surface: #0c1018;
+  --color-surface-2: #121922;
+  --color-surface-3: #192230;
+  --color-border-dim: #1c2b3a;
+  --color-border-hi: #263d52;
+  --color-cyan: #00d4ff;
+  --color-cyan-2: #00a8cc;
+  --color-orange: #ff6535;
+  --color-green: #00d46a;
+  --color-red: #ff4444;
+  --color-txt: #c8dae8;
+  --color-txt-muted: #4d6a82;
+  --color-txt-bright: #eef4fa;
+  --font-display: 'Oxanium', monospace;
+  --font-mono: 'Fira Code', 'Courier New', monospace;
+  --font-body: 'DM Sans', sans-serif;
+}
+
+/* CSS custom properties for direct use */
+:root {
+  --bg: #07090d;
+  --surface: #0c1018;
+  --surface-2: #121922;
+  --surface-3: #192230;
+  --border: #1c2b3a;
+  --border-hi: #263d52;
+  --cyan: #00d4ff;
+  --cyan-2: #00a8cc;
+  --cyan-glow: rgba(0, 212, 255, 0.18);
+  --cyan-faint: rgba(0, 212, 255, 0.07);
+  --orange: #ff6535;
+  --orange-glow: rgba(255, 101, 53, 0.18);
+  --orange-faint: rgba(255, 101, 53, 0.07);
+  --green: #00d46a;
+  --green-faint: rgba(0, 212, 106, 0.1);
+  --red: #ff4444;
+  --text: #c8dae8;
+  --text-muted: #4d6a82;
+  --text-bright: #eef4fa;
+}
+
+html {
+  scroll-behavior: smooth;
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  overflow-x: hidden;
+  margin: 0;
+}
+
+/* Noise texture overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 128px 128px;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* Selection */
+::selection {
+  background: rgba(0, 212, 255, 0.2);
+  color: var(--text-bright);
+}

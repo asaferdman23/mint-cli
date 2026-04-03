@@ -163,6 +163,10 @@ const _subtaskWithSpecialist: Subtask = {
   relevantFiles: ['src/auth.ts'],
   plan: '1. Fix token expiry',
   specialist: 'backend',
+  scopeDirectory: 'src',
+  entryFiles: ['src/auth.ts'],
+  researchSummary: 'Auth lives in src/auth.ts.',
+  builderBrief: 'Read src/auth.ts first and patch token expiry there.',
 };
 assert.strictEqual(_subtaskWithSpecialist.specialist, 'backend');
 
@@ -185,14 +189,36 @@ import { parseArchitectResponse } from '../architect.js';
     type: 'split',
     reason: 'Independent changes',
     subtasks: [
-      { id: '1', description: 'Fix UI', relevantFiles: ['src/App.tsx'], plan: '1. Update', specialist: 'frontend' },
-      { id: '2', description: 'Fix API', relevantFiles: ['src/api.ts'], plan: '1. Fix route', specialist: 'backend' },
+      {
+        id: '1',
+        description: 'Fix UI',
+        relevantFiles: ['src/App.tsx'],
+        plan: '1. Update',
+        specialist: 'frontend',
+        scopeDirectory: 'src',
+        entryFiles: ['src/App.tsx'],
+        researchSummary: 'App.tsx is the main composition root.',
+        builderBrief: 'Read App.tsx first and keep the existing UI patterns.',
+      },
+      {
+        id: '2',
+        description: 'Fix API',
+        relevantFiles: ['src/api.ts'],
+        plan: '1. Fix route',
+        specialist: 'backend',
+        scopeDirectory: 'src',
+        entryFiles: ['src/api.ts'],
+        researchSummary: 'api.ts owns the route wiring.',
+        builderBrief: 'Read api.ts first and patch the route in place.',
+      },
     ],
   });
   const result = parseArchitectResponse(json);
   assert.strictEqual(result.type, 'split');
   assert.strictEqual(result.subtasks![0].specialist, 'frontend');
   assert.strictEqual(result.subtasks![1].specialist, 'backend');
+  assert.strictEqual(result.subtasks![0].scopeDirectory, 'src');
+  assert.deepStrictEqual(result.subtasks![0].entryFiles, ['src/App.tsx']);
 }
 
 // Missing specialist defaults to 'general'

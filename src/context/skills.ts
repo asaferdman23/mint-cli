@@ -59,8 +59,8 @@ export function getSkillsForSpecialist(skills: Skill[], specialist: SpecialistTy
     s.appliesTo === 'all' || s.appliesTo.includes(specialist)
   );
 
-  // Cap at ~2000 tokens (4 chars per token = 8000 chars)
-  const maxChars = 8000;
+  // Cap at ~4000 tokens (4 chars per token = 16000 chars)
+  const maxChars = 16000;
   let totalChars = 0;
   const capped: Skill[] = [];
 

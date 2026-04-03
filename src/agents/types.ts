@@ -1,8 +1,8 @@
 import type { ModelId } from '../providers/types.js';
-import type { SearchResult } from '../context/search.js';
+import type { Hotspot, SearchResult } from '../context/search.js';
 import type { SpecialistType } from './specialists/types.js';
 
-export type AgentRole = 'scout' | 'architect' | 'builder' | 'reviewer';
+export type AgentRole = 'scout' | 'architect' | 'builder' | 'reviewer' | 'explore' | 'plan' | 'verify';
 export type TaskComplexity = 'trivial' | 'simple' | 'moderate' | 'complex';
 
 export interface AgentInput {
@@ -29,6 +29,7 @@ export interface AgentOutput {
 export interface ScoutOutput extends AgentOutput {
   complexity: TaskComplexity;
   relevantFiles: SearchResult[];
+  hotspots: Hotspot[];
   fileSummary: string;
 }
 
@@ -38,6 +39,10 @@ export interface Subtask {
   relevantFiles: string[];  // file paths for this subtask only
   plan: string;
   specialist: SpecialistType;
+  scopeDirectory?: string;
+  entryFiles?: string[];
+  researchSummary?: string;
+  builderBrief?: string;
   dependsOn?: string[];
   writeTargets?: string[];
   verificationTargets?: string[];

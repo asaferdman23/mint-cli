@@ -7,7 +7,7 @@ async function main() {
   const {
     indexProject, loadIndex, isIndexStale,
     DependencyGraph,
-    searchRelevantFiles, extractKeywords,
+    searchRelevantFiles, extractKeywords, collectPathHintFiles,
     loadProjectRules, generateProjectRules,
     compressContext, estimateTokens,
     loadAgentMd,
@@ -95,6 +95,8 @@ async function main() {
   assert('keyword extraction', keywords.length > 0);
   assert('stop words filtered', !keywords.includes('the') && !keywords.includes('in'));
   assert('meaningful words kept', keywords.includes('auth') || keywords.includes('token') || keywords.includes('config') || keywords.includes('validation'));
+  const landingKeywords = extractKeywords('review the landing page');
+  assert('landing keyword is preserved', landingKeywords.includes('landing'));
 
   const results = await searchRelevantFiles(cwd, 'fix the model routing logic', index);
   assert('search returns results', results.length > 0);
@@ -105,6 +107,8 @@ async function main() {
   // Search for something specific
   const toolResults = await searchRelevantFiles(cwd, 'bash tool execution timeout', index);
   assert('specific search finds tools', toolResults.some(r => r.path.includes('tool')));
+  const landingHints = collectPathHintFiles('review the landing page', index);
+  assert('path hints resolve landing directory', landingHints.some((path) => path.includes('landing/')));
 
   // ─── 5. Compression ──────────────────────────────────────────────────────
 
