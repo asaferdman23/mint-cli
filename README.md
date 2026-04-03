@@ -1,89 +1,94 @@
-# mint
+```
+  ███╗   ███╗██╗███╗   ██╗████████╗     ██████╗██╗     ██╗
+  ████╗ ████║██║████╗  ██║╚══██╔══╝    ██╔════╝██║     ██║
+  ██╔████╔██║██║██╔██╗ ██║   ██║       ██║     ██║     ██║
+  ██║╚██╔╝██║██║██║╚██╗██║   ██║       ██║     ██║     ██║
+  ██║ ╚═╝ ██║██║██║ ╚████║   ██║       ╚██████╗███████╗██║
+  ╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝   ╚═╝        ╚═════╝╚══════╝╚═╝
+```
 
-Zero-setup AI coding CLI. Type `mint`, start coding.
+# Mint CLI
 
-No API keys. No accounts. No config.
+Zero-setup AI coding assistant in your terminal. Type `mint`, start coding.
 
----
+No API keys. No accounts. No config files.
+
+```bash
+npx usemint-cli
+```
 
 ## Install
 
 ```bash
-npm install -g usemint
+npm install -g usemint-cli
 ```
 
-## Use
+Or run directly without installing:
 
 ```bash
-mint
+npx usemint-cli
 ```
 
-That's it. The TUI opens immediately.
+## Usage
 
----
-
-## How it works
-
-Every message goes to `api.usemint.dev` — a gateway that holds all provider keys and picks the cheapest model capable of handling your task.
-
-```
-mint CLI  →  api.usemint.dev  →  Groq / DeepSeek / Grok
+```bash
+mint                       # open the interactive TUI
+mint "fix the auth bug"    # one-shot prompt — get an answer and exit
+mint usage                 # show session stats and savings
+mint models                # list available models
 ```
 
-**3-tier routing — automatic, invisible:**
+## How It Works
 
-| Task | Examples | Model | Cost |
-|------|----------|-------|------|
-| Simple | explain, Q&A, "what is" | Groq llama-3.1-8b | $0.05/$0.08 per 1M |
-| Medium | write, fix, refactor, review | DeepSeek v3 | $0.27/$1.10 per 1M |
-| Complex | architect, multi-file, agents | Grok-3-mini-fast | $0.60/$4.00 per 1M |
-| Fallback | any provider failure | Groq llama-3.3-70b | $0.59/$0.79 per 1M |
+Every message routes through a smart gateway that picks the cheapest model capable of handling your task — automatically.
 
-Context over 20K tokens automatically bumps to the next tier.
+```
+mint CLI  →  gateway  →  best model for the job
+```
 
----
+**3-tier routing (automatic, invisible):**
 
-## TUI
+| Complexity | Examples | Model | Cost per 1M tokens |
+|------------|----------|-------|---------------------|
+| Simple | explain, Q&A | Groq Llama 3.1 8B | $0.05 / $0.08 |
+| Medium | write, fix, refactor | DeepSeek V3 | $0.27 / $1.10 |
+| Complex | architect, multi-file | Grok 3 Mini | $0.60 / $4.00 |
 
-The interface is minimal by design:
+Context over 20K tokens automatically bumps to the next tier. If a provider fails, it falls back to the next one.
 
-- **Vim mode** — `i` for INSERT, `Esc` for NORMAL. Full motion support (w, b, e, f, t, d, c, y, p, and more)
-- **Status bar** — shows current model, token count, and session cost
+## Supported Providers
+
+Mint works out of the box via the gateway (no keys needed). You can also bring your own API keys:
+
+| Provider | Models | Env Variable |
+|----------|--------|-------------|
+| Gateway (default) | Auto-routed | None required |
+| Anthropic | Claude Sonnet, Haiku | `ANTHROPIC_API_KEY` |
+| OpenAI | GPT-4o, GPT-4o-mini | `OPENAI_API_KEY` |
+| Google | Gemini Pro, Flash | `GEMINI_API_KEY` |
+| DeepSeek | DeepSeek V3, R1 | `DEEPSEEK_API_KEY` |
+| Groq | Llama 3.x | `GROQ_API_KEY` |
+| Grok (xAI) | Grok 3 | `GROK_API_KEY` |
+| Mistral | Mistral Large, Small | `MISTRAL_API_KEY` |
+
+## TUI Features
+
+- **Vim keybindings** — `i` for INSERT, `Esc` for NORMAL, full motion support (`w`, `b`, `e`, `f`, `d`, `c`, `y`, `p`)
+- **Status bar** — current model, token count, session cost
 - **Slash commands** — `/help`, `/clear`, `/model`
 - **Ctrl+C** — exit
 
----
+## Security
 
-## Observability (for us, not you)
-
-Every request is logged server-side to Postgres and Axiom:
-
-- Which model ran, why, how long it took
-- Token counts and actual cost vs. what Claude Sonnet would have cost
-- Full session replay via admin API
-
-You don't need to configure anything. This is how we tune the routing.
-
----
-
-## Commands
-
-```bash
-mint                     # open TUI (default)
-mint "fix the auth bug"  # one-shot prompt
-mint usage               # show savings dashboard
-mint savings             # total $ saved vs Claude Opus
-mint models              # list available models
-```
-
----
+- **No keys stored in code** — all credentials are read from environment variables or local config at runtime
+- **Gateway mode** requires no API keys on your machine — keys live server-side
+- **Local config** is stored in your OS config directory (via [conf](https://github.com/sindresorhus/conf)) and never committed to git
+- `.env`, `.mint/`, and `.claude/` are gitignored by default
 
 ## Requirements
 
 - Node.js 20+
 - Internet connection
-
----
 
 ## Development
 
@@ -95,10 +100,16 @@ npm run build
 node dist/cli/index.js
 ```
 
-Gateway lives in `packages/gateway/` — deployed to Railway.
+## Contributing
 
----
+1. Fork the repo
+2. Create your feature branch (`git checkout -b feat/my-feature`)
+3. Commit your changes
+4. Push to the branch (`git push origin feat/my-feature`)
+5. Open a Pull Request
+
+Please open an issue first for major changes so we can discuss the approach.
 
 ## License
 
-MIT
+[MIT](LICENSE)

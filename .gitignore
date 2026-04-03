@@ -11,6 +11,7 @@ dist/
 
 # Plugin / tooling state
 .superpowers/
+.claude/
 
 # Reference / research code (not part of the product)
 claude-code-src/
