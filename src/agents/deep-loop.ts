@@ -108,7 +108,6 @@ export async function runDeepLoop(input: DeepLoopInput): Promise<DeepLoopResult>
 
   // ── PHASE 1: EXPLORE ────────────────────────────────────────────────────
   await reporter?.progress('reading codebase');
-  await reporter?.log(`${specialist} specialist · reading files and detecting project stack`);
 
   const exploreModel = selectAgentModel('explore', complexity);
   const exploreStart = Date.now();
@@ -152,11 +151,10 @@ export async function runDeepLoop(input: DeepLoopInput): Promise<DeepLoopResult>
     briefing.buildCommand = 'none';
   }
 
-  await reporter?.log(`found: ${briefing.stack} · ${briefing.relevantFiles.length} files${briefing.buildCommand === 'none' ? ' · static (no build)' : ''}`);
+  await reporter?.log(`${briefing.stack} · ${briefing.relevantFiles.length} files`);
 
   // ── PHASE 2: PLAN ───────────────────────────────────────────────────────
-  await reporter?.progress('thinking about approach');
-  await reporter?.log('planning what to build and in what order');
+  await reporter?.progress('planning approach');
 
   const planModel = selectAgentModel('plan', complexity);
   const planStart = Date.now();
@@ -192,9 +190,8 @@ export async function runDeepLoop(input: DeepLoopInput): Promise<DeepLoopResult>
     verificationSteps: ['Build passes'],
   };
 
-  const planPreview = plan.steps.map((s) => `  ${s.action}: ${s.file}`).join('\n');
-  await reporter?.log(`plan: ${plan.steps.length} files\n${planPreview}`);
-  await reporter?.log(`will check: ${plan.verificationSteps.join(' · ')}`);
+  const planPreview = plan.steps.map((s) => `${s.action}: ${s.file}`).join(', ');
+  await reporter?.log(`plan: ${planPreview}`);
 
   // ── Build system prompt for implement phase ─────────────────────────────
   const implementSystemParts: string[] = [
@@ -264,7 +261,6 @@ export async function runDeepLoop(input: DeepLoopInput): Promise<DeepLoopResult>
       : undefined;
 
     await reporter?.progress(isRetry ? `fixing issues (attempt ${attempt + 1})` : 'writing code');
-    await reporter?.log(isRetry ? `fixing: ${retryIssues?.split('\n')[0]}` : 'writing code per plan');
 
     const implModel = selectAgentModel('builder', complexity);
     const implStart = Date.now();
@@ -297,7 +293,6 @@ export async function runDeepLoop(input: DeepLoopInput): Promise<DeepLoopResult>
 
     // ── VERIFY ──
     await reporter?.progress('checking quality');
-    await reporter?.log('verifying: reading files, running build, checking completeness');
 
     const verifyModel = selectAgentModel('verify', complexity);
     const verifyStart = Date.now();

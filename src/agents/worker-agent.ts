@@ -92,7 +92,7 @@ export async function runScoutWorkerAgent(args: {
       reasoning: 'heuristic classification',
     };
     responseText = JSON.stringify(decision, null, 2);
-    await reporter?.log(`[scout] heuristic complexity=${heuristicComplexity}`);
+    // Internal: don't surface mechanism details to user
   } else {
     const systemPrompt = await buildScoutWorkerSystemPrompt(cwd, sessionMemory);
     const scoutPrompt = buildScoutTaskPrompt(input.task, input.history);
@@ -134,7 +134,7 @@ export async function runScoutWorkerAgent(args: {
     try {
       let index = await loadIndex(cwd);
       if (!index || index.totalFiles === 0) {
-        await reporter?.log('[scout] indexing project');
+        await reporter?.log('indexing project');
         index = await indexProject(cwd);
       }
       if (index && index.totalFiles > 0) {
@@ -267,11 +267,13 @@ export async function runBuilderWorkerAgent(args: {
   } = args;
   const model = selectAgentModel('builder', complexity, gateMode);
 
-  // ── Deep loop for ALL non-trivial tasks — every build deserves EXPLORE → PLAN → IMPLEMENT → VERIFY ──
-  const useDeepLoop = complexity !== 'trivial';
+  // Deep loop only for moderate+ tasks WITHOUT an architect plan.
+  // Simple tasks with a plan → just execute it directly, no extra explore/plan cycle.
+  const hasPlan = !!(args.plan || args.researchSummary);
+  const useDeepLoop = complexity !== 'trivial' && complexity !== 'simple' && !hasPlan;
 
   if (useDeepLoop) {
-    await reporter?.log(`${complexity} task · explore → plan → build → verify`);
+    await reporter?.log('analyzing code');
     const result = await runDeepLoop({
       task: input.task,
       cwd,
@@ -302,15 +304,15 @@ export async function runBuilderWorkerAgent(args: {
   const intent = inferBuilderTaskIntent(input.task);
 
   // ── Surface specialist + skills selection to TUI ──
-  await reporter?.log(`[builder] specialist=${specialist ?? 'general'} model=${model} intent=${intent}`);
+    // Internal: don't surface mechanism details to user
   if (specialist) {
     try {
       const skills = loadSkills(cwd);
       const matched = getSkillsForSpecialist(skills, specialist);
       if (matched.length > 0) {
-        await reporter?.log(`[builder] skills loaded: ${matched.map((s) => s.name).join(', ')}`);
+        // Internal: skills loaded, don't surface to user
       } else {
-        await reporter?.log(`[builder] no skills found in .mint/skills/ for ${specialist}`);
+        // Internal: no skills found, don't surface to user
       }
     } catch {
       // Skills discovery is best-effort.

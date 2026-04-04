@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { indexProject, loadIndex, searchRelevantFiles } from '../context/index.js';
@@ -175,18 +176,8 @@ export async function resolveAdaptiveGate(args: {
     };
   }
 
-  if (!scopeKnown && shouldClarify(input.task)) {
-    return {
-      mode: 'clarify',
-      complexity,
-      searchResults,
-      hotspots,
-      scoutSummary: 'clarification required',
-      scoutModelLabel: 'local gate',
-    };
-  }
-
   // Questions / inspection requests → answer from found files, skip build pipeline
+  // Must check BEFORE clarification — "scan the project" is a question, not a build task
   if (builderIntent === 'analysis') {
     return {
       mode: 'question',
@@ -194,6 +185,17 @@ export async function resolveAdaptiveGate(args: {
       searchResults,
       hotspots,
       scoutSummary: formatScoutSummary('question', searchResults),
+      scoutModelLabel: 'local gate',
+    };
+  }
+
+  if (!scopeKnown && shouldClarify(input.task)) {
+    return {
+      mode: 'clarify',
+      complexity,
+      searchResults,
+      hotspots,
+      scoutSummary: 'clarification required',
       scoutModelLabel: 'local gate',
     };
   }
@@ -216,6 +218,15 @@ async function runLocalDiscovery(args: {
   let index = await loadIndex(input.cwd);
   if (!index || index.totalFiles === 0) {
     index = await indexProject(input.cwd);
+  }
+
+  // Bulletproof: if the user typed a file path that exists on disk, always include it
+  const literalPaths = extractLiteralFilePaths(input.task, input.cwd);
+
+  // If the user gave explicit file paths, use ONLY those — don't dilute with other files
+  if (literalPaths.length > 0) {
+    const searchResults = await hydrateSearchResults(input.cwd, index, literalPaths, 'explicit path');
+    return { searchResults, explicitHintFiles: literalPaths, usedMemory: false };
   }
 
   const explicitHintFiles = collectPathHintFiles(input.task, index, 6);
@@ -448,6 +459,29 @@ function describeScope(files: string[], fallback: string): string {
   const preview = files.slice(0, 2).join(', ');
   const remaining = files.length - 2;
   return remaining > 0 ? `Work on ${preview}, +${remaining} more` : `Work on ${preview}`;
+}
+
+/**
+ * Extract literal file paths from the task text by checking if they exist on disk.
+ * No regex guessing — if a token looks like a path and the file exists, include it.
+ */
+function extractLiteralFilePaths(task: string, cwd: string): string[] {
+  const tokens = task.split(/\s+/);
+  const found: string[] = [];
+  for (const token of tokens) {
+    // Must contain a / or . to look like a path
+    const cleaned = token.replace(/['"`,;:!?()[\]{}]+/g, '');
+    if (!cleaned.includes('/') && !cleaned.includes('.')) continue;
+    if (cleaned.length < 3 || cleaned.length > 200) continue;
+    try {
+      if (existsSync(join(cwd, cleaned))) {
+        found.push(cleaned);
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return found;
 }
 
 function uniqueStrings(values: string[]): string[] {

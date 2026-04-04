@@ -57,6 +57,7 @@ interface AppProps {
   initialPrompt?: string;
   modelPreference?: string;
   agentMode?: 'yolo' | 'plan' | 'diff' | 'auto';
+  useOrchestrator?: boolean;
 }
 
 let messageIdCounter = 0;
@@ -135,7 +136,7 @@ function estimateInputAreaHeight(
   return lines;
 }
 
-export function App({ initialPrompt, modelPreference, agentMode }: AppProps): React.ReactElement {
+export function App({ initialPrompt, modelPreference, agentMode, useOrchestrator = true }: AppProps): React.ReactElement {
   const { exit } = useApp();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -165,6 +166,7 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
   } = useAgentEvents();
 
   const streamRef = useRef('');
+  const orchestratorMessagesRef = useRef<import('../providers/types.js').Message[]>([]);
   const busyRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const clarificationResolveRef = useRef<((answer: string) => void) | null>(null);
@@ -393,6 +395,120 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
       content: m.content,
     }));
 
+    // ── V2 Orchestrator path ─────────────────────────────────────────────
+    if (useOrchestrator) {
+      setIsRouting(false);
+      try {
+        const { runOrchestrator } = await import('../orchestrator/loop.js');
+        let responseText = '';
+        let currentToolLine = '';
+        const result = await runOrchestrator(trimmed, process.cwd(), {
+
+          onLog: () => {
+            // Internal logs — don't show to user
+          },
+          onText: (text) => {
+            responseText += text;
+            currentToolLine = '';
+            streamRef.current = responseText;
+            setStreamingContent(responseText);
+          },
+          onToolCall: (name, input) => {
+            const preview = name === 'write_code'
+              ? `writing code...`
+              : name === 'read_file'
+                ? `reading ${String(input.path ?? '')}`
+                : name === 'grep_file'
+                  ? `searching in ${String(input.path ?? '')}`
+                  : name === 'search_files'
+                    ? `searching "${String(input.query ?? '')}"`
+                  : name === 'edit_file'
+                    ? `editing ${String(input.path ?? '')}`
+                    : name === 'write_file'
+                      ? `creating ${String(input.path ?? '')}`
+                      : name === 'run_command'
+                        ? `running ${String(input.command ?? '').slice(0, 40)}`
+                        : name;
+            currentToolLine = `> ${preview}`;
+            streamRef.current = responseText + (responseText ? '\n' : '') + currentToolLine;
+            setStreamingContent(streamRef.current);
+          },
+          onApprovalNeeded: async (description) => {
+            // Show the proposed change and wait for user approval
+            return new Promise<boolean>((resolve) => {
+              responseText += `\n${description}\n`;
+              streamRef.current = responseText;
+              setStreamingContent(responseText);
+
+              // Temporarily release the input for the user to respond
+              setIsBusy(false);
+              busyRef.current = false;
+
+              const handleApproval = (answer: string) => {
+                busyRef.current = true;
+                setIsBusy(true);
+                const rejected = answer.toLowerCase() === 'n' || answer.toLowerCase() === 'no';
+                resolve(!rejected);
+              };
+
+              // Store the resolver so the input handler can call it
+              clarificationResolveRef.current = handleApproval;
+            });
+          },
+        }, controller.signal, orchestratorMessagesRef.current);
+
+        // Persist messages for follow-up turns
+        orchestratorMessagesRef.current = result.messages;
+
+        // Show final result — response text + cost, no tool call history
+        const costLine = `\nCost: $${result.totalCost.toFixed(4)} · ${(result.duration / 1000).toFixed(1)}s · ${result.iterations} steps`;
+        responseText += costLine;
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMsgIdRef.current
+              ? { ...m, content: responseText, isStreaming: false }
+              : m
+          )
+        );
+        setStreamingContent('');
+
+        // Track usage
+        trackerRef.current.track({
+          model: result.orchestratorModel,
+          provider: 'grok',
+          tier: getTier(result.orchestratorModel),
+          inputTokens: 0,
+          outputTokens: 0,
+          cost: result.totalCost,
+          opusCost: result.totalCost * 50,
+          savedAmount: result.totalCost * 49,
+          routingReason: 'orchestrator',
+          taskPreview: trimmed,
+          latencyMs: result.duration,
+          costSonnet: 0,
+        });
+        setSessionCost((prev) => prev + result.totalCost);
+        setMonthlyCost(getMonthCost());
+        setCurrentModel(result.orchestratorModel);
+      } catch (err) {
+        const raw = err instanceof Error ? err.message : typeof err === 'object' ? JSON.stringify(err) : String(err);
+        const friendly = raw.includes('401') ? 'Auth failed. Run `mint login`.'
+          : raw.includes('429') ? 'Rate limited. Try again in a moment.'
+          : raw.includes('500') ? 'Provider temporarily unavailable.'
+          : raw.includes('timeout') ? 'Request timed out.'
+          : raw.includes('fetch failed') ? 'Network error.'
+          : raw.length > 150 ? raw.slice(0, 150) + '...' : raw;
+        setErrorMsg(friendly);
+        setMessages((prev) => prev.filter((m) => m.id !== assistantMsgIdRef.current));
+      } finally {
+        busyRef.current = false;
+        setIsBusy(false);
+        abortRef.current = null;
+      }
+      return;
+    }
+
+    // ── Legacy pipeline path ─────────────────────────────────────────────
     try {
       for await (const chunk of runPipeline(trimmed, {
         cwd: process.cwd(),
@@ -567,7 +683,8 @@ export function App({ initialPrompt, modelPreference, agentMode }: AppProps): Re
 
               const costLine = `Cost: ${r.cost < 0.01 ? (r.cost * 100).toFixed(3) + '¢' : '$' + r.cost.toFixed(4)} · ${(r.duration / 1000).toFixed(1)}s`;
 
-              if (autoApply) {
+              // Always show diffs and ask for approval — agents work freely, user approves at the end
+              if (false) {
                 const { applyDiffsToProject } = await import('../pipeline/diff-apply.js');
                 const results = applyDiffsToProject(r.diffs, process.cwd());
                 const resultLines = results.map((res) => {

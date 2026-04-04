@@ -22,6 +22,8 @@ program
   .option('-c, --compare', 'Compare results across models')
   .option('--no-context', 'Disable automatic context gathering')
   .option('-v, --verbose', 'Show detailed output including tokens and cost')
+  .option('--v2', 'V2 orchestrator mode — single smart loop with tool calling')
+  .option('--simple', 'Simple mode — one LLM call, no agents, just diffs')
   .option('--legacy', 'Use legacy single-call mode instead of pipeline')
   .option('--auto', 'Auto mode — apply changes without asking')
   .option('--yolo', 'Full autonomy — no approvals at all')
@@ -30,8 +32,15 @@ program
   .action(async (promptParts: string[], options) => {
     const prompt = promptParts.join(' ').trim();
     const agentMode = options.yolo ? 'yolo' : options.plan ? 'plan' : options.diff ? 'diff' : options.auto ? 'auto' : undefined;
+
+    if (options.simple && prompt) {
+      const { runSimple } = await import('./commands/simple.js');
+      await runSimple(prompt);
+      return;
+    }
+
     if (!prompt) {
-      // No args → open TUI directly
+      // No args → open TUI with orchestrator
       const { render } = await import('ink');
       const React = await import('react');
       const { App } = await import('../tui/App.js');
@@ -39,19 +48,22 @@ program
         React.default.createElement(App, {
           modelPreference: options.model,
           agentMode,
+          useOrchestrator: !options.legacy,
         })
       );
       await app.waitUntilExit();
       return;
     }
 
-    // One-shot pipeline mode (default)
-    if (!options.legacy) {
+    // Legacy pipeline mode
+    if (options.legacy) {
       await runOneShotPipeline(prompt, options);
       return;
     }
 
-    await runPrompt(prompt, options);
+    // Default: v2 orchestrator
+    const { runOrchestratorCLI } = await import('./commands/orchestrator.js');
+    await runOrchestratorCLI(prompt);
   });
 
 // Auth commands
@@ -268,34 +280,48 @@ program
     }
   });
 
-// Init command — index project + generate MINT.md
+// Init command — scan project, build search index
 program
   .command('init')
-  .description('Scan project, build context index, generate MINT.md')
+  .description('Scan project and build search index')
   .action(async () => {
-    const { indexProject, generateProjectRules, generateStarterSkills } = await import('../context/index.js');
+    const { indexProject } = await import('../context/index.js');
     const cwd = process.cwd();
 
     console.log(chalk.cyan('\n  Mint Init\n'));
+    console.log(chalk.dim('  Scanning project...\n'));
 
     const index = await indexProject(cwd, {
       onProgress: (msg) => console.log(chalk.dim(`  ${msg}`)),
     });
 
-    const rulesPath = await generateProjectRules(cwd, index);
-    console.log(chalk.dim(`  Generated ${rulesPath}`));
-
-    // Generate starter skills
-    const skillPaths = await generateStarterSkills(cwd);
-    if (skillPaths.length > 0) {
-      for (const sp of skillPaths) {
-        console.log(chalk.dim(`  Generated skill: ${sp}`));
-      }
+    // Show summary
+    const languages = new Map<string, number>();
+    for (const file of Object.values(index.files)) {
+      const lang = file.language || 'other';
+      languages.set(lang, (languages.get(lang) ?? 0) + 1);
     }
+    const topLangs = [...languages.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([lang, count]) => `${lang} (${count})`)
+      .join(', ');
 
-    console.log(chalk.green(`\n  Indexed ${index.totalFiles} files (${index.totalLOC.toLocaleString()} LOC)`));
-    console.log(chalk.dim(`  Language: ${index.language}`));
-    console.log(chalk.dim(`  Index saved to .mint/context.json\n`));
+    // Check for package.json dependencies
+    let depCount = 0;
+    try {
+      const { readFileSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const pkg = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf-8'));
+      depCount = Object.keys(pkg.dependencies ?? {}).length + Object.keys(pkg.devDependencies ?? {}).length;
+    } catch { /* no package.json */ }
+
+    console.log(chalk.green(`\n  Ready.`));
+    console.log(chalk.dim(`  ${index.totalFiles} files · ${index.totalLOC.toLocaleString()} lines of code`));
+    console.log(chalk.dim(`  Languages: ${topLangs}`));
+    if (depCount > 0) console.log(chalk.dim(`  ${depCount} dependencies`));
+    console.log(chalk.dim(`  Index: .mint/context.json`));
+    console.log(chalk.dim(`\n  Run ${chalk.cyan('mint')} to start editing.\n`));
   });
 
 // Skills command

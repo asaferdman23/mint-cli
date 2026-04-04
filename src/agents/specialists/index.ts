@@ -163,8 +163,9 @@ export function detectSpecialistFromTask(task: string): SpecialistType {
     return 'mobile';
   }
 
-  // AI signals
-  if (/\b(ai|ml|llm|gpt|claude|openai|anthropic|embedding|rag|agent|prompt|chatbot|fine.?tun)\b/.test(lower)) {
+  // AI signals — require multi-word context to avoid false positives from "AI" in content text
+  if (/\b(ml\s+model|llm|gpt|claude|openai|anthropic|embedding|rag\s+pipeline|ai\s+agent|prompt\s+engineer|chatbot|fine.?tun)\b/.test(lower)
+    || (/\bai\b/.test(lower) && /\b(model|train|inference|pipeline|vector|token)\b/.test(lower))) {
     return 'ai';
   }
 

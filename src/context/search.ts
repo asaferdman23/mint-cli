@@ -67,8 +67,9 @@ export async function searchRelevantFiles(
 ): Promise<SearchResult[]> {
   const { maxFiles = 8, graphDepth = 1, alwaysInclude = [] } = options;
 
-  const keywords = extractKeywords(task);
-  if (keywords.length === 0) return [];
+  const rawKeywords = extractKeywords(task);
+  if (rawKeywords.length === 0) return [];
+  const keywords = expandKeywordsFromTask(task, rawKeywords);
   const pathHintFiles = collectPathHintFiles(task, index, maxFiles);
 
   // Score every indexed file
@@ -155,6 +156,21 @@ export function collectPathHintFiles(
   index: ProjectIndex,
   maxFiles = 8,
 ): string[] {
+  const indexedPaths = new Set(Object.keys(index.files));
+
+  // 1. Direct file path extraction — if the user wrote an exact path, use it
+  const directPaths: string[] = [];
+  const pathPattern = /(?:^|\s)([\w\-\.\/]+\.[\w]{1,6})(?:\s|$|[,;:!?)])/g;
+  let pathMatch;
+  while ((pathMatch = pathPattern.exec(task)) !== null) {
+    const candidate = pathMatch[1];
+    if (indexedPaths.has(candidate)) {
+      directPaths.push(candidate);
+    }
+  }
+  if (directPaths.length > 0) return directPaths;
+
+  // 2. Keyword-based matching against path segments
   const taskTokens = task
     .toLowerCase()
     .replace(/[^a-z0-9_\-\.\/]/g, ' ')
@@ -191,6 +207,28 @@ interface FileInfo {
   summary: string;
   loc: number;
   language: string;
+}
+
+// Map intent phrases to file path patterns they likely refer to
+const CONCEPT_EXPANSIONS: Array<{ pattern: RegExp; pathHints: string[] }> = [
+  { pattern: /\b(backend|endpoint|api|route|server|health)\b/i, pathHints: ['gateway', 'server', 'api', 'routes', 'index.ts'] },
+  { pattern: /\b(frontend|hero|landing|footer|header|navbar|page|section|ui)\b/i, pathHints: ['landing', 'index.html', 'components', 'pages', 'app'] },
+  { pattern: /\b(database|schema|migration|table|query)\b/i, pathHints: ['db', 'database', 'schema', 'migration', 'prisma'] },
+  { pattern: /\b(test|spec|assert)\b/i, pathHints: ['test', 'spec', '__tests__'] },
+  { pattern: /\b(config|env|setting)\b/i, pathHints: ['config', '.env', 'settings'] },
+  { pattern: /\b(deploy|docker|ci|pipeline)\b/i, pathHints: ['docker', 'ci', 'deploy', '.github'] },
+];
+
+function expandKeywordsFromTask(task: string, keywords: string[]): string[] {
+  const expanded = [...keywords];
+  for (const { pattern, pathHints } of CONCEPT_EXPANSIONS) {
+    if (pattern.test(task)) {
+      for (const hint of pathHints) {
+        if (!expanded.includes(hint)) expanded.push(hint);
+      }
+    }
+  }
+  return expanded;
 }
 
 function scoreFile(

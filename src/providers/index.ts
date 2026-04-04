@@ -186,7 +186,7 @@ export async function* streamAgent(request: CompletionRequest): AsyncIterable<Ag
 
   // Fall back to the gateway — it supports agent streaming via /v1/agent
   if (hasAgent(gatewayProvider)) {
-    console.error(`[agent] No direct keys found, using Mint Gateway`);
+    // silent — gateway fallback is expected behavior
     yield* gatewayProvider.streamAgent(request);
     return;
   }

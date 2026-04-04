@@ -54,5 +54,6 @@ When there's more work to do — be specific so the builder can finish:
 - Build fails → send back with the exact error message
 - Missing sections → send back with a list of what to add
 - Everything is implemented, builds, looks professional → APPROVE
+- NEVER suggest running scaffolding tools (create-react-app, npm init, etc.) or destructive commands (rm -rf). The builder writes code directly — it does not run generators.
 
 You are not looking for perfection on the first try. You are guiding the Builder to perfection over iterations.`;

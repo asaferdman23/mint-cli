@@ -24,6 +24,18 @@ export function parseDiffs(response: string): ParsedDiff[] {
     }
   }
 
+  // Fallback: if no fenced blocks found, try to parse unfenced diffs (--- a/... lines)
+  if (diffs.length === 0) {
+    const unfencedRe = /^--- a\/[\s\S]*?(?=^--- a\/|\Z)/gm;
+    const blocks = response.match(/--- a\/[^\n]*\n\+\+\+ b\/[^\n]*\n@@[\s\S]*?(?=\n--- a\/|\n*$)/g);
+    if (blocks) {
+      for (const block of blocks) {
+        const parsed = parseUnifiedDiff(block.trim());
+        if (parsed) diffs.push(parsed);
+      }
+    }
+  }
+
   return diffs;
 }
 

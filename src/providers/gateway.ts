@@ -157,7 +157,7 @@ export const gatewayProvider: Provider = {
           if (data === '[DONE]') return;
           try {
             const parsed = JSON.parse(data);
-            if (parsed.error) throw new Error(parsed.error);
+            if (parsed.error) throw new Error(typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error));
 
             const delta = parsed.choices?.[0]?.delta;
             if (!delta) continue;

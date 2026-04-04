@@ -198,10 +198,10 @@ export async function* runAgentPipeline(
   });
   yield await emit({ type: 'search', filesFound: searchResults.map((file) => file.path) });
 
-  // ── ARCHITECT (only when the adaptive gate requires planning) ─────────────
+  // ── ARCHITECT (always plan for non-trivial tasks — cheap models need precise instructions) ──
   let architectResult: ArchitectOutput | undefined;
 
-  if (complexity !== 'trivial' && gateDecision.mode === 'architect_pipeline') {
+  if (complexity !== 'trivial') {
     const architectTask = createArchitectTask({
       agentInput: { ...agentInput, searchResults },
       complexity,
@@ -429,11 +429,17 @@ export async function* runAgentPipeline(
         subtasks: createInitialSubtasks(reviewerTasks),
       });
 
-      const reviewerStates = yield* runTaskGraph(runtime, reviewerTasks, { signal });
-      throwOnFailedTasks(reviewerStates, 'reviewer');
+      let reviewerStates: WorkerTaskState<ReviewerOutput>[];
+      try {
+        reviewerStates = yield* runTaskGraph(runtime, reviewerTasks, { signal });
+      } catch {
+        // Reviewer crashed — don't kill the pipeline, just skip review
+        yield await emit({ type: 'phase-done', phase: 'REVIEWER', phaseSummary: 'skipped (error)' });
+        break;
+      }
 
       const reviewerState = reviewerStates[0];
-      if (!reviewerState?.result) {
+      if (!reviewerState?.result || reviewerState.status === 'failed') {
         yield await emit({ type: 'phase-done', phase: 'REVIEWER', phaseSummary: 'skipped (error)' });
         break;
       }
@@ -455,9 +461,14 @@ export async function* runAgentPipeline(
 
       if (reviewerResult.approved || retryCount >= MAX_RETRIES) break;
 
-      const toRetry = currentResults.filter((result) =>
+      // Find subtasks with specific feedback; if none, retry ALL with general feedback
+      let toRetry = currentResults.filter((result) =>
         reviewerResult.subtaskFeedback?.[result.subtaskId]
       );
+      if (toRetry.length === 0 && reviewerResult.feedback) {
+        // Reviewer gave general feedback but no per-subtask keys — retry all
+        toRetry = currentResults;
+      }
 
       if (toRetry.length === 0) break;
 
@@ -807,7 +818,10 @@ function throwOnFailedTasks<TResult>(
   if (failures.length === 0) return;
 
   const message = failures
-    .map((task) => `#${task.id}: ${task.error ?? task.progressSummary ?? 'failed'}`)
+    .map((task) => {
+      const err = task.error ?? task.progressSummary ?? 'failed';
+      return `#${task.id}: ${typeof err === 'string' ? err : JSON.stringify(err)}`;
+    })
     .join('; ');
   throw new Error(`${label} task(s) failed: ${message}`);
 }
