@@ -401,27 +401,27 @@ export function App({ initialPrompt, modelPreference, agentMode, useOrchestrator
       try {
         const { runOrchestrator } = await import('../orchestrator/loop.js');
         let responseText = '';
-        let currentToolLine = '';
+        const steps: string[] = [];
         const result = await runOrchestrator(trimmed, process.cwd(), {
 
-          onLog: () => {
-            // Internal logs — don't show to user
-          },
+          onLog: () => {},
           onText: (text) => {
             responseText += text;
-            currentToolLine = '';
-            streamRef.current = responseText;
-            setStreamingContent(responseText);
+            const stepsBlock = steps.length > 0
+              ? steps.map((s) => `  \x1b[32m✓\x1b[0m ${s}`).join('\n') + '\n\n'
+              : '';
+            streamRef.current = stepsBlock + responseText;
+            setStreamingContent(streamRef.current);
           },
           onToolCall: (name, input) => {
             const preview = name === 'write_code'
-              ? `writing code...`
+              ? 'writing code...'
               : name === 'read_file'
                 ? `reading ${String(input.path ?? '')}`
                 : name === 'grep_file'
                   ? `searching in ${String(input.path ?? '')}`
                   : name === 'search_files'
-                    ? `searching "${String(input.query ?? '')}"`
+                    ? `searching "${String(input.query ?? '').slice(0, 40)}"`
                   : name === 'edit_file'
                     ? `editing ${String(input.path ?? '')}`
                     : name === 'write_file'
@@ -429,9 +429,24 @@ export function App({ initialPrompt, modelPreference, agentMode, useOrchestrator
                       : name === 'run_command'
                         ? `running ${String(input.command ?? '').slice(0, 40)}`
                         : name;
-            currentToolLine = `> ${preview}`;
-            streamRef.current = responseText + (responseText ? '\n' : '') + currentToolLine;
+            // Show completed steps + current active step
+            const completedBlock = steps.map((s) => `  \x1b[32m✓\x1b[0m ${s}`).join('\n');
+            const activeStep = `  \x1b[36m●\x1b[0m ${preview}`;
+            streamRef.current = (completedBlock ? completedBlock + '\n' : '') + activeStep;
             setStreamingContent(streamRef.current);
+          },
+          onToolResult: (name) => {
+            // Move the current tool to completed steps
+            const label = name === 'write_code' ? 'code generated'
+              : name === 'search_files' ? 'files found'
+              : name === 'read_file' ? 'file read'
+              : name === 'grep_file' ? 'pattern found'
+              : name === 'edit_file' ? 'file edited'
+              : name === 'write_file' ? 'file created'
+              : name === 'run_command' ? 'command done'
+              : name === 'apply_diff' ? 'diff applied'
+              : name;
+            steps.push(label);
           },
           onApprovalNeeded: async (description) => {
             // Show the proposed change and wait for user approval
@@ -460,9 +475,12 @@ export function App({ initialPrompt, modelPreference, agentMode, useOrchestrator
         // Persist messages for follow-up turns
         orchestratorMessagesRef.current = result.messages;
 
-        // Show final result — response text + cost, no tool call history
-        const costLine = `\nCost: $${result.totalCost.toFixed(4)} · ${(result.duration / 1000).toFixed(1)}s · ${result.iterations} steps`;
-        responseText += costLine;
+        // Show final result — completed steps + response + cost
+        const stepsBlock = steps.length > 0
+          ? steps.map((s) => `  \x1b[32m✓\x1b[0m ${s}`).join('\n') + '\n\n'
+          : '';
+        const costLine = `\nCost: $${result.totalCost.toFixed(4)} · ${(result.duration / 1000).toFixed(1)}s`;
+        responseText = stepsBlock + responseText + costLine;
         setMessages((prev) =>
           prev.map((m) =>
             m.id === assistantMsgIdRef.current
