@@ -13,6 +13,11 @@ dist/
 .superpowers/
 .claude/
 
+# Private — gateway backend, plans, specs
+packages/gateway/
+docs/plans/
+docs/superpowers/
+
 # Reference / research code (not part of the product)
 claude-code-src/
 collection-claude-code-source-code-main/
