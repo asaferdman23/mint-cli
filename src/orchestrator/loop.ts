@@ -58,7 +58,7 @@ export async function runOrchestrator(
   // Load persistent memory + project instructions
   const memory = loadMemory(cwd);
   const memoryBlock = memory ? formatMemoryForPrompt(memory) : '';
-  const projectInstructions = loadProjectInstructions(cwd);
+  const projectInstructions = await loadProjectInstructions(cwd);
   const instructionsBlock = projectInstructions
     ? `\n\n${MEMORY_INSTRUCTION}\n\n${projectInstructions}`
     : '';

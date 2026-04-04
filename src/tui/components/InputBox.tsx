@@ -158,7 +158,7 @@ export function InputBox({
       <Box borderStyle="single" borderColor="cyan" paddingX={1} flexDirection="row">
         <Box flexGrow={1}>
           {value.length === 0 ? (
-            <Text dimColor>Ask anything… or try "fix the auth bug"<Text inverse> </Text></Text>
+            <Text dimColor>Ask anything… or try "add a pricing section"<Text inverse> </Text></Text>
           ) : (
             <Text>
               {before}

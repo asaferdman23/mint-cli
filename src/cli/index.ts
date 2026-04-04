@@ -316,6 +316,19 @@ program
       depCount = Object.keys(pkg.dependencies ?? {}).length + Object.keys(pkg.devDependencies ?? {}).length;
     } catch { /* no package.json */ }
 
+    // Generate MINT.md with auto-detected conventions
+    const { existsSync, readFileSync: readFs, writeFileSync: writeFs, mkdirSync: mkFs } = await import('node:fs');
+    const { join: joinPath } = await import('node:path');
+    const mintMdPath = joinPath(cwd, 'MINT.md');
+
+    if (!existsSync(mintMdPath)) {
+      const mintMd = await generateMintMd(cwd, index, topLangs, depCount);
+      writeFs(mintMdPath, mintMd, 'utf-8');
+      console.log(chalk.dim(`  Generated MINT.md`));
+    } else {
+      console.log(chalk.dim(`  MINT.md already exists — skipped`));
+    }
+
     console.log(chalk.green(`\n  Ready.`));
     console.log(chalk.dim(`  ${index.totalFiles} files · ${index.totalLOC.toLocaleString()} lines of code`));
     console.log(chalk.dim(`  Languages: ${topLangs}`));
@@ -388,6 +401,93 @@ function parseHumanInLoopEnv(raw: string | undefined): boolean | undefined {
   if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
   if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
   return true;
+}
+
+// ─── MINT.md generator ─────────────────────────────────────────────────────
+
+async function generateMintMd(
+  cwd: string,
+  index: { totalFiles: number; totalLOC: number; language: string; files: Record<string, unknown> },
+  topLangs: string,
+  depCount: number,
+): string {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const lines: string[] = ['# Project Instructions for Mint CLI', ''];
+
+  // Detect framework
+  let framework = '';
+  let buildCmd = '';
+  let testCmd = '';
+  let lintCmd = '';
+
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf-8'));
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+
+    if (deps['next']) { framework = 'Next.js'; buildCmd = 'npm run build'; }
+    else if (deps['vite']) { framework = 'Vite'; buildCmd = 'npm run build'; }
+    else if (deps['react']) { framework = 'React'; buildCmd = 'npm run build'; }
+    else if (deps['vue']) { framework = 'Vue'; buildCmd = 'npm run build'; }
+    else if (deps['svelte']) { framework = 'Svelte'; buildCmd = 'npm run build'; }
+    else if (deps['express'] || deps['hono'] || deps['fastify']) { framework = 'Node.js server'; buildCmd = 'npm run build'; }
+
+    if (pkg.scripts?.build) buildCmd = 'npm run build';
+    if (pkg.scripts?.test && pkg.scripts.test !== 'echo "Error: no test specified" && exit 1') testCmd = 'npm test';
+    if (pkg.scripts?.lint) lintCmd = 'npm run lint';
+    if (deps['typescript'] || deps['tsup'] || deps['tsc']) {
+      if (!buildCmd) buildCmd = 'npx tsc --noEmit';
+    }
+
+    lines.push(`## Project`);
+    lines.push(`- **Name**: ${pkg.name ?? 'unnamed'}`);
+    if (framework) lines.push(`- **Framework**: ${framework}`);
+    lines.push(`- **Language**: ${index.language}`);
+    lines.push(`- **Files**: ${index.totalFiles} (${index.totalLOC.toLocaleString()} LOC)`);
+    if (depCount > 0) lines.push(`- **Dependencies**: ${depCount}`);
+    lines.push('');
+  } catch {
+    lines.push(`## Project`);
+    lines.push(`- **Language**: ${index.language}`);
+    lines.push(`- **Files**: ${index.totalFiles} (${index.totalLOC.toLocaleString()} LOC)`);
+    lines.push('');
+  }
+
+  // Commands
+  lines.push(`## Commands`);
+  if (buildCmd) lines.push(`- **Build**: \`${buildCmd}\``);
+  if (testCmd) lines.push(`- **Test**: \`${testCmd}\``);
+  if (lintCmd) lines.push(`- **Lint**: \`${lintCmd}\``);
+  if (!buildCmd && !testCmd && !lintCmd) lines.push('- No build/test/lint scripts detected');
+  lines.push('');
+
+  // Conventions
+  lines.push(`## Conventions`);
+  lines.push(`- Match existing code style (indentation, naming, imports)`);
+  if (index.language === 'typescript') {
+    lines.push(`- Use TypeScript types — no \`any\` unless necessary`);
+    lines.push(`- Prefer \`const\` over \`let\``);
+  }
+  lines.push(`- Keep changes minimal and focused`);
+  lines.push(`- Run build after changes to verify`);
+  lines.push('');
+
+  // Structure hints
+  const dirs = new Set<string>();
+  for (const filePath of Object.keys(index.files)) {
+    const parts = filePath.split('/');
+    if (parts.length > 1) dirs.add(parts[0]);
+  }
+  if (dirs.size > 0) {
+    lines.push(`## Key Directories`);
+    for (const dir of [...dirs].sort().slice(0, 10)) {
+      const count = Object.keys(index.files).filter((f) => f.startsWith(dir + '/')).length;
+      lines.push(`- \`${dir}/\` (${count} files)`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
 }
 
 // ─── One-shot pipeline ──────────────────────────────────────────────────────

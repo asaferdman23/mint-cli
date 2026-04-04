@@ -116,7 +116,7 @@ export function formatMemoryForPrompt(memory: ProjectMemory): string {
  * Load project instructions from MINT.md, CLAUDE.md, or .mint/rules/*.md
  * These override default behavior — the orchestrator must follow them.
  */
-export function loadProjectInstructions(cwd: string): string | null {
+export async function loadProjectInstructions(cwd: string): Promise<string | null> {
   const candidates = [
     'MINT.md',
     '.mint/MINT.md',
@@ -142,7 +142,7 @@ export function loadProjectInstructions(cwd: string): string | null {
   const rulesDir = join(cwd, '.mint', 'rules');
   if (existsSync(rulesDir)) {
     try {
-      const { readdirSync } = require('node:fs');
+      const { readdirSync } = await import('node:fs');
       const files = readdirSync(rulesDir) as string[];
       for (const file of files) {
         if (!file.endsWith('.md')) continue;

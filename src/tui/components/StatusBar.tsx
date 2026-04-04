@@ -69,7 +69,7 @@ export function StatusBar({
       <Box flexShrink={0} gap={0}>
         <Text dimColor> │ </Text>
         <Text color={modeColor(agentMode) as Parameters<typeof Text>[0]['color']}>{agentMode}</Text>
-        <Text dimColor> │ v0.2.0</Text>
+        <Text dimColor> │ v0.2.0-beta</Text>
         {inspectorHint && (
           <>
             <Text dimColor> │ </Text>
