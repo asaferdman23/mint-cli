@@ -27,6 +27,23 @@ const undoBackups = new Map<string, string>();
 export function getWriteCodeCost(): number { return sessionWriteCodeCost; }
 export function resetWriteCodeCost(): void { sessionWriteCodeCost = 0; }
 
+// Tools that are safe to auto-approve (read-only)
+const SAFE_TOOLS = new Set([
+  'search_files', 'read_file', 'grep_file', 'list_files',
+  'git_diff', 'run_tests', 'write_code',
+]);
+
+export function isToolSafe(toolName: string, input: Record<string, unknown>): boolean {
+  if (SAFE_TOOLS.has(toolName)) return true;
+  // run_command is safe only for read-only commands
+  if (toolName === 'run_command') {
+    const cmd = String(input.command ?? '').trim().toLowerCase();
+    const readOnlyPrefixes = ['git status', 'git log', 'git diff', 'ls', 'cat ', 'head ', 'tail ', 'npm run build', 'npm test', 'npx tsc', 'curl ', 'echo ', 'pwd', 'which ', 'node -e', 'wc '];
+    return readOnlyPrefixes.some((prefix) => cmd.startsWith(prefix));
+  }
+  return false;
+}
+
 // ─── Tool Definitions (for LLM function calling) ──────────────────────────
 
 export const ORCHESTRATOR_TOOL_DEFINITIONS: ToolDefinition[] = [

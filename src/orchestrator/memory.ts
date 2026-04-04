@@ -3,7 +3,7 @@
  * Saves to .mint/memory.json — what files were edited, project info, user preferences.
  * Loaded at session start, injected into the orchestrator system prompt.
  */
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 
 export interface ProjectMemory {
@@ -111,4 +111,51 @@ export function formatMemoryForPrompt(memory: ProjectMemory): string {
   return parts.length > 0
     ? `\n<project_memory>\n${parts.join('\n')}\n</project_memory>`
     : '';
+}
+
+/**
+ * Load project instructions from MINT.md, CLAUDE.md, or .mint/rules/*.md
+ * These override default behavior — the orchestrator must follow them.
+ */
+export function loadProjectInstructions(cwd: string): string | null {
+  const candidates = [
+    'MINT.md',
+    '.mint/MINT.md',
+    'CLAUDE.md',
+    '.claude/CLAUDE.md',
+  ];
+
+  const parts: string[] = [];
+
+  for (const candidate of candidates) {
+    const fullPath = join(cwd, candidate);
+    if (existsSync(fullPath)) {
+      try {
+        const content = readFileSync(fullPath, 'utf-8').trim();
+        if (content.length > 0 && content.length < 40_000) {
+          parts.push(`# ${candidate}\n${content}`);
+        }
+      } catch { /* ignore */ }
+    }
+  }
+
+  // Also load .mint/rules/*.md
+  const rulesDir = join(cwd, '.mint', 'rules');
+  if (existsSync(rulesDir)) {
+    try {
+      const { readdirSync } = require('node:fs');
+      const files = readdirSync(rulesDir) as string[];
+      for (const file of files) {
+        if (!file.endsWith('.md')) continue;
+        try {
+          const content = readFileSync(join(rulesDir, file), 'utf-8').trim();
+          if (content.length > 0 && content.length < 10_000) {
+            parts.push(`# .mint/rules/${file}\n${content}`);
+          }
+        } catch { /* ignore */ }
+      }
+    } catch { /* ignore */ }
+  }
+
+  return parts.length > 0 ? parts.join('\n\n') : null;
 }

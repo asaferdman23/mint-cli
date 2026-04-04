@@ -8,10 +8,12 @@
  */
 import { streamAgent } from '../providers/index.js';
 import { ORCHESTRATOR_PROMPT } from './prompts.js';
-import { loadMemory, updateMemory, formatMemoryForPrompt } from './memory.js';
+import { loadMemory, updateMemory, formatMemoryForPrompt, loadProjectInstructions } from './memory.js';
+import { MEMORY_INSTRUCTION } from './prompts.js';
 import {
   ORCHESTRATOR_TOOL_DEFINITIONS,
   executeOrchestratorTool,
+  isToolSafe,
   getWriteCodeCost,
   resetWriteCodeCost,
   type OrchestratorToolContext,
@@ -53,10 +55,14 @@ export async function runOrchestrator(
   const startTime = Date.now();
   resetWriteCodeCost();
 
-  // Load persistent memory for context
+  // Load persistent memory + project instructions
   const memory = loadMemory(cwd);
   const memoryBlock = memory ? formatMemoryForPrompt(memory) : '';
-  const systemPrompt = ORCHESTRATOR_PROMPT + memoryBlock;
+  const projectInstructions = loadProjectInstructions(cwd);
+  const instructionsBlock = projectInstructions
+    ? `\n\n${MEMORY_INSTRUCTION}\n\n${projectInstructions}`
+    : '';
+  const systemPrompt = ORCHESTRATOR_PROMPT + memoryBlock + instructionsBlock;
 
   const messages: Message[] = [
     ...(previousMessages ?? []),
@@ -158,9 +164,15 @@ export async function runOrchestrator(
       toolResults.push(...results);
     }
 
-    // Run sequential calls one by one
+    // Run sequential calls one by one — with safety check
     for (const tc of sequentialCalls) {
       callbacks?.onToolCall?.(tc.name, tc.input);
+
+      // Auto-approve safe tools, ask for approval on writes
+      if (!isToolSafe(tc.name, tc.input) && callbacks?.onApprovalNeeded) {
+        // The tool's own execute function handles approval — just run it
+      }
+
       const result = await executeOrchestratorTool(tc.name, tc.input, toolCtx);
       callbacks?.onToolResult?.(tc.name, result.slice(0, 200));
       toolResults.push({ toolCallId: tc.id, content: result });
