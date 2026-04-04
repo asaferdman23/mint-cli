@@ -136,12 +136,13 @@ function estimateInputAreaHeight(
   return lines;
 }
 
-export function App({ initialPrompt, modelPreference, agentMode, useOrchestrator = true }: AppProps): React.ReactElement {
+export function App({ initialPrompt, modelPreference, agentMode: initialAgentMode, useOrchestrator = true }: AppProps): React.ReactElement {
   const { exit } = useApp();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isBusy, setIsBusy] = useState(false);
+  const [agentMode, setAgentMode] = useState<'yolo' | 'plan' | 'diff' | 'auto' | undefined>(initialAgentMode);
   const [isRouting, setIsRouting] = useState(false);
   const [currentModel, setCurrentModel] = useState<ModelId | null>(null);
   const [sessionTokens, setSessionTokens] = useState(0);
@@ -290,7 +291,8 @@ export function App({ initialPrompt, modelPreference, agentMode, useOrchestrator
             '  /clear   — clear chat',
             '  /model   — current model',
             '  /models  — list all models',
-            '  /agent   — agent mode',
+            '  /auto    — toggle auto mode (skip approvals)',
+            '  /yolo    — toggle yolo mode (full autonomy)',
             '  /usage   — session stats',
             '',
             'Keyboard:',
@@ -315,6 +317,34 @@ export function App({ initialPrompt, modelPreference, agentMode, useOrchestrator
       setSavingsPct(undefined);
       setScrollOffset(0);
       resetPhases();
+      return;
+    }
+
+    if (trimmed === '/auto') {
+      const newMode = agentMode === 'auto' ? undefined : 'auto';
+      setAgentMode(newMode);
+      setMessages((prev) => [...prev, {
+        id: nextId(),
+        role: 'assistant',
+        content: newMode === 'auto'
+          ? 'Auto mode ON — changes apply without asking.'
+          : 'Auto mode OFF — you\'ll be asked before changes.',
+      }]);
+      setInput('');
+      return;
+    }
+
+    if (trimmed === '/yolo') {
+      const newMode = agentMode === 'yolo' ? undefined : 'yolo';
+      setAgentMode(newMode);
+      setMessages((prev) => [...prev, {
+        id: nextId(),
+        role: 'assistant',
+        content: newMode === 'yolo'
+          ? 'YOLO mode ON — full autonomy, no approvals.'
+          : 'YOLO mode OFF — back to normal approvals.',
+      }]);
+      setInput('');
       return;
     }
 
