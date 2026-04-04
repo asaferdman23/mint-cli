@@ -290,7 +290,6 @@ export function App({ initialPrompt, modelPreference, agentMode: initialAgentMod
             '  /help    — this help',
             '  /clear   — clear chat',
             '  /model   — current model',
-            '  /models  — list all models',
             '  /auto    — toggle auto mode (skip approvals)',
             '  /yolo    — toggle yolo mode (full autonomy)',
             '  /usage   — session stats',

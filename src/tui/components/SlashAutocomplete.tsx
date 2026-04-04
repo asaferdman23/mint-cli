@@ -51,8 +51,8 @@ export function SlashAutocomplete({
 export const SLASH_COMMANDS: SlashCommandDef[] = [
   { name: 'help', description: 'show commands + keyboard shortcuts' },
   { name: 'clear', description: 'clear chat history' },
-  { name: 'model', description: 'show/switch model' },
-  { name: 'models', description: 'list all models with tiers' },
-  { name: 'agent', description: 'show/switch agent mode' },
-  { name: 'usage', description: 'session stats + totals' },
+  { name: 'model', description: 'show current model' },
+  { name: 'auto', description: 'toggle auto mode (skip approvals)' },
+  { name: 'yolo', description: 'toggle yolo mode (full autonomy)' },
+  { name: 'usage', description: 'session stats + savings' },
 ];
