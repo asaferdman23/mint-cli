@@ -21,6 +21,17 @@ app.use('/*', cors({
 
 app.get('/health', (c) => c.json({ ok: true }))
 
+// Analytics: track mint init calls (public, no auth)
+app.post('/track', async (c) => {
+  try {
+    const body = await c.req.json<{ event: string; [key: string]: unknown }>()
+    const ip = c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
+    const { log } = await import('./logger.js')
+    log({ ...body, ip })
+  } catch { /* ignore */ }
+  return c.json({ ok: true })
+})
+
 // Waitlist (public, no auth)
 app.post('/waitlist', async (c) => {
   const body = await c.req.json<{ email: string }>().catch(() => null)

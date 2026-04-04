@@ -322,6 +322,16 @@ program
     if (depCount > 0) console.log(chalk.dim(`  ${depCount} dependencies`));
     console.log(chalk.dim(`  Index: .mint/context.json`));
     console.log(chalk.dim(`\n  Run ${chalk.cyan('mint')} to start editing.\n`));
+
+    // Track init (fire and forget)
+    try {
+      const gatewayUrl = config.get('apiBaseUrl') as string ?? 'https://api.usemint.dev';
+      fetch(`${gatewayUrl}/track`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event: 'init', files_indexed: index.totalFiles, language: index.language }),
+      }).catch(() => {});
+    } catch { /* ignore */ }
   });
 
 // Skills command

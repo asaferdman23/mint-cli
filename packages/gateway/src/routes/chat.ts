@@ -37,7 +37,8 @@ chatRoute.post('/chat', async (c) => {
 
   const { target, reason, savingsPct } = selectTarget(lastUserMsg, contextTokens)
 
-  log({ event: 'routing', request_id: requestId, session_id, task_type: target.tier, model: target.modelLabel, reason, savings_pct: savingsPct })
+  const ip = c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown'
+  log({ event: 'routing', request_id: requestId, session_id, ip, task_type: target.tier, model: target.modelLabel, reason, savings_pct: savingsPct })
 
   // Persist routing decision (fire and forget — don't block stream)
   insertRoutingDecision({
@@ -102,7 +103,7 @@ chatRoute.post('/chat', async (c) => {
         const costActual = calcCost(inputTok, outputTok, target.inputPrice, target.outputPrice)
         const costSonnet = calcCost(inputTok, outputTok, SONNET_INPUT, SONNET_OUTPUT)
 
-        log({ event: 'complete', request_id: requestId, session_id, model: target.modelLabel, input_tok: inputTok, output_tok: outputTok, cost: costActual, latency_ms: latencyMs })
+        log({ event: 'task', request_id: requestId, session_id, ip, model: target.modelLabel, tokens_in: inputTok, tokens_out: outputTok, cost: costActual, duration_ms: latencyMs, success: !streamError, error: streamError ?? null })
 
         insertRequest({
           id: requestId, session_id, model: target.modelLabel, provider: target.provider,
