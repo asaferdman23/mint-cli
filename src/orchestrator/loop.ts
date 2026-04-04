@@ -224,33 +224,50 @@ function compactMessagesIfNeeded(messages: Message[]): void {
   }, 0);
 
   if (totalChars < MAX_CONTEXT_CHARS) return;
-
-  // Keep the first user message and the last 6 messages (3 turns).
-  // Summarize everything in between.
   if (messages.length <= 8) return;
 
   const first = messages[0]; // original task
   const recent = messages.slice(-6); // last 3 turns
   const middle = messages.slice(1, -6);
 
-  // Build a summary of the middle messages
-  const summaryParts: string[] = [];
+  // Build a detailed summary preserving technical context
+  const filesEdited = new Set<string>();
+  const filesRead = new Set<string>();
+  const userRequests: string[] = [];
+  const actionsCompleted: string[] = [];
+
   for (const msg of middle) {
-    if (msg.role === 'assistant' && msg.content) {
-      const text = msg.content.slice(0, 200);
-      if (text.trim()) summaryParts.push(`Assistant: ${text}`);
-    } else if (msg.role === 'user' && msg.content) {
-      summaryParts.push(`User: ${msg.content.slice(0, 100)}`);
+    if (msg.role === 'user' && msg.content) {
+      userRequests.push(msg.content.slice(0, 150));
     }
-    // Skip tool messages in summary — they're verbose
+    if (msg.role === 'assistant' && msg.content) {
+      const text = msg.content.trim();
+      if (text) actionsCompleted.push(text.slice(0, 200));
+    }
+    // Extract file paths from tool calls
+    const tc = (msg as Record<string, unknown>).toolCalls as Array<{ name: string; input: Record<string, unknown> }> | undefined;
+    if (tc) {
+      for (const call of tc) {
+        const path = String(call.input?.path ?? '');
+        if (call.name === 'edit_file' || call.name === 'write_file') filesEdited.add(path);
+        if (call.name === 'read_file' || call.name === 'grep_file') filesRead.add(path);
+      }
+    }
   }
+
+  const summaryParts = [
+    '[Conversation compacted to save context]',
+    userRequests.length > 0 ? `User requests: ${userRequests.join(' → ')}` : '',
+    filesRead.size > 0 ? `Files examined: ${[...filesRead].join(', ')}` : '',
+    filesEdited.size > 0 ? `Files modified: ${[...filesEdited].join(', ')}` : '',
+    actionsCompleted.length > 0 ? `Actions: ${actionsCompleted.join(' | ')}` : '',
+  ].filter(Boolean);
 
   const summary: Message = {
     role: 'assistant',
-    content: `[Previous conversation summary: ${summaryParts.join(' | ').slice(0, 500)}]`,
+    content: summaryParts.join('\n'),
   };
 
-  // Replace messages in-place
   messages.length = 0;
   messages.push(first, summary, ...recent);
 }
