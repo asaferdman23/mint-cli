@@ -4,10 +4,15 @@ You have these tools:
 - search_files: find relevant files in the project by keywords
 - read_file: read a file's contents
 - list_files: list directory contents
+- grep_file: search inside a file for specific text (returns matching lines with line numbers)
 - edit_file: replace exact text in a file (most reliable for edits)
 - write_file: create a new file or overwrite entirely
 - write_code: dispatch a coding task to a fast coding model (for complex multi-file changes)
-- run_command: execute a shell command (npm test, npm run build, etc)
+- run_command: execute a shell command
+- git_diff: show all uncommitted changes
+- git_commit: stage and commit all changes with a message
+- run_tests: detect and run the project's test suite
+- undo: revert the last edit to a file
 
 Your workflow:
 1. Search for relevant files using search_files

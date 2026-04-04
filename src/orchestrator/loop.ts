@@ -8,6 +8,7 @@
  */
 import { streamAgent } from '../providers/index.js';
 import { ORCHESTRATOR_PROMPT } from './prompts.js';
+import { loadMemory, updateMemory, formatMemoryForPrompt } from './memory.js';
 import {
   ORCHESTRATOR_TOOL_DEFINITIONS,
   executeOrchestratorTool,
@@ -52,6 +53,11 @@ export async function runOrchestrator(
   const startTime = Date.now();
   resetWriteCodeCost();
 
+  // Load persistent memory for context
+  const memory = loadMemory(cwd);
+  const memoryBlock = memory ? formatMemoryForPrompt(memory) : '';
+  const systemPrompt = ORCHESTRATOR_PROMPT + memoryBlock;
+
   const messages: Message[] = [
     ...(previousMessages ?? []),
     { role: 'user', content: task },
@@ -72,6 +78,9 @@ export async function runOrchestrator(
     if (signal?.aborted) break;
     iterations = i + 1;
 
+    // Context compaction — if messages are too large, summarize old turns
+    compactMessagesIfNeeded(messages);
+
     let responseText = '';
     const toolCalls: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
 
@@ -80,7 +89,7 @@ export async function runOrchestrator(
       for await (const chunk of streamAgent({
         model: ORCHESTRATOR_MODEL,
         messages,
-        systemPrompt: ORCHESTRATOR_PROMPT,
+        systemPrompt,
         tools: ORCHESTRATOR_TOOL_DEFINITIONS,
         maxTokens: 4096,
         signal,
@@ -128,10 +137,30 @@ export async function runOrchestrator(
       })),
     } as unknown as Message);
 
-    // Execute tool calls and collect results
+    // Execute tool calls — run independent tools in parallel, sequential for writes
     const toolResults: Array<{ toolCallId: string; content: string }> = [];
-    for (const tc of toolCalls) {
-      callbacks?.onLog?.(`tool: ${tc.name}`);
+    const writeTools = new Set(['edit_file', 'write_file', 'git_commit', 'apply_diff']);
+
+    // Split into parallel-safe (reads/searches) and sequential (writes)
+    const parallelCalls = toolCalls.filter((tc) => !writeTools.has(tc.name));
+    const sequentialCalls = toolCalls.filter((tc) => writeTools.has(tc.name));
+
+    // Run parallel calls concurrently
+    if (parallelCalls.length > 0) {
+      const results = await Promise.all(
+        parallelCalls.map(async (tc) => {
+          callbacks?.onToolCall?.(tc.name, tc.input);
+          const result = await executeOrchestratorTool(tc.name, tc.input, toolCtx);
+          callbacks?.onToolResult?.(tc.name, result.slice(0, 200));
+          return { toolCallId: tc.id, content: result };
+        }),
+      );
+      toolResults.push(...results);
+    }
+
+    // Run sequential calls one by one
+    for (const tc of sequentialCalls) {
+      callbacks?.onToolCall?.(tc.name, tc.input);
       const result = await executeOrchestratorTool(tc.name, tc.input, toolCtx);
       callbacks?.onToolResult?.(tc.name, result.slice(0, 200));
       toolResults.push({ toolCallId: tc.id, content: result });
@@ -142,6 +171,25 @@ export async function runOrchestrator(
       content: '',
       toolResults,
     } as unknown as Message);
+  }
+
+  // Save session memory — track edited files
+  const editedFiles: string[] = [];
+  for (const msg of messages) {
+    const tc = (msg as Record<string, unknown>).toolCalls as Array<{ name: string; input: Record<string, unknown> }> | undefined;
+    if (tc) {
+      for (const call of tc) {
+        if ((call.name === 'edit_file' || call.name === 'write_file') && call.input.path) {
+          editedFiles.push(String(call.input.path));
+        }
+      }
+    }
+  }
+  if (editedFiles.length > 0 || fullOutput) {
+    updateMemory(cwd, {
+      editedFiles: [...new Set(editedFiles)],
+      sessionSummary: fullOutput.slice(0, 200),
+    });
   }
 
   // Calculate costs
@@ -162,6 +210,49 @@ export async function runOrchestrator(
     duration: Date.now() - startTime,
     messages,
   };
+}
+
+const MAX_CONTEXT_CHARS = 100_000; // ~25K tokens
+
+function compactMessagesIfNeeded(messages: Message[]): void {
+  const totalChars = messages.reduce((sum, m) => {
+    const content = typeof m.content === 'string' ? m.content : '';
+    const toolContent = (m as Record<string, unknown>).toolResults
+      ? JSON.stringify((m as Record<string, unknown>).toolResults)
+      : '';
+    return sum + content.length + toolContent.length;
+  }, 0);
+
+  if (totalChars < MAX_CONTEXT_CHARS) return;
+
+  // Keep the first user message and the last 6 messages (3 turns).
+  // Summarize everything in between.
+  if (messages.length <= 8) return;
+
+  const first = messages[0]; // original task
+  const recent = messages.slice(-6); // last 3 turns
+  const middle = messages.slice(1, -6);
+
+  // Build a summary of the middle messages
+  const summaryParts: string[] = [];
+  for (const msg of middle) {
+    if (msg.role === 'assistant' && msg.content) {
+      const text = msg.content.slice(0, 200);
+      if (text.trim()) summaryParts.push(`Assistant: ${text}`);
+    } else if (msg.role === 'user' && msg.content) {
+      summaryParts.push(`User: ${msg.content.slice(0, 100)}`);
+    }
+    // Skip tool messages in summary — they're verbose
+  }
+
+  const summary: Message = {
+    role: 'assistant',
+    content: `[Previous conversation summary: ${summaryParts.join(' | ').slice(0, 500)}]`,
+  };
+
+  // Replace messages in-place
+  messages.length = 0;
+  messages.push(first, summary, ...recent);
 }
 
 function formatError(err: unknown): string {

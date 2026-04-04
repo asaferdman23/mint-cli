@@ -435,16 +435,19 @@ export function App({ initialPrompt, modelPreference, agentMode, useOrchestrator
             streamRef.current = (completedBlock ? completedBlock + '\n' : '') + activeStep;
             setStreamingContent(streamRef.current);
           },
-          onToolResult: (name) => {
-            // Move the current tool to completed steps
+          onToolResult: (name, result) => {
             const label = name === 'write_code' ? 'code generated'
               : name === 'search_files' ? 'files found'
               : name === 'read_file' ? 'file read'
               : name === 'grep_file' ? 'pattern found'
-              : name === 'edit_file' ? 'file edited'
-              : name === 'write_file' ? 'file created'
+              : name === 'edit_file' ? (result.startsWith('Edited') ? result.split(':')[0] : 'edit failed')
+              : name === 'write_file' ? (result.startsWith('Created') ? result.split('(')[0].trim() : 'write failed')
               : name === 'run_command' ? 'command done'
               : name === 'apply_diff' ? 'diff applied'
+              : name === 'git_diff' ? 'changes shown'
+              : name === 'git_commit' ? 'committed'
+              : name === 'run_tests' ? (result.includes('passing') ? 'tests passed' : 'tests done')
+              : name === 'undo' ? 'reverted'
               : name;
             steps.push(label);
           },

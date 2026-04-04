@@ -21,6 +21,9 @@ export interface OrchestratorToolContext {
 
 // Cost tracking for the session
 let sessionWriteCodeCost = 0;
+
+// Undo backup — stores the last version of each edited file
+const undoBackups = new Map<string, string>();
 export function getWriteCodeCost(): number { return sessionWriteCodeCost; }
 export function resetWriteCodeCost(): void { sessionWriteCodeCost = 0; }
 
@@ -131,6 +134,46 @@ export const ORCHESTRATOR_TOOL_DEFINITIONS: ToolDefinition[] = [
       required: ['command'],
     },
   },
+  {
+    name: 'git_diff',
+    description: 'Show what changed since the last commit. Returns unified diff of all modified files.',
+    input_schema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'git_commit',
+    description: 'Stage all changes and commit with a message.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', description: 'Commit message' },
+      },
+      required: ['message'],
+    },
+  },
+  {
+    name: 'run_tests',
+    description: 'Detect and run the project test suite. Tries npm test, then looks for common test runners.',
+    input_schema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'undo',
+    description: 'Revert the last file change made by edit_file or write_file. Restores the file to its previous state.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'File path to revert' },
+      },
+      required: ['path'],
+    },
+  },
 ];
 
 // ─── Tool Executors ────────────────────────────────────────────────────────
@@ -171,6 +214,14 @@ export async function executeOrchestratorTool(
       return toolWriteFile(String(input.path ?? ''), String(input.content ?? ''), ctx);
     case 'run_command':
       return toolRunCommand(String(input.command ?? ''), ctx);
+    case 'git_diff':
+      return toolGitDiff(ctx);
+    case 'git_commit':
+      return toolGitCommit(String(input.message ?? ''), ctx);
+    case 'run_tests':
+      return toolRunTests(ctx);
+    case 'undo':
+      return toolUndo(String(input.path ?? ''), ctx);
     default:
       return `Unknown tool: ${toolName}`;
   }
@@ -315,6 +366,7 @@ async function toolEditFile(filePath: string, oldText: string, newText: string, 
       if (count > 1) {
         return `Error: old_text matches ${count} locations in ${filePath}. Make it more specific by including more surrounding context.`;
       }
+      undoBackups.set(filePath, content);
       const updated = content.replace(oldText, newText);
       writeFileSync(fullPath, updated, 'utf-8');
       return `Edited ${filePath}: replaced ${oldText.length} chars with ${newText.length} chars.`;
@@ -358,6 +410,77 @@ async function toolEditFile(filePath: string, oldText: string, newText: string, 
   }
 }
 
+// ─── Git + Test + Undo tools ───────────────────────────────────────────────
+
+function toolGitDiff(ctx: OrchestratorToolContext): string {
+  ctx.onLog?.('git diff');
+  try {
+    const diff = execSync('git diff', { cwd: ctx.cwd, encoding: 'utf-8', timeout: 10_000 });
+    const staged = execSync('git diff --cached', { cwd: ctx.cwd, encoding: 'utf-8', timeout: 10_000 });
+    const status = execSync('git status --short', { cwd: ctx.cwd, encoding: 'utf-8', timeout: 10_000 });
+    const parts = [
+      status.trim() ? `Status:\n${status.trim()}` : 'No changes.',
+      diff.trim() ? `\nUnstaged changes:\n${diff.trim().slice(0, MAX_OUTPUT)}` : '',
+      staged.trim() ? `\nStaged changes:\n${staged.trim().slice(0, MAX_OUTPUT)}` : '',
+    ].filter(Boolean);
+    return parts.join('\n') || 'Working tree clean.';
+  } catch (err) {
+    return `Git error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+function toolGitCommit(message: string, ctx: OrchestratorToolContext): string {
+  ctx.onLog?.(`git commit: ${message.slice(0, 40)}`);
+  try {
+    execSync('git add -A', { cwd: ctx.cwd, timeout: 10_000 });
+    const result = execSync(`git commit -m "${message.replace(/"/g, '\\"')}"`, {
+      cwd: ctx.cwd,
+      encoding: 'utf-8',
+      timeout: 10_000,
+    });
+    return result.trim() || 'Committed.';
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('nothing to commit')) return 'Nothing to commit — working tree clean.';
+    return `Git commit error: ${msg}`;
+  }
+}
+
+function toolRunTests(ctx: OrchestratorToolContext): string {
+  ctx.onLog?.('running tests');
+  try {
+    // Detect test command from package.json
+    const pkgPath = join(ctx.cwd, 'package.json');
+    if (existsSync(pkgPath)) {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+      const testScript = pkg.scripts?.test;
+      if (testScript && testScript !== 'echo "Error: no test specified" && exit 1') {
+        const output = execSync('npm test', { cwd: ctx.cwd, encoding: 'utf-8', timeout: 60_000, maxBuffer: 1024 * 1024 });
+        return output.length > MAX_OUTPUT ? output.slice(0, MAX_OUTPUT) + '\n... (truncated)' : output;
+      }
+    }
+    return 'No test script found in package.json.';
+  } catch (err: unknown) {
+    const execErr = err as { stdout?: string; stderr?: string; message?: string };
+    const out = [execErr.stdout, execErr.stderr].filter(Boolean).join('\n');
+    return out.length > MAX_OUTPUT ? out.slice(0, MAX_OUTPUT) + '\n... (truncated)' : out || 'Tests failed.';
+  }
+}
+
+function toolUndo(filePath: string, ctx: OrchestratorToolContext): string {
+  ctx.onLog?.(`undo ${filePath}`);
+  const backup = undoBackups.get(filePath);
+  if (!backup) return `No undo history for ${filePath}. Only the most recent edit can be undone.`;
+  const fullPath = join(ctx.cwd, filePath);
+  try {
+    writeFileSync(fullPath, backup, 'utf-8');
+    undoBackups.delete(filePath);
+    return `Reverted ${filePath} to previous state.`;
+  } catch (err) {
+    return `Undo error: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -373,6 +496,8 @@ async function toolWriteFile(filePath: string, content: string, ctx: Orchestrato
   if (!fullPath.startsWith(ctx.cwd)) return 'Error: path outside project directory';
   try {
     mkdirSync(dirname(fullPath), { recursive: true });
+    // Backup existing file for undo
+    try { undoBackups.set(filePath, readFileSync(fullPath, 'utf-8')); } catch { /* new file */ }
     writeFileSync(fullPath, content, 'utf-8');
     return `Created ${filePath} (${content.length} chars).`;
   } catch (err) {
