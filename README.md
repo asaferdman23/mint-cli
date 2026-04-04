@@ -9,13 +9,37 @@
 
 # Mint CLI
 
-Zero-setup AI coding assistant in your terminal. Type `mint`, start coding.
-
-No API keys. No accounts. No config files.
+AI coding assistant that uses a smart orchestrator + cheap coding models. One command edits your codebase — under a penny per task.
 
 ```bash
-npx usemint-cli
+npm i -g usemint-cli
+mint init
+mint "add a pricing section with 3 tiers before the footer"
 ```
+
+## How It Works
+
+One smart model (Grok 4.1 Fast) orchestrates. It searches your files, reads them, understands the problem, then dispatches to a cheap coding model (DeepSeek V3) for the actual edit. You approve before anything touches disk.
+
+```
+You: "add a pricing section with 3 tiers"
+
+  ● searching files...
+  ✓ files found
+  ● reading landing/index.html
+  ✓ file read
+  ● searching in landing/index.html
+  ✓ pattern found
+  ● editing landing/index.html
+  ✓ file edited
+
+  Added pricing section with Free, Pro ($29/mo), and Enterprise tiers.
+  Cost: $0.003 · 8s
+```
+
+**Orchestrator** (Grok 4.1 Fast, $0.20/M) — thinks, plans, decides what to do
+**Code writer** (DeepSeek V3, $0.28/M) — writes code when needed
+**Everything else** — pure code, $0 (file search, read, edit, grep, shell commands)
 
 ## Install
 
@@ -23,67 +47,65 @@ npx usemint-cli
 npm install -g usemint-cli
 ```
 
-Or run directly without installing:
+Or run directly:
 
 ```bash
-npx usemint-cli
+npx usemint-cli "fix the auth bug"
 ```
 
 ## Usage
 
 ```bash
-mint                       # open the interactive TUI
-mint "fix the auth bug"    # one-shot prompt — get an answer and exit
-mint usage                 # show session stats and savings
-mint models                # list available models
+mint init                  # scan project, build search index
+mint                       # open interactive TUI
+mint "fix the auth bug"    # one-shot — edit and exit
+mint "what does main.ts do?"  # ask questions about your code
 ```
 
-## How It Works
+### In the TUI
 
-Every message routes through a smart gateway that picks the cheapest model capable of handling your task — automatically.
+Type naturally. The orchestrator figures out what to do:
 
-```
-mint CLI  →  gateway  →  best model for the job
-```
+- **Questions** — "what does this function do?" "can you see the landing page?"
+- **Edits** — "change the hero title to Ship Code Faster"
+- **Features** — "add a contact form with name and email fields"
+- **Fixes** — "fix the mobile menu toggle"
+- **Multi-turn** — "change the color to blue" → "also make the footer match"
 
-**3-tier routing (automatic, invisible):**
+The orchestrator remembers what files it read and what it changed. Follow-up prompts work naturally.
 
-| Complexity | Examples | Model | Cost per 1M tokens |
-|------------|----------|-------|---------------------|
-| Simple | explain, Q&A | Groq Llama 3.1 8B | $0.05 / $0.08 |
-| Medium | write, fix, refactor | DeepSeek V3 | $0.27 / $1.10 |
-| Complex | architect, multi-file | Grok 3 Mini | $0.60 / $4.00 |
+## What It Costs
 
-Context over 20K tokens automatically bumps to the next tier. If a provider fails, it falls back to the next one.
+| Task type | Time | Cost | Opus equivalent |
+|-----------|------|------|-----------------|
+| Simple edit (change text) | 6s | $0.002 | $0.12 |
+| Color scheme change | 13s | $0.005 | $0.23 |
+| Add new section | 9s | $0.003 | $0.18 |
+| Multi-file feature | 15s | $0.008 | $0.40 |
+
+98% cheaper than running Claude Opus for every task.
 
 ## Supported Providers
 
-Mint works out of the box via the gateway (no keys needed). You can also bring your own API keys:
+Mint routes through a gateway by default (no keys needed). You can also bring your own:
 
-| Provider | Models | Env Variable |
-|----------|--------|-------------|
-| Gateway (default) | Auto-routed | None required |
-| Anthropic | Claude Sonnet, Haiku | `ANTHROPIC_API_KEY` |
-| OpenAI | GPT-4o, GPT-4o-mini | `OPENAI_API_KEY` |
-| Google | Gemini Pro, Flash | `GEMINI_API_KEY` |
-| DeepSeek | DeepSeek V3, R1 | `DEEPSEEK_API_KEY` |
-| Groq | Llama 3.x | `GROQ_API_KEY` |
-| Grok (xAI) | Grok 3 | `GROK_API_KEY` |
-| Mistral | Mistral Large, Small | `MISTRAL_API_KEY` |
+| Provider | Config command |
+|----------|---------------|
+| Gateway (default) | `mint login` |
+| DeepSeek | `mint config:set providers.deepseek <key>` |
+| Grok (xAI) | `mint config:set providers.grok <key>` |
+| Mistral | `mint config:set providers.mistral <key>` |
+| Groq | `mint config:set providers.groq <key>` |
+| Gemini | `mint config:set providers.gemini <key>` |
+| Anthropic | `mint config:set providers.anthropic <key>` |
+| Kimi (Moonshot) | `mint config:set providers.kimi <key>` |
 
 ## TUI Features
 
-- **Vim keybindings** — `i` for INSERT, `Esc` for NORMAL, full motion support (`w`, `b`, `e`, `f`, `d`, `c`, `y`, `p`)
-- **Status bar** — current model, token count, session cost
-- **Slash commands** — `/help`, `/clear`, `/model`
-- **Ctrl+C** — exit
-
-## Security
-
-- **No keys stored in code** — all credentials are read from environment variables or local config at runtime
-- **Gateway mode** requires no API keys on your machine — keys live server-side
-- **Local config** is stored in your OS config directory (via [conf](https://github.com/sindresorhus/conf)) and never committed to git
-- `.env`, `.mint/`, and `.claude/` are gitignored by default
+- **Vim keybindings** — `i` for INSERT, `Esc` for NORMAL
+- **Status bar** — current model, session cost, monthly spend
+- **Step indicators** — see what the orchestrator is doing in real-time
+- **Approval gate** — review changes before they're applied
 
 ## Requirements
 
@@ -99,16 +121,6 @@ npm install
 npm run build
 node dist/cli/index.js
 ```
-
-## Contributing
-
-1. Fork the repo
-2. Create your feature branch (`git checkout -b feat/my-feature`)
-3. Commit your changes
-4. Push to the branch (`git push origin feat/my-feature`)
-5. Open a Pull Request
-
-Please open an issue first for major changes so we can discuss the approach.
 
 ## License
 
