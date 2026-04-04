@@ -10,6 +10,7 @@ export async function runOrchestratorCLI(task: string): Promise<void> {
 
   console.log(chalk.dim(`\n  Task: ${task}\n`));
 
+  try {
   const result = await runOrchestrator(task, cwd, {
     onLog: (msg) => {
       process.stdout.write(chalk.dim(`  ${msg}\n`));
@@ -49,4 +50,10 @@ export async function runOrchestratorCLI(task: string): Promise<void> {
     console.log(chalk.dim(`  Opus equivalent: $${opusCost.toFixed(2)} — saved ${Math.round((1 - result.totalCost / opusCost) * 100)}%`));
   }
   console.log('');
+  } catch (err) {
+    console.error(chalk.red(`\nError: ${err instanceof Error ? err.message : String(err)}`));
+    if (err instanceof Error && err.stack) {
+      console.error(chalk.dim(err.stack.split('\n').slice(1, 5).join('\n')));
+    }
+  }
 }

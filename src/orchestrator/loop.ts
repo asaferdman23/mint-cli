@@ -64,8 +64,12 @@ export async function runOrchestrator(
     : '';
   const systemPrompt = ORCHESTRATOR_PROMPT + memoryBlock + instructionsBlock;
 
+  // Filter out any broken messages from previous sessions
+  const safeHistory = (previousMessages ?? []).filter(
+    (m) => m && typeof m.role === 'string' && (typeof m.content === 'string' || m.content === null || m.content === undefined),
+  );
   const messages: Message[] = [
-    ...(previousMessages ?? []),
+    ...safeHistory,
     { role: 'user', content: task },
   ];
 
@@ -115,7 +119,8 @@ export async function runOrchestrator(
       }
     } catch (err) {
       const errMsg = formatError(err);
-      callbacks?.onLog?.(`${errMsg}`);
+      const stack = err instanceof Error ? err.stack?.split('\n').slice(0, 3).join('\n') : '';
+      callbacks?.onLog?.(`${errMsg}${stack ? '\n' + stack : ''}`);
       fullOutput += `\n${errMsg}`;
       break;
     }

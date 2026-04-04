@@ -64,10 +64,9 @@ export function updateMemory(
   };
 
   if (update.editedFiles) {
-    const combined = [...new Set([...update.editedFiles, ...existing.recentFiles])];
+    const combined = [...new Set([...update.editedFiles, ...(existing.recentFiles ?? [])])];
     existing.recentFiles = combined.slice(0, MAX_RECENT_FILES);
-    // Extract directories
-    const dirs = new Set(existing.activeDirectories);
+    const dirs = new Set(existing.activeDirectories ?? []);
     for (const f of update.editedFiles) {
       const parts = f.split('/');
       if (parts.length > 1) dirs.add(parts.slice(0, -1).join('/'));
@@ -78,7 +77,7 @@ export function updateMemory(
   if (update.sessionSummary) {
     existing.sessionSummaries = [
       update.sessionSummary,
-      ...existing.sessionSummaries,
+      ...(existing.sessionSummaries ?? []),
     ].slice(0, MAX_SUMMARIES);
   }
 
@@ -98,13 +97,13 @@ export function formatMemoryForPrompt(memory: ProjectMemory): string {
   if (memory.language) {
     parts.push(`Language: ${memory.language}`);
   }
-  if (memory.recentFiles.length > 0) {
+  if (memory.recentFiles?.length > 0) {
     parts.push(`Recently edited files: ${memory.recentFiles.slice(0, 10).join(', ')}`);
   }
-  if (memory.activeDirectories.length > 0) {
+  if (memory.activeDirectories?.length > 0) {
     parts.push(`Active directories: ${memory.activeDirectories.join(', ')}`);
   }
-  if (memory.sessionSummaries.length > 0) {
+  if (memory.sessionSummaries?.length > 0) {
     parts.push(`Recent session: ${memory.sessionSummaries[0]}`);
   }
 
