@@ -451,10 +451,11 @@ export function App({ initialPrompt, modelPreference, agentMode, useOrchestrator
               : name;
             steps.push(label);
           },
-          onApprovalNeeded: async (description) => {
+          onApprovalNeeded: (agentMode === 'auto' || agentMode === 'yolo') ? undefined : async (description) => {
             // Show the proposed change and wait for user approval
             return new Promise<boolean>((resolve) => {
-              responseText += `\n${description}\n`;
+              const stepsBlock = steps.map((s) => `  \x1b[32m✓\x1b[0m ${s}`).join('\n');
+              responseText = (stepsBlock ? stepsBlock + '\n\n' : '') + `${description}\n\n\x1b[36mApply this change? [Y/n]\x1b[0m`;
               streamRef.current = responseText;
               setStreamingContent(responseText);
 
