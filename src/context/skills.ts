@@ -75,13 +75,15 @@ export function getSkillsForSpecialist(skills: Skill[], specialist: SpecialistTy
 
 /**
  * Format all loaded skills into a prompt block for the orchestrator.
- * Caps total content at ~2000 tokens (8000 chars, 4 chars/token).
+ * Caps total content at ~6000 tokens (24K chars). Skills contain production-quality
+ * reference code that the reviewer uses as the quality bar, so we need enough budget
+ * for 3-4 rich skills. Grok 4.1 has 131K context — this is ~5% of it.
  */
 export function formatSkillsForPrompt(projectRoot: string): string {
   const skills = loadSkills(projectRoot);
   if (skills.length === 0) return '';
 
-  const maxChars = 8000; // ~2000 tokens
+  const maxChars = 24_000; // ~6000 tokens
   let totalChars = 0;
   const parts: string[] = [];
 
