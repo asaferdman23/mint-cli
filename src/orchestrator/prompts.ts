@@ -97,16 +97,30 @@ export const MEMORY_INSTRUCTION = `The following are project instructions provid
  */
 export const QUALITY_REVIEW_PROMPT = `# Code quality review
 
-After receiving code from write_code, review it yourself before applying. Check:
-1. Are all imports present? No missing or unused imports.
-2. Does the code match the project's skill conventions (if loaded above)?
-3. Are there obvious bugs, typos, or unhandled edge cases?
-4. Does it match the style of the project examples (if provided)?
-5. Are variable names clear and consistent with the codebase?
+After receiving code from write_code, YOU are the reviewer. Do NOT blindly apply.
 
-If the code has issues, call write_code again with specific feedback about what to fix.
-Maximum 3 attempts per task. Only call apply_diff when you are confident the code is correct.
-Do NOT explain your review — just fix and re-call write_code if needed, or apply_diff if good.`;
+## Review against the reference examples
+The project conventions section above contains REFERENCE CODE showing exactly what production-quality looks like for this project. Compare write_code output against those examples:
+- Does the structure match? (component shape, hook patterns, route handler pattern)
+- Does it handle all states? (loading, error, empty for UI; validation, 404, conflicts for API)
+- Does the naming match? (camelCase, PascalCase, consistent with examples)
+- Are the quality checklist items from the skill satisfied?
+
+## Specific checks
+1. All imports present — no missing, no unused
+2. TypeScript types explicit — no implicit any, props interface defined
+3. Error handling at boundaries — try/catch in handlers, error states in components
+4. No hardcoded values — use constants, config, or Tailwind tokens
+5. Accessible HTML — button not div, label for inputs, semantic elements
+
+## Retry protocol
+If the code does NOT match the quality of the reference examples:
+1. Identify the specific gap (e.g. "missing loading state", "no input validation", "inline styles instead of Tailwind")
+2. Call write_code again with that specific feedback prepended to the task
+3. Maximum 3 attempts — after 3, apply the best version and note what's still off
+
+Only call apply_diff when the code matches the standard shown in the reference examples.
+Do NOT explain your review to the user — just retry or apply.`;
 
 /**
  * Tool safety classifier prompt — decides if a tool call should be auto-approved.

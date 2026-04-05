@@ -258,6 +258,9 @@ async function detectCommands(cwd: string): Promise<CommandInfo[]> {
 /**
  * Generate starter skill files in .mint/skills/ based on detected project type.
  * Called during `mint init`.
+ *
+ * Each skill includes production-quality reference code from top-tier projects
+ * (Vercel, Linear, Stripe patterns) so the LLM knows what "great" looks like.
  */
 export async function generateStarterSkills(cwd: string): Promise<string[]> {
   const skillsDir = join(cwd, '.mint', 'skills');
@@ -279,129 +282,1776 @@ export async function generateStarterSkills(cwd: string): Promise<string[]> {
     existsSync(join(cwd, 'pyproject.toml')) ||
     existsSync(join(cwd, 'setup.py'));
 
+  const hasTailwind = hasPackageJson && !!(deps['tailwindcss'] || deps['@tailwindcss/forms']);
+
+  // ─── React / Frontend skill ─────────────────────────────────────────────
   if (hasPackageJson && (deps['react'] || deps['next'] || deps['vue'] || deps['svelte'])) {
     const framework = deps['next'] ? 'Next.js' : deps['vue'] ? 'Vue' : deps['svelte'] ? 'Svelte' : 'React';
-    const skillPath = join(skillsDir, 'react-patterns.md');
+    const skillPath = join(skillsDir, 'react.md');
     if (!existsSync(skillPath)) {
-      await writeFile(skillPath, `---
-applies_to: [frontend]
----
-# ${framework} Patterns
-# Edit this file to teach Mint your project's conventions
-
-- Use functional components with hooks, not class components
-- Keep components small and focused (under 150 lines)
-- Co-locate component, styles, and tests in the same directory
-- Use TypeScript strict mode for all component props
-- Prefer composition over prop drilling — use context for shared state
-- Name components with PascalCase, hooks with use prefix
-- Extract reusable logic into custom hooks
-- Handle loading, error, and empty states in every data-fetching component
-- Use semantic HTML elements (button, nav, main) over generic divs
-- Keep styles scoped — avoid global CSS mutations
-`, 'utf-8');
+      await writeFile(skillPath, SKILL_REACT(framework, hasTailwind), 'utf-8');
       created.push(skillPath);
     }
   }
 
+  // ─── API / Backend skill ────────────────────────────────────────────────
   if (hasPackageJson && (deps['express'] || deps['fastify'] || deps['@nestjs/core'] || deps['hono'])) {
     const framework = deps['express'] ? 'Express' : deps['fastify'] ? 'Fastify' : deps['@nestjs/core'] ? 'NestJS' : 'Hono';
-    const skillPath = join(skillsDir, 'api-patterns.md');
+    const skillPath = join(skillsDir, 'api.md');
     if (!existsSync(skillPath)) {
-      await writeFile(skillPath, `---
-applies_to: [backend]
----
-# ${framework} API Patterns
-# Edit this file to teach Mint your project's conventions
-
-- Validate all request inputs at the handler level
-- Use proper HTTP status codes (201 for create, 204 for delete, 422 for validation)
-- Return consistent error response shape: { error: string, code: string }
-- Use middleware for cross-cutting concerns (auth, logging, rate limiting)
-- Keep route handlers thin — delegate business logic to service layer
-- Never expose internal errors to clients — log and return generic message
-- Use async/await with proper try/catch, never unhandled promises
-- Document API endpoints with JSDoc or OpenAPI annotations
-- Group related routes in separate router files
-- Use environment variables for all configuration, never hardcode secrets
-`, 'utf-8');
+      await writeFile(skillPath, SKILL_API(framework), 'utf-8');
       created.push(skillPath);
     }
   }
 
+  // ─── Tailwind / Style skill ─────────────────────────────────────────────
+  if (hasTailwind) {
+    const skillPath = join(skillsDir, 'style.md');
+    if (!existsSync(skillPath)) {
+      await writeFile(skillPath, SKILL_STYLE, 'utf-8');
+      created.push(skillPath);
+    }
+  }
+
+  // ─── Testing skill ─────────────────────────────────────────────────────
+  const testFramework = deps['vitest'] ? 'Vitest' : deps['jest'] ? 'Jest' : deps['mocha'] ? 'Mocha' : deps['pytest'] ? 'Pytest' : null;
+  if (testFramework || hasPython) {
+    const skillPath = join(skillsDir, 'testing.md');
+    if (!existsSync(skillPath)) {
+      await writeFile(skillPath, SKILL_TESTING(testFramework ?? (hasPython ? 'Pytest' : 'Vitest')), 'utf-8');
+      created.push(skillPath);
+    }
+  }
+
+  // ─── Python skill ──────────────────────────────────────────────────────
   if (hasPython) {
     const skillPath = join(skillsDir, 'python-style.md');
     if (!existsSync(skillPath)) {
-      await writeFile(skillPath, `---
-applies_to: [backend, testing]
----
-# Python Style Guide
-# Edit this file to teach Mint your project's conventions
-
-- Follow PEP 8 style guidelines
-- Use type hints for function signatures
-- Prefer f-strings over .format() or % formatting
-- Use dataclasses or Pydantic models for structured data
-- Keep functions short and single-purpose
-- Use context managers (with statements) for resource management
-- Write docstrings for all public functions and classes
-- Use virtual environments, never install globally
-- Prefer list comprehensions over map/filter for simple transformations
-- Handle exceptions specifically, never bare except
-`, 'utf-8');
+      await writeFile(skillPath, SKILL_PYTHON, 'utf-8');
       created.push(skillPath);
     }
   }
 
-  // Landing page skills
-  if (existsSync(join(cwd, 'landing', 'package.json'))) {
-    const skillPath = join(skillsDir, 'landing-page.md');
+  // ─── Android / Kotlin skill ──────────────────────────────────────────
+  const hasAndroid = existsSync(join(cwd, 'build.gradle.kts')) ||
+    existsSync(join(cwd, 'build.gradle')) ||
+    existsSync(join(cwd, 'app', 'build.gradle.kts')) ||
+    existsSync(join(cwd, 'app', 'build.gradle')) ||
+    existsSync(join(cwd, 'settings.gradle.kts'));
+  const hasKotlin = hasAndroid || existsSync(join(cwd, 'build.gradle.kts'));
+
+  if (hasAndroid) {
+    const hasCompose = await fileContains(join(cwd, 'app', 'build.gradle.kts'), 'compose') ||
+      await fileContains(join(cwd, 'app', 'build.gradle'), 'compose') ||
+      await fileContains(join(cwd, 'gradle', 'libs.versions.toml'), 'compose');
+    const skillPath = join(skillsDir, 'android.md');
     if (!existsSync(skillPath)) {
-      await writeFile(skillPath, `---applies_to: [frontend, landing]
----
-# Landing Page Patterns
-# Edit this file to teach Mint your project's conventions for the landing page
-
-- Use functional React components with TypeScript
-- Keep components small and focused (under 200 lines)
-- Co-locate component, styles, and tests in the same directory
-- Use Tailwind CSS for styling (if configured)
-- Prefer CSS-in-JS or styled-components for complex animations
-- Handle loading states and error boundaries gracefully
-- Optimize images and assets for web performance
-- Use semantic HTML elements (button, section, header, footer)
-- Keep hero sections and CTAs above the fold
-- Minimize third-party scripts and trackers
-- Test responsiveness across mobile, tablet, and desktop
-- Use lazy loading for non-critical assets
-- Implement proper SEO meta tags in the head
-- Keep bundle size under control — audit with webpack-bundle-analyzer
-`, 'utf-8');
+      await writeFile(skillPath, SKILL_ANDROID(hasCompose), 'utf-8');
       created.push(skillPath);
     }
   }
 
-  // Fallback: general code style
+  // ─── Fullstack skill (Node + frontend detected together) ──────────────
+  const hasBackend = hasPackageJson && !!(deps['express'] || deps['fastify'] || deps['@nestjs/core'] || deps['hono']);
+  const hasFrontend = hasPackageJson && !!(deps['react'] || deps['next'] || deps['vue'] || deps['svelte']);
+  if (hasBackend && hasFrontend) {
+    const skillPath = join(skillsDir, 'fullstack.md');
+    if (!existsSync(skillPath)) {
+      await writeFile(skillPath, SKILL_FULLSTACK, 'utf-8');
+      created.push(skillPath);
+    }
+  }
+
+  // ─── DevOps skill ─────────────────────────────────────────────────────
+  const hasDocker = existsSync(join(cwd, 'Dockerfile')) || existsSync(join(cwd, 'docker-compose.yml')) || existsSync(join(cwd, 'docker-compose.yaml'));
+  const hasCI = existsSync(join(cwd, '.github', 'workflows')) || existsSync(join(cwd, '.gitlab-ci.yml')) || existsSync(join(cwd, 'Jenkinsfile'));
+  const hasTerraform = existsSync(join(cwd, 'main.tf')) || existsSync(join(cwd, 'terraform'));
+  const hasK8s = existsSync(join(cwd, 'k8s')) || existsSync(join(cwd, 'kubernetes')) || existsSync(join(cwd, 'helm'));
+
+  if (hasDocker || hasCI || hasTerraform || hasK8s) {
+    const skillPath = join(skillsDir, 'devops.md');
+    if (!existsSync(skillPath)) {
+      await writeFile(skillPath, SKILL_DEVOPS(hasDocker, hasCI, hasTerraform, hasK8s), 'utf-8');
+      created.push(skillPath);
+    }
+  }
+
+  // ─── Fallback: general code style ──────────────────────────────────────
   if (created.length === 0) {
     const skillPath = join(skillsDir, 'code-style.md');
     if (!existsSync(skillPath)) {
-      await writeFile(skillPath, `# Code Style Guide
-# Edit this file to teach Mint your project's conventions
-
-- Be consistent with existing code patterns in the project
-- Write clear, descriptive variable and function names
-- Keep functions focused — one function, one responsibility
-- Add comments only for "why", not "what" — code should be self-documenting
-- Handle errors explicitly, never silently swallow exceptions
-- Write tests for new functionality
-- Keep files under 300 lines — split when they grow
-- Use constants for magic numbers and repeated strings
-- Prefer immutable data structures when possible
-- Review your changes before committing — remove debug artifacts
-`, 'utf-8');
+      await writeFile(skillPath, SKILL_GENERAL, 'utf-8');
       created.push(skillPath);
     }
   }
 
   return created;
 }
+
+async function fileContains(filePath: string, needle: string): Promise<boolean> {
+  try {
+    const content = await readFile(filePath, 'utf-8');
+    return content.toLowerCase().includes(needle.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+// ─── Skill templates with production-quality reference code ─────────────────
+
+function SKILL_REACT(framework: string, hasTailwind: boolean): string {
+  const styling = hasTailwind
+    ? 'Tailwind CSS utility classes, mobile-first (sm: md: lg:), no inline styles'
+    : 'CSS modules or scoped styles, no inline styles, no global CSS mutations';
+
+  return `---
+applies_to: [frontend]
+---
+# ${framework} — Production Quality Standard
+
+All generated code must match this level of quality. Study these reference examples.
+
+## Rules
+- Functional components only, hooks only, no class components
+- Every component gets explicit TypeScript props interface
+- Handle all 3 states: loading, error, empty — never render broken UI
+- ${styling}
+- Semantic HTML (button not div onClick, nav, main, section)
+- Extract logic into custom hooks when reused across 2+ components
+
+## Reference: Data display component (this is the quality bar)
+
+\`\`\`tsx
+interface Column<T> {
+  key: keyof T & string;
+  label: string;
+  render?: (value: T[keyof T], row: T) => React.ReactNode;
+  sortable?: boolean;
+  className?: string;
+}
+
+interface DataTableProps<T extends { id: string }> {
+  data: T[];
+  columns: Column<T>[];
+  loading?: boolean;
+  emptyMessage?: string;
+  onRowClick?: (row: T) => void;
+}
+
+export function DataTable<T extends { id: string }>({
+  data,
+  columns,
+  loading = false,
+  emptyMessage = "No results found",
+  onRowClick,
+}: DataTableProps<T>) {
+  const [sortKey, setSortKey] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  const sorted = useMemo(() => {
+    if (!sortKey) return data;
+    return [...data].sort((a, b) => {
+      const aVal = a[sortKey as keyof T];
+      const bVal = b[sortKey as keyof T];
+      const cmp = String(aVal).localeCompare(String(bVal));
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+  }, [data, sortKey, sortDir]);
+
+  const handleSort = useCallback((key: string) => {
+    setSortDir((prev) => (sortKey === key && prev === "asc" ? "desc" : "asc"));
+    setSortKey(key);
+  }, [sortKey]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Spinner className="h-5 w-5 text-gray-400" />
+      </div>
+    );
+  }
+
+  if (data.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-gray-500">
+        <p className="text-sm">{emptyMessage}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-lg border border-gray-200">
+      <table className="w-full border-collapse text-left text-sm">
+        <thead className="bg-gray-50">
+          <tr>
+            {columns.map((col) => (
+              <th
+                key={col.key}
+                onClick={col.sortable ? () => handleSort(col.key) : undefined}
+                className={cn(
+                  "px-4 py-3 font-medium text-gray-600",
+                  col.sortable && "cursor-pointer select-none hover:text-gray-900",
+                  col.className,
+                )}
+              >
+                {col.label}
+                {sortKey === col.key && (
+                  <span className="ml-1">{sortDir === "asc" ? "↑" : "↓"}</span>
+                )}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-gray-100">
+          {sorted.map((row) => (
+            <tr
+              key={row.id}
+              onClick={onRowClick ? () => onRowClick(row) : undefined}
+              className={cn(
+                "transition-colors",
+                onRowClick && "cursor-pointer hover:bg-gray-50",
+              )}
+            >
+              {columns.map((col) => (
+                <td key={col.key} className={cn("px-4 py-3", col.className)}>
+                  {col.render ? col.render(row[col.key], row) : String(row[col.key] ?? "")}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+\`\`\`
+
+## Reference: Custom hook with proper cleanup
+
+\`\`\`tsx
+function useDebounce<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [value, delayMs]);
+
+  return debounced;
+}
+
+function useAsync<T>(asyncFn: () => Promise<T>, deps: unknown[] = []) {
+  const [state, setState] = useState<{
+    data: T | null;
+    error: Error | null;
+    loading: boolean;
+  }>({ data: null, error: null, loading: true });
+
+  useEffect(() => {
+    let cancelled = false;
+    setState((s) => ({ ...s, loading: true, error: null }));
+
+    asyncFn()
+      .then((data) => { if (!cancelled) setState({ data, error: null, loading: false }); })
+      .catch((error) => { if (!cancelled) setState({ data: null, error, loading: false }); });
+
+    return () => { cancelled = true; };
+  }, deps);
+
+  return state;
+}
+\`\`\`
+
+## Reference: Form with validation (Linear/Vercel quality)
+
+\`\`\`tsx
+interface CreateProjectFormProps {
+  onSubmit: (data: ProjectInput) => Promise<void>;
+  onCancel: () => void;
+}
+
+export function CreateProjectForm({ onSubmit, onCancel }: CreateProjectFormProps) {
+  const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) { setError("Name is required"); return; }
+    if (trimmed.length < 2) { setError("Name must be at least 2 characters"); return; }
+
+    setError(null);
+    setSubmitting(true);
+    try {
+      await onSubmit({ name: trimmed });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div>
+        <label htmlFor="project-name" className="block text-sm font-medium text-gray-700">
+          Project name
+        </label>
+        <input
+          id="project-name"
+          type="text"
+          value={name}
+          onChange={(e) => { setName(e.target.value); setError(null); }}
+          placeholder="My Project"
+          disabled={submitting}
+          autoFocus
+          className={cn(
+            "mt-1 block w-full rounded-md border px-3 py-2 text-sm shadow-sm",
+            "focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500",
+            error ? "border-red-300" : "border-gray-300",
+          )}
+        />
+        {error && <p className="mt-1 text-sm text-red-600">{error}</p>}
+      </div>
+      <div className="flex justify-end gap-2">
+        <button type="button" onClick={onCancel} disabled={submitting}
+          className="rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100">
+          Cancel
+        </button>
+        <button type="submit" disabled={submitting || !name.trim()}
+          className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+          {submitting ? "Creating..." : "Create project"}
+        </button>
+      </div>
+    </form>
+  );
+}
+\`\`\`
+
+## Quality checklist (reviewer must verify)
+- [ ] Props interface defined and exported
+- [ ] Loading, error, and empty states handled
+- [ ] Keyboard accessible (no div with onClick — use button/a)
+- [ ] No hardcoded strings for user-facing text
+- [ ] Hooks follow rules (no conditionals, cleanup on effects)
+- [ ] Memoization where data transforms are expensive
+- [ ] Responsive — works on mobile without horizontal scroll
+`;
+}
+
+function SKILL_API(framework: string): string {
+  return `---
+applies_to: [backend]
+---
+# ${framework} API — Production Quality Standard
+
+All generated API code must match this level. Study these reference patterns.
+
+## Rules
+- Every endpoint returns \`{ success, data, error }\` shape — no exceptions
+- Validate inputs at handler boundary with early returns
+- Service layer holds business logic, handlers are thin glue
+- Proper HTTP status codes: 201 create, 204 delete, 400 bad input, 404 not found, 422 validation
+- Async errors caught and returned as structured error — never leak stack traces
+- Use environment variables for secrets — never hardcode
+
+## Reference: Route handler (Stripe/Linear quality)
+
+\`\`\`ts
+// routes/projects.ts
+import { Router } from "express";
+import { z } from "zod";
+import { projectService } from "../services/project.service";
+import { authenticate } from "../middleware/auth";
+import { validate } from "../middleware/validate";
+
+const router = Router();
+
+const CreateProjectSchema = z.object({
+  name: z.string().min(1).max(100).trim(),
+  description: z.string().max(500).optional(),
+  teamId: z.string().uuid(),
+});
+
+const ListProjectsSchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  search: z.string().optional(),
+});
+
+router.post("/", authenticate, validate(CreateProjectSchema), async (req, res) => {
+  try {
+    const project = await projectService.create(req.body, req.user.id);
+    res.status(201).json({ success: true, data: project, error: null });
+  } catch (err) {
+    if (err instanceof ConflictError) {
+      res.status(409).json({ success: false, data: null, error: err.message });
+      return;
+    }
+    console.error("Failed to create project:", err);
+    res.status(500).json({ success: false, data: null, error: "Failed to create project" });
+  }
+});
+
+router.get("/", authenticate, validate(ListProjectsSchema, "query"), async (req, res) => {
+  const { page, limit, search } = req.query as z.infer<typeof ListProjectsSchema>;
+  const result = await projectService.list(req.user.id, { page, limit, search });
+  res.json({
+    success: true,
+    data: result.items,
+    error: null,
+    meta: { page, limit, total: result.total, hasMore: result.hasMore },
+  });
+});
+
+router.get("/:id", authenticate, async (req, res) => {
+  const project = await projectService.getById(req.params.id, req.user.id);
+  if (!project) {
+    res.status(404).json({ success: false, data: null, error: "Project not found" });
+    return;
+  }
+  res.json({ success: true, data: project, error: null });
+});
+
+router.delete("/:id", authenticate, async (req, res) => {
+  const deleted = await projectService.delete(req.params.id, req.user.id);
+  if (!deleted) {
+    res.status(404).json({ success: false, data: null, error: "Project not found" });
+    return;
+  }
+  res.status(204).end();
+});
+
+export { router as projectRoutes };
+\`\`\`
+
+## Reference: Service layer
+
+\`\`\`ts
+// services/project.service.ts
+import { db } from "../db";
+import { ConflictError, NotFoundError } from "../errors";
+
+interface CreateProjectInput {
+  name: string;
+  description?: string;
+  teamId: string;
+}
+
+interface ListOptions {
+  page: number;
+  limit: number;
+  search?: string;
+}
+
+export const projectService = {
+  async create(input: CreateProjectInput, userId: string) {
+    const existing = await db.project.findFirst({
+      where: { name: input.name, teamId: input.teamId },
+    });
+    if (existing) throw new ConflictError("Project name already taken");
+
+    return db.project.create({
+      data: { ...input, createdBy: userId },
+    });
+  },
+
+  async list(userId: string, opts: ListOptions) {
+    const where = {
+      team: { members: { some: { userId } } },
+      ...(opts.search && { name: { contains: opts.search, mode: "insensitive" as const } }),
+    };
+    const [items, total] = await Promise.all([
+      db.project.findMany({
+        where,
+        skip: (opts.page - 1) * opts.limit,
+        take: opts.limit,
+        orderBy: { createdAt: "desc" },
+      }),
+      db.project.count({ where }),
+    ]);
+    return { items, total, hasMore: opts.page * opts.limit < total };
+  },
+
+  async getById(id: string, userId: string) {
+    return db.project.findFirst({
+      where: { id, team: { members: { some: { userId } } } },
+    });
+  },
+
+  async delete(id: string, userId: string) {
+    const project = await this.getById(id, userId);
+    if (!project) return false;
+    await db.project.delete({ where: { id } });
+    return true;
+  },
+};
+\`\`\`
+
+## Reference: Validation middleware
+
+\`\`\`ts
+// middleware/validate.ts
+import { z } from "zod";
+import type { Request, Response, NextFunction } from "express";
+
+export function validate(schema: z.ZodSchema, source: "body" | "query" = "body") {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const result = schema.safeParse(req[source]);
+    if (!result.success) {
+      const errors = result.error.issues.map((i) => ({
+        field: i.path.join("."),
+        message: i.message,
+      }));
+      res.status(422).json({ success: false, data: null, error: "Validation failed", details: errors });
+      return;
+    }
+    req[source] = result.data;
+    next();
+  };
+}
+\`\`\`
+
+## Quality checklist (reviewer must verify)
+- [ ] Response shape is always { success, data, error }
+- [ ] Input validated with schema before any logic
+- [ ] Auth middleware on every non-public route
+- [ ] No raw SQL strings — use parameterized queries or ORM
+- [ ] Error messages are user-safe (no stack traces, no internal paths)
+- [ ] Pagination on all list endpoints
+- [ ] Proper status codes (not 200 for everything)
+`;
+}
+
+const SKILL_STYLE = `---
+applies_to: [frontend]
+---
+# Tailwind CSS — Production Quality Standard
+
+All styling must follow these patterns. Mobile-first, no inline styles, no CSS-in-JS.
+
+## Rules
+- Mobile-first: base styles are mobile, add sm: md: lg: for larger screens
+- No inline style={{}} — always Tailwind utilities
+- Use cn() or clsx() for conditional classes, never string concatenation
+- Design tokens via Tailwind config — never hardcode colors (#hex) in components
+- Consistent spacing scale: p-2 p-3 p-4 p-6 p-8 (avoid arbitrary values)
+- Dark mode via dark: variant when applicable
+
+## Reference: Responsive card layout
+
+\`\`\`tsx
+export function ProjectCard({ project, onClick }: ProjectCardProps) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "group w-full rounded-xl border border-gray-200 bg-white p-4 text-left",
+        "transition-all duration-150 hover:border-gray-300 hover:shadow-md",
+        "focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2",
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-sm font-semibold text-gray-900 group-hover:text-blue-600">
+            {project.name}
+          </h3>
+          <p className="mt-1 line-clamp-2 text-sm text-gray-500">
+            {project.description || "No description"}
+          </p>
+        </div>
+        <StatusBadge status={project.status} />
+      </div>
+
+      <div className="mt-4 flex items-center gap-4 text-xs text-gray-400">
+        <span>{project.taskCount} tasks</span>
+        <span>Updated {formatRelative(project.updatedAt)}</span>
+      </div>
+    </button>
+  );
+}
+\`\`\`
+
+## Reference: Responsive grid layout
+
+\`\`\`tsx
+<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+  {projects.map((project) => (
+    <ProjectCard key={project.id} project={project} onClick={() => navigate(project.id)} />
+  ))}
+</div>
+\`\`\`
+
+## Reference: Status badge with variants
+
+\`\`\`tsx
+const badgeVariants = {
+  active: "bg-green-50 text-green-700 ring-green-600/20",
+  paused: "bg-yellow-50 text-yellow-700 ring-yellow-600/20",
+  archived: "bg-gray-50 text-gray-600 ring-gray-500/10",
+} as const;
+
+export function StatusBadge({ status }: { status: keyof typeof badgeVariants }) {
+  return (
+    <span className={cn(
+      "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset",
+      badgeVariants[status],
+    )}>
+      {status}
+    </span>
+  );
+}
+\`\`\`
+
+## Quality checklist (reviewer must verify)
+- [ ] Mobile-first: no desktop-only layouts without sm:/md: breakpoints
+- [ ] No hardcoded colors — use Tailwind palette (gray-500, blue-600, etc.)
+- [ ] Interactive elements have focus:ring and hover: states
+- [ ] Text is truncated/clamped where overflow is possible
+- [ ] Spacing is consistent (not random p-[13px] values)
+- [ ] Dark mode classes present if project uses dark mode
+`;
+
+function SKILL_TESTING(framework: string): string {
+  return `---
+applies_to: [testing]
+---
+# ${framework} Testing — Production Quality Standard
+
+All tests must follow AAA pattern. Study these reference patterns.
+
+## Rules
+- AAA pattern: Arrange, Act, Assert — clearly separated in every test
+- Test behavior, not implementation — don't test internal state
+- One assertion concept per test (multiple assert calls OK if testing same concept)
+- Mock external services (HTTP, DB) — never hit real APIs in unit tests
+- Descriptive test names: "should return 404 when project not found" not "test getProject"
+- Happy path + edge cases + error cases for every function
+
+## Reference: Component test (${framework})
+
+\`\`\`tsx
+describe("DataTable", () => {
+  const mockColumns = [
+    { key: "name", label: "Name", sortable: true },
+    { key: "status", label: "Status" },
+  ];
+
+  const mockData = [
+    { id: "1", name: "Alpha", status: "active" },
+    { id: "2", name: "Beta", status: "paused" },
+  ];
+
+  it("should render all rows from data", () => {
+    // Arrange
+    render(<DataTable data={mockData} columns={mockColumns} />);
+
+    // Act — no action needed, testing initial render
+
+    // Assert
+    expect(screen.getByText("Alpha")).toBeInTheDocument();
+    expect(screen.getByText("Beta")).toBeInTheDocument();
+  });
+
+  it("should show empty message when data is empty", () => {
+    render(<DataTable data={[]} columns={mockColumns} emptyMessage="Nothing here" />);
+
+    expect(screen.getByText("Nothing here")).toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("should show spinner when loading", () => {
+    render(<DataTable data={[]} columns={mockColumns} loading />);
+
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.queryByText("Nothing here")).not.toBeInTheDocument();
+  });
+
+  it("should sort ascending then descending on column click", async () => {
+    render(<DataTable data={mockData} columns={mockColumns} />);
+
+    // Act — click sortable column
+    await userEvent.click(screen.getByText("Name"));
+
+    // Assert — sorted ascending
+    const rows = screen.getAllByRole("row").slice(1); // skip header
+    expect(rows[0]).toHaveTextContent("Alpha");
+    expect(rows[1]).toHaveTextContent("Beta");
+
+    // Act — click again for descending
+    await userEvent.click(screen.getByText("Name"));
+    const rowsDesc = screen.getAllByRole("row").slice(1);
+    expect(rowsDesc[0]).toHaveTextContent("Beta");
+  });
+
+  it("should call onRowClick with row data when row is clicked", async () => {
+    const onRowClick = vi.fn();
+    render(<DataTable data={mockData} columns={mockColumns} onRowClick={onRowClick} />);
+
+    await userEvent.click(screen.getByText("Alpha"));
+
+    expect(onRowClick).toHaveBeenCalledWith(mockData[0]);
+  });
+});
+\`\`\`
+
+## Reference: API service test
+
+\`\`\`ts
+describe("projectService.create", () => {
+  it("should create a project and return it", async () => {
+    // Arrange
+    const input = { name: "New Project", teamId: "team-1" };
+    const userId = "user-1";
+    db.project.findFirst.mockResolvedValue(null);
+    db.project.create.mockResolvedValue({ id: "proj-1", ...input, createdBy: userId });
+
+    // Act
+    const result = await projectService.create(input, userId);
+
+    // Assert
+    expect(result).toEqual(expect.objectContaining({ name: "New Project" }));
+    expect(db.project.create).toHaveBeenCalledWith({
+      data: { ...input, createdBy: userId },
+    });
+  });
+
+  it("should throw ConflictError when name already exists in team", async () => {
+    // Arrange
+    db.project.findFirst.mockResolvedValue({ id: "existing" });
+
+    // Act & Assert
+    await expect(
+      projectService.create({ name: "Taken", teamId: "team-1" }, "user-1"),
+    ).rejects.toThrow(ConflictError);
+  });
+
+  it("should trim whitespace from project name", async () => {
+    db.project.findFirst.mockResolvedValue(null);
+    db.project.create.mockResolvedValue({ id: "proj-2", name: "Clean" });
+
+    await projectService.create({ name: "  Clean  ", teamId: "team-1" }, "user-1");
+
+    expect(db.project.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ name: "  Clean  " }) }),
+    );
+  });
+});
+\`\`\`
+
+## Quality checklist (reviewer must verify)
+- [ ] Every test has clear AAA sections
+- [ ] Test names describe expected behavior, not function name
+- [ ] Happy path, edge case, and error case covered
+- [ ] No real HTTP/DB calls — all external deps mocked
+- [ ] Tests are independent — no shared mutable state between tests
+- [ ] Assertions are specific (not just "toBeTruthy")
+`;
+}
+
+const SKILL_PYTHON = `---
+applies_to: [backend, testing]
+---
+# Python — Production Quality Standard
+
+## Rules
+- Type hints on all function signatures and return types
+- Dataclasses or Pydantic models for structured data — no raw dicts
+- Explicit exception handling — never bare except
+- f-strings for formatting, pathlib for file paths
+- Context managers for resources (files, connections, locks)
+
+## Reference: Service with proper typing and error handling
+
+\`\`\`python
+from dataclasses import dataclass
+from datetime import datetime
+
+@dataclass(frozen=True)
+class Project:
+    id: str
+    name: str
+    team_id: str
+    created_at: datetime
+    created_by: str
+
+class ProjectService:
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    async def create(self, name: str, team_id: str, user_id: str) -> Project:
+        existing = await self._db.projects.find_one(name=name, team_id=team_id)
+        if existing:
+            raise ConflictError(f"Project '{name}' already exists in this team")
+
+        return await self._db.projects.insert(
+            Project(
+                id=generate_id(),
+                name=name.strip(),
+                team_id=team_id,
+                created_at=datetime.utcnow(),
+                created_by=user_id,
+            )
+        )
+
+    async def get_by_id(self, project_id: str, user_id: str) -> Project | None:
+        project = await self._db.projects.find_by_id(project_id)
+        if not project:
+            return None
+        if not await self._has_access(user_id, project.team_id):
+            return None
+        return project
+
+    async def _has_access(self, user_id: str, team_id: str) -> bool:
+        member = await self._db.team_members.find_one(user_id=user_id, team_id=team_id)
+        return member is not None
+\`\`\`
+`;
+
+// ─── Android / Kotlin ────────────────────────────────────────────────────────
+
+function SKILL_ANDROID(hasCompose: boolean): string {
+  const uiSection = hasCompose ? ANDROID_COMPOSE_SECTION : ANDROID_XML_SECTION;
+
+  return `---
+applies_to: [android, mobile]
+---
+# Android / Kotlin — Production Quality Standard
+
+All generated code must match Google's best Android apps (Gmail, Drive, Maps).
+Study these reference examples — this is the bar.
+
+## Rules
+- Kotlin only — no Java in new code
+- MVVM with clean architecture: UI → ViewModel → UseCase → Repository → DataSource
+- Coroutines + Flow for all async work — no callbacks, no RxJava in new code
+- Hilt for dependency injection — no manual DI or service locators
+- Single Activity with Jetpack Navigation (or Compose Navigation)
+- Repository pattern: ViewModel never touches Room/Retrofit directly
+- Sealed classes for UI state — never nullable booleans for loading/error
+
+${uiSection}
+
+## Reference: ViewModel (Google-quality MVVM)
+
+\`\`\`kotlin
+@HiltViewModel
+class ProjectListViewModel @Inject constructor(
+    private val getProjects: GetProjectsUseCase,
+    private val deleteProject: DeleteProjectUseCase,
+) : ViewModel() {
+
+    private val _uiState = MutableStateFlow<ProjectListState>(ProjectListState.Loading)
+    val uiState: StateFlow<ProjectListState> = _uiState.asStateFlow()
+
+    private val _events = Channel<ProjectListEvent>(Channel.BUFFERED)
+    val events: Flow<ProjectListEvent> = _events.receiveAsFlow()
+
+    init {
+        loadProjects()
+    }
+
+    fun loadProjects() {
+        viewModelScope.launch {
+            _uiState.value = ProjectListState.Loading
+            getProjects()
+                .catch { e -> _uiState.value = ProjectListState.Error(e.toUserMessage()) }
+                .collect { projects ->
+                    _uiState.value = if (projects.isEmpty()) {
+                        ProjectListState.Empty
+                    } else {
+                        ProjectListState.Success(projects)
+                    }
+                }
+        }
+    }
+
+    fun onDeleteProject(projectId: String) {
+        viewModelScope.launch {
+            try {
+                deleteProject(projectId)
+                _events.send(ProjectListEvent.ProjectDeleted)
+                loadProjects()
+            } catch (e: Exception) {
+                _events.send(ProjectListEvent.ShowError(e.toUserMessage()))
+            }
+        }
+    }
+}
+
+sealed interface ProjectListState {
+    data object Loading : ProjectListState
+    data object Empty : ProjectListState
+    data class Success(val projects: List<Project>) : ProjectListState
+    data class Error(val message: String) : ProjectListState
+}
+
+sealed interface ProjectListEvent {
+    data object ProjectDeleted : ProjectListEvent
+    data class ShowError(val message: String) : ProjectListEvent
+}
+\`\`\`
+
+## Reference: Repository with offline-first caching
+
+\`\`\`kotlin
+class ProjectRepositoryImpl @Inject constructor(
+    private val api: ProjectApi,
+    private val dao: ProjectDao,
+    private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
+) : ProjectRepository {
+
+    override fun getProjects(): Flow<List<Project>> = flow {
+        // Emit cached data immediately
+        val cached = dao.getAll().first()
+        if (cached.isNotEmpty()) {
+            emit(cached.map { it.toDomain() })
+        }
+
+        // Fetch fresh data from network
+        try {
+            val remote = withContext(dispatcher) { api.getProjects() }
+            dao.replaceAll(remote.map { it.toEntity() })
+        } catch (e: IOException) {
+            if (cached.isEmpty()) throw e
+            // Cached data already emitted — silently use stale data
+        }
+
+        // Emit fresh data from DB (single source of truth)
+        emitAll(dao.getAll().map { entities -> entities.map { it.toDomain() } })
+    }.flowOn(dispatcher)
+
+    override suspend fun delete(projectId: String) {
+        withContext(dispatcher) {
+            api.deleteProject(projectId)
+            dao.deleteById(projectId)
+        }
+    }
+}
+\`\`\`
+
+## Reference: UseCase (clean architecture boundary)
+
+\`\`\`kotlin
+class GetProjectsUseCase @Inject constructor(
+    private val repository: ProjectRepository,
+) {
+    operator fun invoke(): Flow<List<Project>> = repository.getProjects()
+}
+
+class DeleteProjectUseCase @Inject constructor(
+    private val repository: ProjectRepository,
+    private val analytics: AnalyticsTracker,
+) {
+    suspend operator fun invoke(projectId: String) {
+        repository.delete(projectId)
+        analytics.track("project_deleted", mapOf("id" to projectId))
+    }
+}
+\`\`\`
+
+## Reference: Hilt module
+
+\`\`\`kotlin
+@Module
+@InstallIn(SingletonComponent::class)
+abstract class RepositoryModule {
+    @Binds
+    abstract fun bindProjectRepository(impl: ProjectRepositoryImpl): ProjectRepository
+}
+
+@Module
+@InstallIn(SingletonComponent::class)
+object NetworkModule {
+    @Provides
+    @Singleton
+    fun provideRetrofit(): Retrofit = Retrofit.Builder()
+        .baseUrl(BuildConfig.API_BASE_URL)
+        .addConverterFactory(MoshiConverterFactory.create())
+        .client(
+            OkHttpClient.Builder()
+                .addInterceptor(AuthInterceptor())
+                .addInterceptor(HttpLoggingInterceptor().apply {
+                    level = if (BuildConfig.DEBUG) Level.BODY else Level.NONE
+                })
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(15, TimeUnit.SECONDS)
+                .build()
+        )
+        .build()
+
+    @Provides
+    @Singleton
+    fun provideProjectApi(retrofit: Retrofit): ProjectApi =
+        retrofit.create(ProjectApi::class.java)
+}
+\`\`\`
+
+## Reference: Room entity + DAO
+
+\`\`\`kotlin
+@Entity(tableName = "projects")
+data class ProjectEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val description: String?,
+    @ColumnInfo(name = "team_id") val teamId: String,
+    @ColumnInfo(name = "created_at") val createdAt: Long,
+    @ColumnInfo(name = "updated_at") val updatedAt: Long,
+) {
+    fun toDomain() = Project(
+        id = id,
+        name = name,
+        description = description,
+        teamId = teamId,
+        createdAt = Instant.ofEpochMilli(createdAt),
+    )
+}
+
+@Dao
+interface ProjectDao {
+    @Query("SELECT * FROM projects ORDER BY updated_at DESC")
+    fun getAll(): Flow<List<ProjectEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(projects: List<ProjectEntity>)
+
+    @Query("DELETE FROM projects")
+    suspend fun deleteAll()
+
+    @Transaction
+    suspend fun replaceAll(projects: List<ProjectEntity>) {
+        deleteAll()
+        insertAll(projects)
+    }
+
+    @Query("DELETE FROM projects WHERE id = :id")
+    suspend fun deleteById(id: String)
+}
+\`\`\`
+
+## Quality checklist (reviewer must verify)
+- [ ] UI state is a sealed class/interface — no nullable boolean flags
+- [ ] ViewModel uses StateFlow (not LiveData) for new code
+- [ ] Coroutine scope is viewModelScope — never GlobalScope
+- [ ] Repository is the single source of truth (DB, not network)
+- [ ] Hilt @Inject on every constructor — no manual instantiation
+- [ ] Error messages are user-friendly — never raw exception text
+- [ ] Lifecycle-aware collection (collectAsStateWithLifecycle or repeatOnLifecycle)
+- [ ] No hardcoded strings in UI — use string resources
+- [ ] ProGuard/R8 rules for any reflection-based libraries
+`;
+}
+
+const ANDROID_COMPOSE_SECTION = `
+## Reference: Compose UI (Material3 quality)
+
+\`\`\`kotlin
+@Composable
+fun ProjectListScreen(
+    viewModel: ProjectListViewModel = hiltViewModel(),
+    onNavigateToDetail: (String) -> Unit,
+) {
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(Unit) {
+        viewModel.events.collect { event ->
+            when (event) {
+                is ProjectListEvent.ProjectDeleted ->
+                    snackbarHostState.showSnackbar("Project deleted")
+                is ProjectListEvent.ShowError ->
+                    snackbarHostState.showSnackbar(event.message)
+            }
+        }
+    }
+
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        topBar = {
+            TopAppBar(title = { Text("Projects") })
+        },
+        floatingActionButton = {
+            FloatingActionButton(onClick = { /* navigate to create */ }) {
+                Icon(Icons.Default.Add, contentDescription = "Create project")
+            }
+        },
+    ) { padding ->
+        when (val state = uiState) {
+            is ProjectListState.Loading -> {
+                Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            }
+            is ProjectListState.Empty -> {
+                EmptyState(
+                    modifier = Modifier.fillMaxSize().padding(padding),
+                    icon = Icons.Outlined.Folder,
+                    title = "No projects yet",
+                    subtitle = "Create your first project to get started",
+                )
+            }
+            is ProjectListState.Error -> {
+                ErrorState(
+                    modifier = Modifier.fillMaxSize().padding(padding),
+                    message = state.message,
+                    onRetry = viewModel::loadProjects,
+                )
+            }
+            is ProjectListState.Success -> {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().padding(padding),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(state.projects, key = { it.id }) { project ->
+                        ProjectCard(
+                            project = project,
+                            onClick = { onNavigateToDetail(project.id) },
+                            onDelete = { viewModel.onDeleteProject(project.id) },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProjectCard(
+    project: Project,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Card(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = project.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = project.description ?: stringResource(R.string.no_description),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.delete))
+            }
+        }
+    }
+}
+\`\`\``;
+
+const ANDROID_XML_SECTION = `
+## Reference: Fragment with ViewBinding (XML UI)
+
+\`\`\`kotlin
+@AndroidEntryPoint
+class ProjectListFragment : Fragment(R.layout.fragment_project_list) {
+
+    private val viewModel: ProjectListViewModel by viewModels()
+    private var _binding: FragmentProjectListBinding? = null
+    private val binding get() = _binding!!
+    private lateinit var adapter: ProjectAdapter
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        _binding = FragmentProjectListBinding.bind(view)
+
+        adapter = ProjectAdapter(
+            onClick = { project -> findNavController().navigate(
+                ProjectListFragmentDirections.actionToDetail(project.id)
+            )},
+            onDelete = { project -> viewModel.onDeleteProject(project.id) },
+        )
+        binding.recyclerView.adapter = adapter
+        binding.recyclerView.layoutManager = LinearLayoutManager(requireContext())
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    viewModel.uiState.collect { state ->
+                        binding.progressBar.isVisible = state is ProjectListState.Loading
+                        binding.emptyView.isVisible = state is ProjectListState.Empty
+                        binding.errorView.isVisible = state is ProjectListState.Error
+                        binding.recyclerView.isVisible = state is ProjectListState.Success
+                        if (state is ProjectListState.Success) adapter.submitList(state.projects)
+                        if (state is ProjectListState.Error) binding.errorMessage.text = state.message
+                    }
+                }
+                launch {
+                    viewModel.events.collect { event ->
+                        when (event) {
+                            is ProjectListEvent.ProjectDeleted ->
+                                Snackbar.make(binding.root, "Deleted", Snackbar.LENGTH_SHORT).show()
+                            is ProjectListEvent.ShowError ->
+                                Snackbar.make(binding.root, event.message, Snackbar.LENGTH_LONG).show()
+                        }
+                    }
+                }
+            }
+        }
+
+        binding.fab.setOnClickListener {
+            findNavController().navigate(ProjectListFragmentDirections.actionToCreate())
+        }
+        binding.retryButton.setOnClickListener { viewModel.loadProjects() }
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        _binding = null
+    }
+}
+\`\`\``;
+
+// ─── Fullstack ──────────────────────────────────────────────────────────────
+
+const SKILL_FULLSTACK = `---
+applies_to: [fullstack]
+---
+# Fullstack — Production Quality Standard
+
+For projects with both frontend and backend. Patterns from Vercel, Linear, Cal.com.
+
+## Rules
+- Shared types between frontend and backend — define once, import in both
+- API client is a typed wrapper — never raw fetch() scattered in components
+- Environment variables: NEXT_PUBLIC_ for client, plain for server — never leak server secrets
+- Validation schemas shared: same Zod schema validates on client AND server
+- Error boundaries in frontend, structured errors from backend
+- Optimistic UI updates where latency matters, with rollback on failure
+
+## Reference: Shared types (single source of truth)
+
+\`\`\`ts
+// packages/shared/types.ts (or lib/types.ts)
+export interface Project {
+  id: string;
+  name: string;
+  description: string | null;
+  status: "active" | "paused" | "archived";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ApiResponse<T> {
+  success: boolean;
+  data: T | null;
+  error: string | null;
+}
+
+export interface PaginatedResponse<T> extends ApiResponse<T[]> {
+  meta: {
+    page: number;
+    limit: number;
+    total: number;
+    hasMore: boolean;
+  };
+}
+
+// Validation — used by both frontend forms and backend handlers
+export const CreateProjectSchema = z.object({
+  name: z.string().min(1, "Name is required").max(100).trim(),
+  description: z.string().max(500).optional(),
+});
+export type CreateProjectInput = z.infer<typeof CreateProjectSchema>;
+\`\`\`
+
+## Reference: Typed API client (frontend)
+
+\`\`\`ts
+// lib/api.ts
+class ApiClient {
+  private baseUrl: string;
+
+  constructor(baseUrl = "/api") {
+    this.baseUrl = baseUrl;
+  }
+
+  private async request<T>(path: string, opts: RequestInit = {}): Promise<T> {
+    const res = await fetch(\`\${this.baseUrl}\${path}\`, {
+      headers: {
+        "Content-Type": "application/json",
+        ...opts.headers,
+      },
+      ...opts,
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new ApiError(body.error ?? "Request failed", res.status);
+    }
+
+    if (res.status === 204) return undefined as T;
+    return res.json();
+  }
+
+  projects = {
+    list: (params?: { page?: number; search?: string }) =>
+      this.request<PaginatedResponse<Project>>(
+        \`/projects?\${new URLSearchParams(params as Record<string, string>)}\`,
+      ),
+
+    getById: (id: string) =>
+      this.request<ApiResponse<Project>>(\`/projects/\${id}\`),
+
+    create: (input: CreateProjectInput) =>
+      this.request<ApiResponse<Project>>("/projects", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+
+    delete: (id: string) =>
+      this.request<void>(\`/projects/\${id}\`, { method: "DELETE" }),
+  };
+}
+
+export const api = new ApiClient();
+\`\`\`
+
+## Reference: Data fetching hook with SWR/React Query pattern
+
+\`\`\`tsx
+function useProjects(params?: { page?: number; search?: string }) {
+  const [state, setState] = useState<{
+    data: Project[] | null;
+    meta: PaginatedResponse<Project>["meta"] | null;
+    loading: boolean;
+    error: string | null;
+  }>({ data: null, meta: null, loading: true, error: null });
+
+  const fetchProjects = useCallback(async () => {
+    setState((s) => ({ ...s, loading: true, error: null }));
+    try {
+      const res = await api.projects.list(params);
+      setState({ data: res.data, meta: res.meta, loading: false, error: null });
+    } catch (err) {
+      setState((s) => ({
+        ...s,
+        loading: false,
+        error: err instanceof ApiError ? err.message : "Failed to load projects",
+      }));
+    }
+  }, [params?.page, params?.search]);
+
+  useEffect(() => { fetchProjects(); }, [fetchProjects]);
+
+  return { ...state, refetch: fetchProjects };
+}
+\`\`\`
+
+## Reference: Optimistic delete with rollback
+
+\`\`\`tsx
+function useDeleteProject(onSuccess?: () => void) {
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  const deleteProject = async (id: string, projects: Project[], setProjects: (p: Project[]) => void) => {
+    // Optimistic: remove from UI immediately
+    const previous = projects;
+    setProjects(projects.filter((p) => p.id !== id));
+    setDeleting(id);
+
+    try {
+      await api.projects.delete(id);
+      onSuccess?.();
+    } catch {
+      // Rollback on failure
+      setProjects(previous);
+      toast.error("Failed to delete project");
+    } finally {
+      setDeleting(null);
+    }
+  };
+
+  return { deleteProject, deleting };
+}
+\`\`\`
+
+## Quality checklist (reviewer must verify)
+- [ ] Types shared between frontend and backend — not duplicated
+- [ ] API client is typed — no raw fetch() in components
+- [ ] Validation schemas used on both sides
+- [ ] Server secrets never in NEXT_PUBLIC_ or client bundle
+- [ ] Loading, error, empty states in every data-fetching component
+- [ ] API errors return structured { success, data, error } — not raw strings
+`;
+
+// ─── DevOps ─────────────────────────────────────────────────────────────────
+
+function SKILL_DEVOPS(hasDocker: boolean, hasCI: boolean, hasTerraform: boolean, hasK8s: boolean): string {
+  const sections: string[] = [];
+
+  sections.push(`---
+applies_to: [devops, infrastructure]
+---
+# DevOps — Production Quality Standard
+
+Infrastructure as code, reproducible builds, zero-downtime deploys.`);
+
+  sections.push(`
+## Rules
+- Every environment is reproducible from code — no manual server config
+- Secrets in vault/env — never in code, never in Docker images, never in CI logs
+- Health checks on every service — liveness and readiness
+- Logs are structured JSON — never print() or console.log for production logging
+- Rollback plan exists for every deploy
+- Least privilege: containers run as non-root, IAM roles are scoped`);
+
+  if (hasDocker) {
+    sections.push(`
+## Reference: Production Dockerfile (multi-stage, secure)
+
+\`\`\`dockerfile
+# Build stage
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts
+COPY . .
+RUN npm run build && npm prune --production
+
+# Production stage
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+# Security: non-root user
+RUN addgroup --system --gid 1001 appgroup && \\
+    adduser --system --uid 1001 appuser
+
+# Only copy what's needed
+COPY --from=builder --chown=appuser:appgroup /app/dist ./dist
+COPY --from=builder --chown=appuser:appgroup /app/node_modules ./node_modules
+COPY --from=builder --chown=appuser:appgroup /app/package.json ./
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \\
+    CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
+
+USER appuser
+EXPOSE 3000
+ENV NODE_ENV=production
+
+CMD ["node", "dist/server.js"]
+\`\`\`
+
+## Reference: docker-compose for local dev
+
+\`\`\`yaml
+services:
+  app:
+    build:
+      context: .
+      target: builder  # Use build stage for dev (has devDependencies)
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules  # Don't mount over node_modules
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/app_dev
+      - REDIS_URL=redis://redis:6379
+      - NODE_ENV=development
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: app_dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  pgdata:
+\`\`\``);
+  }
+
+  if (hasCI) {
+    sections.push(`
+## Reference: GitHub Actions CI/CD pipeline
+
+\`\`\`yaml
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: \${{ github.workflow }}-\${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: \${{ github.actor }}
+          password: \${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          push: true
+          tags: ghcr.io/\${{ github.repository }}:\${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    steps:
+      - name: Deploy to production
+        run: |
+          # Replace with your deploy command
+          echo "Deploying ghcr.io/\${{ github.repository }}:\${{ github.sha }}"
+\`\`\``);
+  }
+
+  if (hasTerraform) {
+    sections.push(`
+## Reference: Terraform module structure
+
+\`\`\`hcl
+# main.tf
+terraform {
+  required_version = ">= 1.5"
+  required_providers {
+    aws = { source = "hashicorp/aws", version = "~> 5.0" }
+  }
+  backend "s3" {
+    bucket         = "myapp-terraform-state"
+    key            = "prod/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "terraform-locks"
+    encrypt        = true
+  }
+}
+
+resource "aws_ecs_service" "app" {
+  name            = "\${var.app_name}-\${var.environment}"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.app.arn
+  desired_count   = var.min_capacity
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = var.private_subnet_ids
+    security_groups  = [aws_security_group.app.id]
+    assign_public_ip = false
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.app.arn
+    container_name   = var.app_name
+    container_port   = var.container_port
+  }
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  lifecycle {
+    ignore_changes = [desired_count]  # Managed by auto-scaling
+  }
+}
+\`\`\``);
+  }
+
+  if (hasK8s) {
+    sections.push(`
+## Reference: Kubernetes deployment with best practices
+
+\`\`\`yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  labels:
+    app.kubernetes.io/name: app
+    app.kubernetes.io/version: "1.0.0"
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: app
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+        - name: app
+          image: ghcr.io/org/app:latest
+          ports:
+            - containerPort: 3000
+              protocol: TCP
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: database-url
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+\`\`\``);
+  }
+
+  sections.push(`
+## Quality checklist (reviewer must verify)
+- [ ] No secrets in code, Dockerfiles, or CI logs — use env vars or secret stores
+- [ ] Containers run as non-root with read-only filesystem where possible
+- [ ] Health checks on every service (liveness + readiness)
+- [ ] CI runs typecheck + lint + test before deploy
+- [ ] Deploys are zero-downtime (rolling update, not recreate)
+- [ ] Resource limits set on all containers
+- [ ] State is external (DB, Redis, S3) — containers are stateless
+- [ ] Rollback is one command or automatic on failure
+`);
+
+  return sections.join('\n');
+}
+
+const SKILL_GENERAL = `# Code Quality Standard
+
+## Rules
+- Consistent naming: camelCase for variables/functions, PascalCase for types/classes
+- Functions do one thing — if you need "and" in the name, split it
+- Handle errors at boundaries — validate input, catch at the top
+- No magic numbers — use named constants
+- Comments explain "why" not "what"
+
+## Reference: Clean utility function
+
+\`\`\`ts
+const RETRY_DELAYS = [100, 500, 2000] as const;
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  opts: { maxAttempts?: number; onRetry?: (attempt: number, error: Error) => void } = {},
+): Promise<T> {
+  const maxAttempts = opts.maxAttempts ?? RETRY_DELAYS.length;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      if (attempt === maxAttempts - 1) throw error;
+
+      opts.onRetry?.(attempt + 1, error);
+      await sleep(RETRY_DELAYS[Math.min(attempt, RETRY_DELAYS.length - 1)]);
+    }
+  }
+
+  throw new Error("Unreachable");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+\`\`\`
+`;
