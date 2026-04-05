@@ -1,197 +1,146 @@
 import chalk from 'chalk';
 import boxen from 'boxen';
-import { createInterface } from 'node:readline';
+import { createServer } from 'node:http';
 import { config } from '../../utils/config.js';
 
-function prompt(question: string): Promise<string> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) => {
-    rl.question(question, (answer) => {
-      rl.close();
-      resolve(answer.trim());
-    });
-  });
-}
-
-function promptHidden(question: string): Promise<string> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) => {
-    // Disable echo for password input
-    if (process.stdin.isTTY) process.stdin.setRawMode?.(true);
-    process.stdout.write(question);
-    let password = '';
-    const onData = (ch: Buffer) => {
-      const c = ch.toString();
-      if (c === '\n' || c === '\r') {
-        process.stdin.removeListener('data', onData);
-        if (process.stdin.isTTY) process.stdin.setRawMode?.(false);
-        process.stdout.write('\n');
-        rl.close();
-        resolve(password);
-      } else if (c === '\u007f' || c === '\b') {
-        if (password.length > 0) {
-          password = password.slice(0, -1);
-          process.stdout.write('\b \b');
-        }
-      } else if (c === '\u0003') {
-        // Ctrl+C
-        process.exit(1);
-      } else {
-        password += c;
-        process.stdout.write('*');
-      }
-    };
-    process.stdin.on('data', onData);
-  });
-}
-
-export async function signup(): Promise<void> {
-  if (config.isAuthenticated()) {
-    console.log(chalk.yellow('Already logged in. Run `mint logout` first.'));
-    return;
-  }
-
-  console.log(chalk.bold.cyan('\n  Create your Mint account\n'));
-
-  const email = await prompt('  Email: ');
-  const password = await promptHidden('  Password (min 8 chars): ');
-  const name = await prompt('  Name (optional): ');
-
-  if (!email || !password) {
-    console.log(chalk.red('\n  Email and password are required.'));
-    return;
-  }
-
-  if (password.length < 8) {
-    console.log(chalk.red('\n  Password must be at least 8 characters.'));
-    return;
-  }
-
-  const gatewayUrl = config.getGatewayUrl();
-
-  try {
-    const res = await fetch(`${gatewayUrl}/auth/signup`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, name: name || undefined }),
-    });
-
-    const data = await res.json() as any;
-
-    if (!res.ok) {
-      console.log(chalk.red(`\n  Signup failed: ${data.error || res.statusText}`));
-      return;
-    }
-
-    // Store credentials
-    config.setAll({
-      apiKey: data.api_token,
-      userId: data.user.id,
-      email: data.user.email,
-    });
-
-    console.log(boxen(
-      `${chalk.bold.green('Account created!')}\n\n` +
-      `Email: ${chalk.cyan(data.user.email)}\n` +
-      `API Token: ${chalk.dim(data.api_token.slice(0, 20))}...\n\n` +
-      `${chalk.dim('Token saved. You can now use mint commands.')}`,
-      { padding: 1, borderColor: 'green', borderStyle: 'round' }
-    ));
-  } catch (err) {
-    console.log(chalk.red(`\n  Network error: ${(err as Error).message}`));
-  }
-}
+const SUPABASE_URL = 'https://srhoryezzsjmjdgfoxgd.supabase.co';
+const AUTH_PAGE_URL = 'https://usemint.dev/auth';
+const CALLBACK_PORT = 9876;
 
 export async function login(): Promise<void> {
   if (config.isAuthenticated()) {
     const email = config.get('email');
-    console.log(chalk.yellow(`Already logged in as ${email}`));
-    console.log(chalk.dim('Run `mint logout` to switch accounts'));
+    console.log(chalk.yellow(`\n  Already logged in as ${email}`));
+    console.log(chalk.dim('  Run `mint logout` to switch accounts.\n'));
     return;
   }
 
-  console.log(chalk.bold.cyan('\n  Login to Mint\n'));
+  console.log(chalk.cyan('\n  Opening browser to sign in...\n'));
 
-  const email = await prompt('  Email: ');
-  const password = await promptHidden('  Password: ');
+  // Start local server to receive callback
+  const token = await waitForOAuthCallback();
 
-  if (!email || !password) {
-    console.log(chalk.red('\n  Email and password are required.'));
+  if (!token) {
+    console.log(chalk.red('\n  Login failed. Try again with `mint login`.\n'));
     return;
   }
 
-  const gatewayUrl = config.getGatewayUrl();
-
+  // Validate token with Supabase to get user info
   try {
-    const res = await fetch(`${gatewayUrl}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: {
+        'apikey': config.get('supabaseAnonKey') as string ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNyaG9yeWV6enNqbWpkZ2ZveGdkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzNjU4NTMsImV4cCI6MjA5MDk0MTg1M30.hQIf14rZiAl-NhC8HDa7ZIORWJiAa1Z5aw1LAzUtY2Q',
+        'Authorization': `Bearer ${token}`,
+      },
     });
-
-    const data = await res.json() as any;
 
     if (!res.ok) {
-      console.log(chalk.red(`\n  Login failed: ${data.error || res.statusText}`));
+      console.log(chalk.red('\n  Invalid token received. Try again.\n'));
       return;
     }
 
-    // Login returns JWT but we need an API token for CLI use
-    // Request a new API token using the JWT
-    const tokenRes = await fetch(`${gatewayUrl}/auth/tokens`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${data.jwt}`,
-      },
-      body: JSON.stringify({ name: 'cli' }),
-    });
+    const user = await res.json() as { id: string; email: string };
 
-    const tokenData = await tokenRes.json() as any;
-
-    if (!tokenRes.ok) {
-      console.log(chalk.red(`\n  Failed to create API token: ${tokenData.error}`));
-      return;
-    }
-
-    // Store credentials
     config.setAll({
-      apiKey: tokenData.token,
-      userId: data.user.id,
-      email: data.user.email,
+      apiKey: token,
+      userId: user.id,
+      email: user.email,
     });
 
-    console.log(chalk.green(`\n  Logged in as ${data.user.email}`));
+    console.log(boxen(
+      `${chalk.bold.green('Signed in!')}\n\n` +
+      `Email: ${chalk.cyan(user.email)}\n` +
+      `Plan:  ${chalk.dim('Free — 20 tasks/day')}\n\n` +
+      `${chalk.dim('Run `mint` to start coding.')}`,
+      { padding: 1, borderColor: 'green', borderStyle: 'round' }
+    ));
   } catch (err) {
-    console.log(chalk.red(`\n  Network error: ${(err as Error).message}`));
+    console.log(chalk.red(`\n  Error: ${(err as Error).message}\n`));
   }
+}
+
+function waitForOAuthCallback(): Promise<string | null> {
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      server.close();
+      resolve(null);
+    }, 120_000); // 2 minute timeout
+
+    const server = createServer((req, res) => {
+      const url = new URL(req.url ?? '/', `http://localhost:${CALLBACK_PORT}`);
+
+      if (url.pathname === '/callback') {
+        const token = url.searchParams.get('access_token') ?? url.searchParams.get('token');
+
+        // Send success page to browser
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(`
+          <html>
+            <body style="background:#07090d;color:#c8dae8;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+              <div style="text-align:center">
+                <h1 style="color:#00d4ff">Connected!</h1>
+                <p>You can close this tab and return to the terminal.</p>
+              </div>
+            </body>
+          </html>
+        `);
+
+        clearTimeout(timeout);
+        server.close();
+        resolve(token);
+        return;
+      }
+
+      res.writeHead(404);
+      res.end('Not found');
+    });
+
+    server.listen(CALLBACK_PORT, () => {
+      // Open browser
+      const callbackUrl = `http://localhost:${CALLBACK_PORT}/callback`;
+      const authUrl = `${AUTH_PAGE_URL}?callback=${encodeURIComponent(callbackUrl)}`;
+
+      import('node:child_process').then(({ exec }) => {
+        const cmd = process.platform === 'darwin' ? 'open' :
+          process.platform === 'win32' ? 'start' : 'xdg-open';
+        exec(`${cmd} "${authUrl}"`);
+      });
+    });
+
+    server.on('error', () => {
+      clearTimeout(timeout);
+      resolve(null);
+    });
+  });
+}
+
+export async function signup(): Promise<void> {
+  // OAuth replaces signup — just redirect to login
+  await login();
 }
 
 export async function logout(): Promise<void> {
   if (!config.isAuthenticated()) {
-    console.log(chalk.yellow('Not currently logged in'));
+    console.log(chalk.yellow('\n  Not logged in.\n'));
     return;
   }
 
   const email = config.get('email');
   config.clear();
-  console.log(chalk.green(`Logged out from ${email}`));
+  console.log(chalk.green(`\n  Logged out from ${email}\n`));
 }
 
 export async function whoami(): Promise<void> {
   if (!config.isAuthenticated()) {
-    console.log(chalk.yellow('Not logged in'));
-    console.log(chalk.dim('Run `mint login` or `mint signup` to authenticate'));
+    console.log(chalk.yellow('\n  Not logged in.'));
+    console.log(chalk.dim('  Run `mint login` to sign in.\n'));
     return;
   }
 
   const email = config.get('email');
-  const configPath = config.getConfigPath();
-
   console.log(boxen(
-    `${chalk.bold('Current User')}\n\n` +
-    `Email: ${chalk.cyan(email)}\n` +
-    `Config: ${chalk.dim(configPath)}`,
-    { padding: 1, borderColor: 'green', borderStyle: 'round' }
+    `${chalk.bold('Signed in')}\n\n` +
+    `Email: ${chalk.cyan(email)}`,
+    { padding: 1, borderColor: 'cyan', borderStyle: 'round' }
   ));
 }
