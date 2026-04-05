@@ -81,7 +81,7 @@ export function clear(): void {
 }
 
 export function isAuthenticated(): boolean {
-  return !!conf.get('apiKey');
+  return !!(conf.get('apiKey') || conf.get('gatewayToken'));
 }
 
 export function getConfigPath(): string {
