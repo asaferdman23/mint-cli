@@ -427,6 +427,46 @@ export function App({ initialPrompt, modelPreference, agentMode: initialAgentMod
     // ── V2 Orchestrator path ─────────────────────────────────────────────
     if (useOrchestrator) {
       setIsRouting(false);
+
+      // Check auth — if not logged in, trigger OAuth flow
+      if (!config.isAuthenticated()) {
+        setMessages((prev) => [
+          ...prev.filter((m) => m.id !== assistantMsgIdRef.current),
+          {
+            id: nextId(),
+            role: 'assistant',
+            content: 'Sign in to continue — opening browser...',
+          },
+        ]);
+        busyRef.current = false;
+        setIsBusy(false);
+        try {
+          const { login } = await import('../cli/commands/auth.js');
+          await login();
+          // After login, retry the task
+          if (config.isAuthenticated()) {
+            setMessages((prev) => [
+              ...prev,
+              { id: nextId(), role: 'assistant', content: `Signed in as ${config.get('email')}. Running your task...` },
+            ]);
+            busyRef.current = true;
+            setIsBusy(true);
+          } else {
+            setMessages((prev) => [
+              ...prev,
+              { id: nextId(), role: 'assistant', content: 'Sign in failed. Try `/login` or run `mint login` in another terminal.' },
+            ]);
+            return;
+          }
+        } catch {
+          setMessages((prev) => [
+            ...prev,
+            { id: nextId(), role: 'assistant', content: 'Could not open browser. Run `mint login` in another terminal.' },
+          ]);
+          return;
+        }
+      }
+
       try {
         const { runOrchestrator } = await import('../orchestrator/loop.js');
         let responseText = '';
