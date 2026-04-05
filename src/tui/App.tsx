@@ -428,41 +428,114 @@ export function App({ initialPrompt, modelPreference, agentMode: initialAgentMod
     if (useOrchestrator) {
       setIsRouting(false);
 
-      // Check auth — if not logged in, trigger OAuth flow
+      // Check auth — if not logged in, open browser and wait
       if (!config.isAuthenticated()) {
+        // Open browser to auth page
+        const callbackPort = 9876;
+        const callbackUrl = `http://localhost:${callbackPort}/callback`;
+        const authUrl = `https://usemint.dev/auth?callback=${encodeURIComponent(callbackUrl)}`;
+
+        try {
+          const { execFile } = await import('node:child_process');
+          const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+          execFile(cmd, [authUrl]);
+        } catch { /* ignore */ }
+
+        // Show message and start listening for callback
         setMessages((prev) => [
           ...prev.filter((m) => m.id !== assistantMsgIdRef.current),
-          {
-            id: nextId(),
-            role: 'assistant',
-            content: 'Sign in to continue — opening browser...',
-          },
+          { id: nextId(), role: 'assistant', content: 'Sign in to continue — browser opened.\nAfter signing in, your task will run automatically.' },
         ]);
-        busyRef.current = false;
-        setIsBusy(false);
+
+        // Listen for OAuth callback
         try {
-          const { login } = await import('../cli/commands/auth.js');
-          await login();
-          // After login, retry the task
-          if (config.isAuthenticated()) {
-            setMessages((prev) => [
-              ...prev,
-              { id: nextId(), role: 'assistant', content: `Signed in as ${config.get('email')}. Running your task...` },
-            ]);
+          const { createServer } = await import('node:http');
+          const token = await new Promise<string | null>((resolve) => {
+            const timeout = setTimeout(() => { server.close(); resolve(null); }, 180_000);
+            const server = createServer(async (req, res) => {
+              // CORS headers on ALL responses
+              res.setHeader('Access-Control-Allow-Origin', '*');
+              res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+              res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+              if (req.method === 'OPTIONS') {
+                res.writeHead(204); res.end();
+                return;
+              }
+
+              const url = new URL(req.url ?? '/', `http://localhost:${callbackPort}`);
+
+              // Accept token on any path (not just /callback)
+              let tkn: string | null = null;
+
+              if (req.method === 'POST') {
+                const body = await new Promise<string>((r) => { let d = ''; req.on('data', (c: Buffer) => d += c.toString()); req.on('end', () => r(d)); });
+                try { tkn = JSON.parse(body).access_token; } catch { /* ignore */ }
+              }
+
+              if (!tkn) {
+                tkn = url.searchParams.get('access_token') ?? url.searchParams.get('token');
+              }
+
+              // Also check hash fragment sent as query param
+              if (!tkn && url.hash) {
+                const hashParams = new URLSearchParams(url.hash.substring(1));
+                tkn = hashParams.get('access_token');
+              }
+
+              res.writeHead(200, { 'Content-Type': 'text/html' });
+              res.end('<html><body style="background:#07090d;color:#00d4ff;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh"><h1>Connected! Return to terminal.</h1></body></html>');
+
+              if (tkn) {
+                clearTimeout(timeout);
+                server.close();
+                resolve(tkn);
+              }
+            });
+            server.listen(callbackPort, () => {});
+            server.on('error', (err) => {
+              // Port might be in use from previous attempt — try another
+              server.listen(callbackPort + 1, () => {});
+            });
+          });
+
+          if (token) {
+            // Exchange Supabase JWT for gateway API token
+            try {
+              const gatewayUrl = config.getGatewayUrl();
+              const exchangeRes = await fetch(`${gatewayUrl}/auth/oauth-token`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ supabase_token: token }),
+              });
+              const exchangeData = await exchangeRes.json() as { token?: string; email?: string; error?: string };
+              if (exchangeRes.ok && exchangeData.token) {
+                config.set('gatewayToken', exchangeData.token);
+                if (exchangeData.email) config.set('email', exchangeData.email);
+                setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: `Signed in as ${exchangeData.email ?? 'user'}! Running your task...` }]);
+              } else {
+                setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: `Auth error: ${exchangeData.error ?? 'unknown'}. Try again.` }]);
+                busyRef.current = false;
+                setIsBusy(false);
+                return;
+              }
+            } catch {
+              // Fallback: save Supabase token directly
+              config.set('apiKey', token);
+              setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: 'Signed in! Running your task...' }]);
+            }
             busyRef.current = true;
             setIsBusy(true);
           } else {
-            setMessages((prev) => [
-              ...prev,
-              { id: nextId(), role: 'assistant', content: 'Sign in failed. Try `/login` or run `mint login` in another terminal.' },
-            ]);
+            setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: 'Sign in timed out. Run `mint login` in another terminal.' }]);
+            busyRef.current = false;
+            setIsBusy(false);
             return;
           }
         } catch {
-          setMessages((prev) => [
-            ...prev,
-            { id: nextId(), role: 'assistant', content: 'Could not open browser. Run `mint login` in another terminal.' },
-          ]);
+          setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: 'Could not start auth server. Run `mint login` in another terminal.' }]);
+          busyRef.current = false;
+          setIsBusy(false);
           return;
         }
       }
