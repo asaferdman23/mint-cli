@@ -58,15 +58,34 @@ export function Auth() {
 }
 
 function AuthRedirect({ callback }: { callback: string }) {
-  // User is signed in and we have a CLI callback — redirect token to CLI
   const { user } = useAuth()
 
-  // Get the access token from Supabase session
+  // Validate callback — only allow localhost
+  const isValidCallback = callback.startsWith('http://localhost:') || callback.startsWith('http://127.0.0.1:')
+
+  if (!isValidCallback) {
+    return (
+      <div className="min-h-screen bg-[#07090d] flex items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-red-400 mb-2">Invalid callback</h1>
+          <p className="text-[#4d6a82]">Only localhost callbacks are allowed.</p>
+        </div>
+      </div>
+    )
+  }
+
+  // POST token to CLI (not in URL params)
   import('../lib/supabase').then(({ supabase }) => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.access_token) {
-        const url = `${callback}?access_token=${session.access_token}&email=${encodeURIComponent(user?.email ?? '')}`
-        window.location.href = url
+        fetch(callback, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ access_token: session.access_token, email: user?.email }),
+        }).catch(() => {
+          // Fallback to GET if POST fails (older CLI versions)
+          window.location.href = `${callback}?access_token=${session.access_token}`
+        })
       }
     })
   })
@@ -75,7 +94,7 @@ function AuthRedirect({ callback }: { callback: string }) {
     <div className="min-h-screen bg-[#07090d] flex items-center justify-center">
       <div className="text-center">
         <h1 className="text-2xl font-bold text-[#00d4ff] mb-2">Connected!</h1>
-        <p className="text-[#4d6a82]">Redirecting to terminal...</p>
+        <p className="text-[#4d6a82]">You can close this tab and return to the terminal.</p>
       </div>
     </div>
   )

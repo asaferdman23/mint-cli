@@ -37,10 +37,19 @@ export function AuthCallback() {
         localStorage.removeItem('mint_cli_callback')
 
         if (callback && activeSession?.access_token) {
-          // Redirect token to CLI local server
+          // Validate callback — only allow localhost
+          const isValid = callback.startsWith('http://localhost:') || callback.startsWith('http://127.0.0.1:')
+          if (!isValid) {
+            setStatus('error')
+            return
+          }
+          // POST token to CLI (not in URL params)
           setStatus('success')
-          const url = `${callback}?access_token=${activeSession.access_token}&email=${encodeURIComponent(activeSession.user?.email ?? '')}`
-          setTimeout(() => { window.location.href = url }, 500)
+          fetch(callback, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ access_token: activeSession.access_token, email: activeSession.user?.email }),
+          }).catch(() => {})
           return
         }
 

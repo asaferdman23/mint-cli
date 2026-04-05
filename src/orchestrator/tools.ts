@@ -4,13 +4,14 @@
  * All tools except write_code are pure code ($0 cost).
  * write_code dispatches to DeepSeek for the actual code generation.
  */
-import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync, realpathSync } from 'node:fs';
+import { execSync, execFileSync } from 'node:child_process';
 import { join, dirname, relative } from 'node:path';
 import { loadIndex, indexProject, searchRelevantFiles } from '../context/index.js';
 import { parseDiffs } from '../pipeline/diff-parser.js';
 import { applyDiffsToProject } from '../pipeline/diff-apply.js';
 import { writeCode } from './write-code.js';
+import { getRelevantExample } from '../context/examples.js';
 import type { ToolDefinition } from '../tools/types.js';
 
 export interface OrchestratorToolContext {
@@ -354,11 +355,18 @@ async function toolWriteCode(
     }
   }
 
+  // Inject relevant project example into the task prompt
+  const filePaths = Object.keys(resolvedFiles);
+  const example = getRelevantExample(task, filePaths, ctx.cwd);
+  const enrichedTask = example
+    ? `${task}\n\n${example}`
+    : task;
+
   try {
-    const result = await writeCode(task, resolvedFiles);
+    const result = await writeCode(enrichedTask, resolvedFiles);
     sessionWriteCodeCost += result.cost;
     ctx.onLog?.(`code written ($${result.cost.toFixed(4)})`);
-    // Return raw response — the orchestrator sees it and decides to apply
+    // Return raw response — the orchestrator reviews it and decides to apply or retry
     return result.rawResponse;
   } catch (err) {
     return `write_code error: ${err instanceof Error ? err.message : String(err)}`;
@@ -449,8 +457,8 @@ function toolGitDiff(ctx: OrchestratorToolContext): string {
 function toolGitCommit(message: string, ctx: OrchestratorToolContext): string {
   ctx.onLog?.(`git commit: ${message.slice(0, 40)}`);
   try {
-    execSync('git add -A', { cwd: ctx.cwd, timeout: 10_000 });
-    const result = execSync(`git commit -m "${message.replace(/"/g, '\\"')}"`, {
+    execFileSync('git', ['add', '-A'], { cwd: ctx.cwd, timeout: 10_000 });
+    const result = execFileSync('git', ['commit', '-m', message], {
       cwd: ctx.cwd,
       encoding: 'utf-8',
       timeout: 10_000,
@@ -500,6 +508,21 @@ function toolUndo(filePath: string, ctx: OrchestratorToolContext): string {
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Resolve a path safely — prevents traversal and symlink escapes */
+function safePath(filePath: string, cwd: string): string | null {
+  const fullPath = join(cwd, filePath);
+  if (!fullPath.startsWith(cwd + '/') && fullPath !== cwd) return null;
+  // Check symlinks if file exists
+  try {
+    const real = realpathSync(fullPath);
+    const realCwd = realpathSync(cwd);
+    if (!real.startsWith(realCwd + '/') && real !== realCwd) return null;
+  } catch {
+    // File doesn't exist yet (creating new file) — logical path check is enough
+  }
+  return fullPath;
 }
 
 async function toolWriteFile(filePath: string, content: string, ctx: OrchestratorToolContext): Promise<string> {

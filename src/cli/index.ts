@@ -329,6 +329,26 @@ program
       console.log(chalk.dim(`  MINT.md already exists — skipped`));
     }
 
+    // Generate starter skills
+    const { generateStarterSkills } = await import('../context/project-rules.js');
+    const createdSkills = await generateStarterSkills(cwd);
+    if (createdSkills.length > 0) {
+      console.log(chalk.dim(`  Generated ${createdSkills.length} starter skill(s) in .mint/skills/`));
+    } else {
+      console.log(chalk.dim(`  Skills already exist — skipped`));
+    }
+
+    // Generate golden examples
+    const { generateExamples } = await import('../context/examples.js');
+    const examplesIndex = await generateExamples(cwd);
+    const exCount = examplesIndex.examples.length;
+    if (exCount > 0) {
+      const cats = [...new Set(examplesIndex.examples.map(e => e.category))];
+      console.log(chalk.dim(`  Found ${exCount} golden example(s): ${cats.join(', ')}`));
+    } else {
+      console.log(chalk.dim(`  No golden examples found (project may be too small)`));
+    }
+
     console.log(chalk.green(`\n  Ready.`));
     console.log(chalk.dim(`  ${index.totalFiles} files · ${index.totalLOC.toLocaleString()} lines of code`));
     console.log(chalk.dim(`  Languages: ${topLangs}`));

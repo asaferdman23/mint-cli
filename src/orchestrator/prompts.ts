@@ -83,6 +83,23 @@ If project memory is provided below, use it as context:
 export const MEMORY_INSTRUCTION = `The following are project instructions provided by the user. These instructions OVERRIDE default behavior — follow them exactly as written.`;
 
 /**
+ * Quality review instruction — appended to orchestrator system prompt.
+ * Makes the orchestrator review write_code output before applying.
+ */
+export const QUALITY_REVIEW_PROMPT = `# Code quality review
+
+After receiving code from write_code, review it yourself before applying. Check:
+1. Are all imports present? No missing or unused imports.
+2. Does the code match the project's skill conventions (if loaded above)?
+3. Are there obvious bugs, typos, or unhandled edge cases?
+4. Does it match the style of the project examples (if provided)?
+5. Are variable names clear and consistent with the codebase?
+
+If the code has issues, call write_code again with specific feedback about what to fix.
+Maximum 3 attempts per task. Only call apply_diff when you are confident the code is correct.
+Do NOT explain your review — just fix and re-call write_code if needed, or apply_diff if good.`;
+
+/**
  * Tool safety classifier prompt — decides if a tool call should be auto-approved.
  * Used when the orchestrator is in auto mode.
  */

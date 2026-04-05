@@ -3,7 +3,8 @@ import boxen from 'boxen';
 import { createServer } from 'node:http';
 import { config } from '../../utils/config.js';
 
-const SUPABASE_URL = 'https://srhoryezzsjmjdgfoxgd.supabase.co';
+const SUPABASE_URL = process.env.MINT_SUPABASE_URL ?? 'https://srhoryezzsjmjdgfoxgd.supabase.co';
+const SUPABASE_ANON_KEY = process.env.MINT_SUPABASE_ANON_KEY ?? '';
 const AUTH_PAGE_URL = 'https://usemint.dev/auth';
 const CALLBACK_PORT = 9876;
 
@@ -29,7 +30,7 @@ export async function login(): Promise<void> {
   try {
     const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
       headers: {
-        'apikey': config.get('supabaseAnonKey') as string ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNyaG9yeWV6enNqbWpkZ2ZveGdkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzNjU4NTMsImV4cCI6MjA5MDk0MTg1M30.hQIf14rZiAl-NhC8HDa7ZIORWJiAa1Z5aw1LAzUtY2Q',
+        'apikey': SUPABASE_ANON_KEY,
         'Authorization': `Bearer ${token}`,
       },
     });
@@ -66,13 +67,36 @@ function waitForOAuthCallback(): Promise<string | null> {
       resolve(null);
     }, 120_000); // 2 minute timeout
 
-    const server = createServer((req, res) => {
+    const server = createServer(async (req, res) => {
       const url = new URL(req.url ?? '/', `http://localhost:${CALLBACK_PORT}`);
 
+      // Accept token via POST body (secure) or GET params (fallback)
       if (url.pathname === '/callback') {
-        const token = url.searchParams.get('access_token') ?? url.searchParams.get('token');
+        let token: string | null = null;
 
-        // Send success page to browser
+        if (req.method === 'POST') {
+          // Secure: token in POST body
+          const body = await new Promise<string>((r) => {
+            let data = '';
+            req.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+            req.on('end', () => r(data));
+          });
+          try {
+            const parsed = JSON.parse(body);
+            token = parsed.access_token ?? parsed.token ?? null;
+          } catch {
+            token = null;
+          }
+        } else {
+          // Fallback: token in query params
+          token = url.searchParams.get('access_token') ?? url.searchParams.get('token');
+        }
+
+        // CORS headers for POST from browser
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(`
           <html>
@@ -91,6 +115,16 @@ function waitForOAuthCallback(): Promise<string | null> {
         return;
       }
 
+      // Handle CORS preflight
+      if (req.method === 'OPTIONS') {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
       res.writeHead(404);
       res.end('Not found');
     });
@@ -100,10 +134,10 @@ function waitForOAuthCallback(): Promise<string | null> {
       const callbackUrl = `http://localhost:${CALLBACK_PORT}/callback`;
       const authUrl = `${AUTH_PAGE_URL}?callback=${encodeURIComponent(callbackUrl)}`;
 
-      import('node:child_process').then(({ exec }) => {
+      import('node:child_process').then(({ execFile }) => {
         const cmd = process.platform === 'darwin' ? 'open' :
           process.platform === 'win32' ? 'start' : 'xdg-open';
-        exec(`${cmd} "${authUrl}"`);
+        execFile(cmd, [authUrl]);
       });
     });
 

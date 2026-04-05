@@ -7,9 +7,10 @@
  * Everything else is pure code ($0).
  */
 import { streamAgent } from '../providers/index.js';
-import { ORCHESTRATOR_PROMPT } from './prompts.js';
+import { ORCHESTRATOR_PROMPT, QUALITY_REVIEW_PROMPT } from './prompts.js';
 import { loadMemory, updateMemory, formatMemoryForPrompt, loadProjectInstructions } from './memory.js';
 import { MEMORY_INSTRUCTION } from './prompts.js';
+import { formatSkillsForPrompt } from '../context/skills.js';
 import {
   ORCHESTRATOR_TOOL_DEFINITIONS,
   executeOrchestratorTool,
@@ -62,7 +63,8 @@ export async function runOrchestrator(
   const instructionsBlock = projectInstructions
     ? `\n\n${MEMORY_INSTRUCTION}\n\n${projectInstructions}`
     : '';
-  const systemPrompt = ORCHESTRATOR_PROMPT + memoryBlock + instructionsBlock;
+  const skillsBlock = formatSkillsForPrompt(cwd);
+  const systemPrompt = ORCHESTRATOR_PROMPT + memoryBlock + instructionsBlock + skillsBlock + '\n\n' + QUALITY_REVIEW_PROMPT;
 
   // Filter out any broken messages from previous sessions
   const safeHistory = (previousMessages ?? []).filter(

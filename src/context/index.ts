@@ -11,4 +11,5 @@ export { loadProjectRules, formatProjectRulesForPrompt, generateProjectRules, ge
 export { compressContext, compressToolOutput, type FileEntry, type CompressedContext } from './compress.js';
 export { estimateTokens, truncateToTokens } from './budget.js';
 export { loadAgentMd, formatAgentMdForPrompt } from './agentmd.js';
-export { loadSkills, getSkillsForSpecialist, type Skill } from './skills.js';
+export { loadSkills, getSkillsForSpecialist, formatSkillsForPrompt, type Skill } from './skills.js';
+export { loadExamples, generateExamples, getRelevantExample, type ExampleEntry, type ExamplesIndex } from './examples.js';

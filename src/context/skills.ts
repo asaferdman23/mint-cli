@@ -74,6 +74,29 @@ export function getSkillsForSpecialist(skills: Skill[], specialist: SpecialistTy
 }
 
 /**
+ * Format all loaded skills into a prompt block for the orchestrator.
+ * Caps total content at ~2000 tokens (8000 chars, 4 chars/token).
+ */
+export function formatSkillsForPrompt(projectRoot: string): string {
+  const skills = loadSkills(projectRoot);
+  if (skills.length === 0) return '';
+
+  const maxChars = 8000; // ~2000 tokens
+  let totalChars = 0;
+  const parts: string[] = [];
+
+  for (const skill of skills) {
+    const block = `## ${skill.name}\n${skill.content}`;
+    if (totalChars + block.length > maxChars) break;
+    parts.push(block);
+    totalChars += block.length;
+  }
+
+  if (parts.length === 0) return '';
+  return `\n\n<project_conventions>\nProject conventions (follow these when writing code):\n\n${parts.join('\n\n')}\n</project_conventions>`;
+}
+
+/**
  * Parse simple YAML frontmatter from a markdown file.
  * Handles the `---` delimited block at the top.
  */
