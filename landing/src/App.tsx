@@ -3,6 +3,8 @@ import { AuthProvider, useAuth } from './lib/auth'
 import { Landing } from './pages/Landing'
 import { Login } from './pages/Login'
 import { Signup } from './pages/Signup'
+import { Auth } from './pages/Auth'
+import { AuthCallback } from './pages/AuthCallback'
 import { Dashboard } from './pages/Dashboard'
 import { Tokens } from './pages/Tokens'
 import { History } from './pages/History'
@@ -32,6 +34,8 @@ function AppRoutes() {
       <Route path="/" element={<Landing />} />
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
+      <Route path="/auth" element={<Auth />} />
+      <Route path="/auth/callback" element={<AuthCallback />} />
       <Route
         element={
           <ProtectedRoute>

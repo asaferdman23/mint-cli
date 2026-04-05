@@ -1,65 +1,82 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
-import { api } from './api'
+import { supabase } from './supabase'
+import type { User as SupabaseUser } from '@supabase/supabase-js'
 
 export interface User {
   id: string
   email: string
   name: string | null
   plan?: string
-  created_at?: string
 }
 
 interface AuthContextType {
   user: User | null
   loading: boolean
-  login: (email: string, password: string) => Promise<void>
-  signup: (email: string, password: string, name?: string) => Promise<string>
-  logout: () => void
+  signInWithGoogle: () => Promise<void>
+  signInWithGithub: () => Promise<void>
+  logout: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextType | null>(null)
+
+function toUser(su: SupabaseUser): User {
+  return {
+    id: su.id,
+    email: su.email ?? '',
+    name: su.user_metadata?.full_name ?? su.user_metadata?.name ?? null,
+  }
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const jwt = api.getJwt()
-    if (jwt) {
-      api
-        .getMe()
-        .then((data) => setUser(data.user))
-        .catch(() => {
-          api.setJwt(null)
-        })
-        .finally(() => setLoading(false))
-    } else {
+    // Check current session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) setUser(toUser(session.user))
       setLoading(false)
-    }
+    })
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        setUser(toUser(session.user))
+      } else {
+        setUser(null)
+      }
+    })
+
+    return () => subscription.unsubscribe()
   }, [])
 
-  const loginFn = async (email: string, password: string) => {
-    const data = await api.login(email, password)
-    api.setJwt(data.jwt)
-    setUser(data.user)
+  const signInWithGoogle = async () => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback${window.location.search}`,
+      },
+    })
+    if (error) throw error
   }
 
-  const signupFn = async (email: string, password: string, name?: string) => {
-    const data = await api.signup(email, password, name)
-    api.setJwt(data.jwt)
-    setUser(data.user)
-    return data.api_token
+  const signInWithGithub = async () => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'github',
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback${window.location.search}`,
+      },
+    })
+    if (error) throw error
   }
 
-  const logoutFn = () => {
-    api.setJwt(null)
+  const logout = async () => {
+    await supabase.auth.signOut()
     setUser(null)
   }
 
   return (
-    <AuthContext.Provider
-      value={{ user, loading, login: loginFn, signup: signupFn, logout: logoutFn }}
-    >
+    <AuthContext.Provider value={{ user, loading, signInWithGoogle, signInWithGithub, logout }}>
       {children}
     </AuthContext.Provider>
   )
