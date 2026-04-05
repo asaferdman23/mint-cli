@@ -510,8 +510,16 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/** Resolve a path safely — prevents traversal and symlink escapes */
+// Sensitive paths that should never be read or written
+const BLOCKED_PATHS = /(?:^|\/)(\.ssh|\.aws|\.gnupg|\.env|\.npmrc|\.netrc|\.git\/config|\.config\/gcloud|id_rsa|credentials)/i;
+
+/** Resolve a path safely — prevents traversal, symlink escapes, and sensitive file access */
 function safePath(filePath: string, cwd: string): string | null {
+  // Block sensitive paths
+  if (BLOCKED_PATHS.test(filePath)) return null;
+  // Block absolute paths
+  if (filePath.startsWith('/') || filePath.startsWith('~')) return null;
+
   const fullPath = join(cwd, filePath);
   if (!fullPath.startsWith(cwd + '/') && fullPath !== cwd) return null;
   // Check symlinks if file exists
