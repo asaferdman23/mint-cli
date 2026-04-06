@@ -430,22 +430,27 @@ export function App({ initialPrompt, modelPreference, agentMode: initialAgentMod
 
       // Check auth — if not logged in, open browser and wait
       if (!config.isAuthenticated()) {
-        // Open browser to auth page
         const callbackPort = 9876;
         const callbackUrl = `http://localhost:${callbackPort}/callback`;
         const authUrl = `https://usemint.dev/auth?callback=${encodeURIComponent(callbackUrl)}`;
 
-        try {
-          const { execFile } = await import('node:child_process');
-          const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-          execFile(cmd, [authUrl]);
-        } catch { /* ignore */ }
-
-        // Show message and start listening for callback
+        // Show message first
         setMessages((prev) => [
           ...prev.filter((m) => m.id !== assistantMsgIdRef.current),
-          { id: nextId(), role: 'assistant', content: 'Sign in to continue — browser opened.\nAfter signing in, your task will run automatically.' },
+          { id: nextId(), role: 'assistant', content: `Sign in to continue.\n\nIf the browser didn't open, go to:\n${authUrl}` },
         ]);
+
+        // Open browser
+        try {
+          const { exec } = await import('node:child_process');
+          if (process.platform === 'darwin') {
+            exec(`open "${authUrl}"`);
+          } else if (process.platform === 'win32') {
+            exec(`cmd /c start "" "${authUrl}"`);
+          } else {
+            exec(`xdg-open "${authUrl}"`);
+          }
+        } catch { /* browser open failed — user has the URL in the message */ }
 
         // Listen for OAuth callback
         try {
