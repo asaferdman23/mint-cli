@@ -7,6 +7,7 @@ import { login, logout, whoami, signup } from './commands/auth.js';
 import { showConfig, setConfig } from './commands/config.js';
 import { compareModels } from './commands/compare.js';
 import { showUsage } from './commands/usage.js';
+import { config } from '../utils/config.js';
 
 const program = new Command();
 
@@ -29,6 +30,8 @@ program
   .option('--yolo', 'Full autonomy — no approvals at all')
   .option('--plan', 'Plan mode — ask clarifying questions first')
   .option('--diff', 'Diff mode — review each file change')
+  .option('--think', 'Force deepseek-reasoner (thinking mode)')
+  .option('--fast', 'Force deepseek-chat (fast mode)')
   .action(async (promptParts: string[], options) => {
     const prompt = promptParts.join(' ').trim();
     const agentMode = options.yolo ? 'yolo' : options.plan ? 'plan' : options.diff ? 'diff' : options.auto ? 'auto' : undefined;
@@ -61,9 +64,116 @@ program
       return;
     }
 
-    // Default: v2 orchestrator
-    const { runOrchestratorCLI } = await import('./commands/orchestrator.js');
-    await runOrchestratorCLI(prompt);
+    // V2 orchestrator mode (old default, now behind --v2)
+    if (options.v2) {
+      const { runOrchestratorCLI } = await import('./commands/orchestrator.js');
+      await runOrchestratorCLI(prompt);
+      return;
+    }
+
+    // Default: Mint Phase 1 — smart context + DeepSeek
+    // If no local DEEPSEEK_API_KEY, routes through gateway automatically
+    const { runMintTask } = await import('../agent/mint-loop.js');
+    const forceModel = options.think ? 'deepseek-reasoner' as const : options.fast ? 'deepseek-chat' as const : undefined;
+
+    try {
+      const result = await runMintTask(prompt, {
+        cwd: process.cwd(),
+        forceModel,
+        stream: true,
+        callbacks: {
+          onProgress: (msg) => process.stderr.write(chalk.dim(`  ${msg}\n`)),
+          onStream: (text) => process.stdout.write(text),
+          onToolCall: (tool, cmd) => process.stderr.write(chalk.dim(`  [tool] ${tool}: ${cmd.slice(0, 80)}\n`)),
+        },
+      });
+
+      process.stdout.write('\n');
+
+      // Show diffs
+      if (result.diffs && result.diffs.length > 0) {
+        console.log(chalk.cyan('\n  Changes:'));
+        for (const d of result.diffs) {
+          console.log(chalk.green(`  + ${d.file}`) + chalk.dim(` (+${d.additions} -${d.deletions})`));
+        }
+
+        // Ask to apply
+        const answer = await askUser('\n  Apply changes? [Y/n] ');
+        if (answer.toLowerCase() !== 'n') {
+          const { applyExecDiffs } = await import('./exec.js');
+          applyExecDiffs(result.diffs, process.cwd());
+        }
+      }
+
+      // Show cost summary
+      const claudeEstimate = result.tokensUsed * 0.000015; // rough Opus estimate
+      const savingsPct = claudeEstimate > 0 ? Math.round((1 - result.cost / claudeEstimate) * 100) : 0;
+      console.log(chalk.dim(`\n  $${result.cost.toFixed(4)} · ${(result.durationMs / 1000).toFixed(1)}s · ${result.tokensUsed} tokens · ${result.model}`));
+      if (savingsPct > 0) {
+        console.log(chalk.dim(`  Claude Code estimate: ~$${claudeEstimate.toFixed(2)} · saved ${savingsPct}%`));
+      }
+      console.log('');
+    } catch (err) {
+      console.error(chalk.red(`\n  Error: ${err instanceof Error ? err.message : String(err)}`));
+      process.exit(1);
+    }
+  });
+
+// Exec command — headless mode for agent integration
+program
+  .command('exec')
+  .description('Run a task headless — JSON output to stdout, for agent integration')
+  .argument('<task...>', 'Task description')
+  .option('--apply', 'Auto-apply diffs to files on disk')
+  .option('--think', 'Force deepseek-reasoner (thinking mode)')
+  .option('--fast', 'Force deepseek-chat (fast mode)')
+  .option('--pipe', 'Read task from stdin as JSON')
+  .option('--max-tool-calls <n>', 'Max tool calls per task', '5')
+  .option('-w, --workdir <dir>', 'Working directory')
+  .action(async (taskParts: string[], options) => {
+    if (options.pipe) {
+      const { runPipeMode } = await import('./protocol.js');
+      await runPipeMode();
+      return;
+    }
+
+    const task = taskParts.join(' ').trim();
+    if (!task) {
+      process.stderr.write('[mint] Error: task description required\n');
+      process.exit(1);
+    }
+
+    const { runExec } = await import('./exec.js');
+    const result = await runExec({
+      task,
+      apply: options.apply ?? false,
+      think: options.think ?? false,
+      fast: options.fast ?? false,
+      maxToolCalls: parseInt(options.maxToolCalls, 10) || 5,
+      workdir: options.workdir,
+    });
+
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+
+    if (!result.success) process.exit(1);
+    else if (!result.diffs?.length && result.message) process.exit(2);
+    else process.exit(0);
+  });
+
+// Cost history command
+program
+  .command('cost')
+  .description('Show cost history from recent tasks')
+  .action(async () => {
+    const { getUsageDb } = await import('../usage/tracker.js');
+    const db = getUsageDb();
+    const summary = db.getSummary();
+    console.log(chalk.cyan('\n  Mint Cost Summary\n'));
+    console.log(`  Total requests: ${summary.totalRequests}`);
+    console.log(`  Total cost:     $${summary.totalCost.toFixed(4)}`);
+    const totalSaved = db.getTotalSaved();
+    console.log(`  Saved vs Opus:  $${totalSaved.toFixed(2)}`);
+    console.log('');
   });
 
 // Auth commands
@@ -349,6 +459,11 @@ program
       console.log(chalk.dim(`  No golden examples found (project may be too small)`));
     }
 
+    // Generate .mint/config.json
+    const { initMintConfig } = await import('../utils/mint-config.js');
+    await initMintConfig(cwd);
+    console.log(chalk.dim(`  Config: .mint/config.json`));
+
     console.log(chalk.green(`\n  Ready.`));
     console.log(chalk.dim(`  ${index.totalFiles} files · ${index.totalLOC.toLocaleString()} lines of code`));
     console.log(chalk.dim(`  Languages: ${topLangs}`));
@@ -358,7 +473,8 @@ program
 
     // Track init (fire and forget)
     try {
-      const gatewayUrl = config.get('apiBaseUrl') as string ?? 'https://api.usemint.dev';
+      const { config: appConfig } = await import('../utils/config.js');
+      const gatewayUrl = appConfig.get('apiBaseUrl') as string ?? 'https://api.usemint.dev';
       fetch(`${gatewayUrl}/track`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -430,7 +546,7 @@ async function generateMintMd(
   index: { totalFiles: number; totalLOC: number; language: string; files: Record<string, unknown> },
   topLangs: string,
   depCount: number,
-): string {
+): Promise<string> {
   const fs = await import('node:fs');
   const path = await import('node:path');
   const lines: string[] = ['# Project Instructions for Mint CLI', ''];

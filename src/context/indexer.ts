@@ -17,12 +17,22 @@ import { DependencyGraph } from './graph.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+export interface SymbolInfo {
+  name: string;           // e.g. "refreshToken"
+  kind: 'function' | 'class' | 'type' | 'interface' | 'variable' | 'enum';
+  signature: string;      // e.g. "async function refreshToken(userId: string): Promise<Token>"
+  startLine: number;
+  endLine: number;
+}
+
 export interface FileIndex {
   imports: string[];
   exports: string[];
+  symbols: SymbolInfo[];  // exported symbols with signatures
   summary: string;
   loc: number;
   language: string;
+  size: number;           // file size in bytes
 }
 
 export interface ProjectIndex {
@@ -147,6 +157,7 @@ export async function indexProject(cwd: string, options: IndexOptions = {}): Pro
 
       const imports = extractImports(content, filePath, language);
       const exports = extractExports(content, language);
+      const symbols = extractSymbols(content, language);
       const summary = generateSummary(filePath, exports, loc, language);
 
       // Resolve import paths to actual files in the project
@@ -154,7 +165,8 @@ export async function indexProject(cwd: string, options: IndexOptions = {}): Pro
         .map(imp => resolveImportPath(imp, filePath, cwd, sourceFiles))
         .filter((p): p is string => p !== null);
 
-      files[filePath] = { imports: resolvedImports, exports, summary, loc, language };
+      const fileSize = Buffer.byteLength(content, 'utf-8');
+      files[filePath] = { imports: resolvedImports, exports, symbols, summary, loc, language, size: fileSize };
       graph.addFile(filePath, resolvedImports);
 
       totalLOC += loc;
@@ -234,6 +246,161 @@ export async function isIndexStale(cwd: string): Promise<boolean> {
   }
 
   return false;
+}
+
+// ─── Symbol extraction (with signatures) ───────────────────────────────────
+
+function extractSymbols(content: string, language: string): SymbolInfo[] {
+  const symbols: SymbolInfo[] = [];
+  const lines = content.split('\n');
+
+  if (['typescript', 'javascript'].includes(language)) {
+    // Match exported functions, classes, types, interfaces, enums, variables
+    const patterns: Array<{ re: RegExp; kind: SymbolInfo['kind'] }> = [
+      { re: /^export\s+(?:default\s+)?(?:async\s+)?function\s+(\w+)\s*(\([^)]*\)(?:\s*:\s*[^{]+)?)/m, kind: 'function' },
+      { re: /^export\s+(?:default\s+)?class\s+(\w+)(?:\s+extends\s+\w+)?(?:\s+implements\s+\w+)?/m, kind: 'class' },
+      { re: /^export\s+(?:default\s+)?(?:type)\s+(\w+)\s*(?:=|<)/m, kind: 'type' },
+      { re: /^export\s+(?:default\s+)?interface\s+(\w+)/m, kind: 'interface' },
+      { re: /^export\s+(?:default\s+)?enum\s+(\w+)/m, kind: 'enum' },
+      { re: /^export\s+(?:const|let|var)\s+(\w+)(?:\s*:\s*([^=]+))?\s*=/m, kind: 'variable' },
+    ];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.trimStart().startsWith('export')) continue;
+
+      for (const { re, kind } of patterns) {
+        const match = re.exec(line);
+        if (!match) continue;
+        const name = match[1];
+        // Build signature: use the full line for functions/classes, just declaration for others
+        let signature = line.trim();
+        // For functions/classes, find the end of the block
+        let endLine = i;
+        if (kind === 'function' || kind === 'class') {
+          let depth = 0;
+          for (let j = i; j < lines.length; j++) {
+            for (const ch of lines[j]) {
+              if (ch === '{') depth++;
+              if (ch === '}') depth--;
+            }
+            if (depth <= 0 && j > i) {
+              endLine = j;
+              break;
+            }
+            if (j === lines.length - 1) endLine = j;
+          }
+          // Trim signature to just the declaration line
+          signature = signature.replace(/\s*\{.*$/, '');
+        } else if (kind === 'type' || kind === 'interface') {
+          let depth = 0;
+          for (let j = i; j < lines.length; j++) {
+            for (const ch of lines[j]) {
+              if (ch === '{') depth++;
+              if (ch === '}') depth--;
+            }
+            if (depth <= 0 && j > i) {
+              endLine = j;
+              break;
+            }
+            if (j === lines.length - 1) endLine = j;
+          }
+          signature = signature.replace(/\s*\{.*$/, '');
+        } else {
+          endLine = i;
+        }
+
+        symbols.push({ name, kind, signature, startLine: i + 1, endLine: endLine + 1 });
+        break;
+      }
+    }
+  } else if (language === 'python') {
+    const pyPatterns: Array<{ re: RegExp; kind: SymbolInfo['kind'] }> = [
+      { re: /^(?:async\s+)?def\s+(\w+)\s*(\([^)]*\)(?:\s*->\s*\S+)?)\s*:/, kind: 'function' },
+      { re: /^class\s+(\w+)(?:\([^)]*\))?\s*:/, kind: 'class' },
+    ];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      for (const { re, kind } of pyPatterns) {
+        const match = re.exec(line);
+        if (!match) continue;
+        const name = match[1];
+        // Find end by indentation
+        let endLine = i;
+        const baseIndent = line.search(/\S/);
+        for (let j = i + 1; j < lines.length; j++) {
+          const nextLine = lines[j];
+          if (nextLine.trim() === '') continue;
+          if (nextLine.search(/\S/) <= baseIndent) {
+            endLine = j - 1;
+            break;
+          }
+          endLine = j;
+        }
+        symbols.push({ name, kind, signature: line.trim(), startLine: i + 1, endLine: endLine + 1 });
+        break;
+      }
+    }
+  } else if (language === 'go') {
+    const goPatterns: Array<{ re: RegExp; kind: SymbolInfo['kind'] }> = [
+      { re: /^func\s+(\w+)\s*(\([^)]*\)(?:\s*\([^)]*\)|\s*\S+)?)\s*\{/, kind: 'function' },
+      { re: /^func\s+\([^)]+\)\s+(\w+)\s*(\([^)]*\)(?:\s*\([^)]*\)|\s*\S+)?)\s*\{/, kind: 'function' },
+      { re: /^type\s+(\w+)\s+struct\s*\{/, kind: 'class' },
+      { re: /^type\s+(\w+)\s+interface\s*\{/, kind: 'interface' },
+    ];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      for (const { re, kind } of goPatterns) {
+        const match = re.exec(line);
+        if (!match) continue;
+        const name = match[1];
+        let endLine = i;
+        let depth = 0;
+        for (let j = i; j < lines.length; j++) {
+          for (const ch of lines[j]) {
+            if (ch === '{') depth++;
+            if (ch === '}') depth--;
+          }
+          if (depth <= 0 && j > i) { endLine = j; break; }
+          if (j === lines.length - 1) endLine = j;
+        }
+        symbols.push({ name, kind, signature: line.trim().replace(/\s*\{.*$/, ''), startLine: i + 1, endLine: endLine + 1 });
+        break;
+      }
+    }
+  } else if (language === 'rust') {
+    const rustPatterns: Array<{ re: RegExp; kind: SymbolInfo['kind'] }> = [
+      { re: /^pub\s+(?:async\s+)?fn\s+(\w+)\s*(<[^>]*>)?\s*(\([^)]*\)(?:\s*->\s*\S+)?)\s*\{/, kind: 'function' },
+      { re: /^pub\s+struct\s+(\w+)/, kind: 'class' },
+      { re: /^pub\s+enum\s+(\w+)/, kind: 'enum' },
+      { re: /^pub\s+trait\s+(\w+)/, kind: 'interface' },
+    ];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      for (const { re, kind } of rustPatterns) {
+        const match = re.exec(line);
+        if (!match) continue;
+        const name = match[1];
+        let endLine = i;
+        let depth = 0;
+        for (let j = i; j < lines.length; j++) {
+          for (const ch of lines[j]) {
+            if (ch === '{') depth++;
+            if (ch === '}') depth--;
+          }
+          if (depth <= 0 && j > i) { endLine = j; break; }
+          if (j === lines.length - 1) endLine = j;
+        }
+        symbols.push({ name, kind, signature: line.trim().replace(/\s*\{.*$/, ''), startLine: i + 1, endLine: endLine + 1 });
+        break;
+      }
+    }
+  }
+
+  return symbols;
 }
 
 // ─── Import extraction ──────────────────────────────────────────────────────

@@ -11,6 +11,8 @@ interface StatusBarProps {
   savingsPct?: number;
   agentMode?: string;
   inspectorHint?: string;
+  deepseekModel?: string;
+  contextTokens?: number;
 }
 
 function formatTokens(tokens: number): string {
@@ -42,13 +44,16 @@ export function StatusBar({
   savingsPct,
   agentMode = 'auto',
   inspectorHint,
+  deepseekModel,
+  contextTokens,
 }: StatusBarProps): React.ReactElement {
-  const model = currentModel ?? 'auto';
+  const model = deepseekModel ?? currentModel ?? 'auto';
+  const isThinking = deepseekModel === 'deepseek-reasoner';
 
   return (
     <Box paddingX={1}>
       <Box flexGrow={1} flexShrink={1} gap={0} overflow="hidden">
-        <Text dimColor>{model}</Text>
+        <Text dimColor>{model}{isThinking ? ' [thinking]' : ''}</Text>
         <Text dimColor> │ </Text>
         <Text dimColor>{formatTokens(sessionTokens)} tokens</Text>
         <Text dimColor> │ </Text>
@@ -69,7 +74,13 @@ export function StatusBar({
       <Box flexShrink={0} gap={0}>
         <Text dimColor> │ </Text>
         <Text color={modeColor(agentMode) as Parameters<typeof Text>[0]['color']}>{agentMode}</Text>
-        <Text dimColor> │ v0.2.0-beta</Text>
+        {contextTokens != null && contextTokens > 0 && (
+          <>
+            <Text dimColor> │ </Text>
+            <Text dimColor>ctx {formatTokens(contextTokens)}</Text>
+          </>
+        )}
+        <Text dimColor> │ v0.3.0</Text>
         {inspectorHint && (
           <>
             <Text dimColor> │ </Text>

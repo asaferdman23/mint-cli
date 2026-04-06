@@ -428,117 +428,93 @@ export function App({ initialPrompt, modelPreference, agentMode: initialAgentMod
     if (useOrchestrator) {
       setIsRouting(false);
 
-      // Check auth — if not logged in, open browser and wait
+      // Check auth — if not logged in, open browser for OAuth
       if (!config.isAuthenticated()) {
         const callbackPort = 9876;
         const callbackUrl = `http://localhost:${callbackPort}/callback`;
         const authUrl = `https://usemint.dev/auth?callback=${encodeURIComponent(callbackUrl)}`;
 
-        // Show message first
         setMessages((prev) => [
           ...prev.filter((m) => m.id !== assistantMsgIdRef.current),
-          { id: nextId(), role: 'assistant', content: `Sign in to continue.\n\nIf the browser didn't open, go to:\n${authUrl}` },
+          { id: nextId(), role: 'assistant', content: `Opening browser to sign in...\n\nIf it didn't open, go to:\n${authUrl}` },
         ]);
 
         // Open browser
         try {
           const { exec } = await import('node:child_process');
-          if (process.platform === 'darwin') {
-            exec(`open "${authUrl}"`);
-          } else if (process.platform === 'win32') {
-            exec(`cmd /c start "" "${authUrl}"`);
-          } else {
-            exec(`xdg-open "${authUrl}"`);
-          }
-        } catch { /* browser open failed — user has the URL in the message */ }
+          if (process.platform === 'darwin') exec(`open "${authUrl}"`);
+          else if (process.platform === 'win32') exec(`cmd /c start "" "${authUrl}"`);
+          else exec(`xdg-open "${authUrl}"`);
+        } catch { /* user has the URL */ }
 
         // Listen for OAuth callback
         try {
           const { createServer } = await import('node:http');
-          const token = await new Promise<string | null>((resolve) => {
+          const supabaseToken = await new Promise<string | null>((resolve) => {
             const timeout = setTimeout(() => { server.close(); resolve(null); }, 180_000);
             const server = createServer(async (req, res) => {
-              // CORS headers on ALL responses
               res.setHeader('Access-Control-Allow-Origin', '*');
               res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
               res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-              if (req.method === 'OPTIONS') {
-                res.writeHead(204); res.end();
-                return;
-              }
+              if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
-              const url = new URL(req.url ?? '/', `http://localhost:${callbackPort}`);
-
-              // Accept token on any path (not just /callback)
               let tkn: string | null = null;
-
               if (req.method === 'POST') {
                 const body = await new Promise<string>((r) => { let d = ''; req.on('data', (c: Buffer) => d += c.toString()); req.on('end', () => r(d)); });
-                try { tkn = JSON.parse(body).access_token; } catch { /* ignore */ }
+                try { tkn = JSON.parse(body).access_token; } catch { /* */ }
               }
-
               if (!tkn) {
+                const url = new URL(req.url ?? '/', `http://localhost:${callbackPort}`);
                 tkn = url.searchParams.get('access_token') ?? url.searchParams.get('token');
-              }
-
-              // Also check hash fragment sent as query param
-              if (!tkn && url.hash) {
-                const hashParams = new URLSearchParams(url.hash.substring(1));
-                tkn = hashParams.get('access_token');
               }
 
               res.writeHead(200, { 'Content-Type': 'text/html' });
               res.end('<html><body style="background:#07090d;color:#00d4ff;font-family:monospace;display:flex;align-items:center;justify-content:center;height:100vh"><h1>Connected! Return to terminal.</h1></body></html>');
 
-              if (tkn) {
-                clearTimeout(timeout);
-                server.close();
-                resolve(tkn);
-              }
+              if (tkn) { clearTimeout(timeout); server.close(); resolve(tkn); }
             });
             server.listen(callbackPort, () => {});
-            server.on('error', (err) => {
-              // Port might be in use from previous attempt — try another
-              server.listen(callbackPort + 1, () => {});
-            });
+            server.on('error', () => { server.listen(callbackPort + 1, () => {}); });
           });
 
-          if (token) {
-            // Exchange Supabase JWT for gateway API token
+          if (supabaseToken) {
+            // Exchange Supabase token for gateway API token
             try {
               const gatewayUrl = config.getGatewayUrl();
               const exchangeRes = await fetch(`${gatewayUrl}/auth/oauth-token`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ supabase_token: token }),
+                body: JSON.stringify({ supabase_token: supabaseToken }),
               });
-              const exchangeData = await exchangeRes.json() as { token?: string; email?: string; error?: string };
-              if (exchangeRes.ok && exchangeData.token) {
-                config.set('gatewayToken', exchangeData.token);
-                if (exchangeData.email) config.set('email', exchangeData.email);
-                setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: `Signed in as ${exchangeData.email ?? 'user'}! Running your task...` }]);
+              const data = await exchangeRes.json() as { token?: string; email?: string; user_id?: string; error?: string };
+              if (exchangeRes.ok && data.token) {
+                config.set('gatewayToken', data.token);
+                if (data.email) config.set('email', data.email);
+                if (data.user_id) config.set('userId', data.user_id);
+                setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: `Signed in as ${data.email ?? 'user'}! Running your task...` }]);
               } else {
-                setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: `Auth error: ${exchangeData.error ?? 'unknown'}. Try again.` }]);
+                setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: `Auth error: ${data.error ?? 'unknown'}. Try \`mint signup\` in another terminal.` }]);
                 busyRef.current = false;
                 setIsBusy(false);
                 return;
               }
-            } catch {
-              // Fallback: save Supabase token directly
-              config.set('apiKey', token);
-              setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: 'Signed in! Running your task...' }]);
+            } catch (err) {
+              setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: `Could not connect to server. Try \`mint signup\` in another terminal.` }]);
+              busyRef.current = false;
+              setIsBusy(false);
+              return;
             }
             busyRef.current = true;
             setIsBusy(true);
           } else {
-            setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: 'Sign in timed out. Run `mint login` in another terminal.' }]);
+            setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: 'Sign in timed out. Try again or run `mint signup` in another terminal.' }]);
             busyRef.current = false;
             setIsBusy(false);
             return;
           }
         } catch {
-          setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: 'Could not start auth server. Run `mint login` in another terminal.' }]);
+          setMessages((prev) => [...prev, { id: nextId(), role: 'assistant', content: 'Could not start auth. Run `mint signup` in another terminal.' }]);
           busyRef.current = false;
           setIsBusy(false);
           return;
