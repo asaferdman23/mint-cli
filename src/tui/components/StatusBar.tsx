@@ -13,6 +13,8 @@ interface StatusBarProps {
   inspectorHint?: string;
   deepseekModel?: string;
   contextTokens?: number;
+  quotaUsed?: number;
+  quotaLimit?: number;
 }
 
 function formatTokens(tokens: number): string {
@@ -46,9 +48,20 @@ export function StatusBar({
   inspectorHint,
   deepseekModel,
   contextTokens,
+  quotaUsed,
+  quotaLimit,
 }: StatusBarProps): React.ReactElement {
   const model = deepseekModel ?? currentModel ?? 'auto';
   const isThinking = deepseekModel === 'deepseek-reasoner';
+
+  // Calculate quota status
+  const showQuota = quotaUsed != null && quotaLimit != null;
+  const quotaRemaining = showQuota ? quotaLimit - quotaUsed : 0;
+  const quotaPercent = showQuota ? (quotaUsed / quotaLimit) * 100 : 0;
+
+  let quotaColor: Parameters<typeof Text>[0]['color'] = 'green';
+  if (quotaPercent >= 90) quotaColor = 'red';
+  else if (quotaPercent >= 70) quotaColor = 'yellow';
 
   return (
     <Box paddingX={1}>
@@ -62,6 +75,12 @@ export function StatusBar({
           <>
             <Text dimColor> │ </Text>
             <Text color="cyan">month {formatCost(monthlyCost)}</Text>
+          </>
+        )}
+        {showQuota && (
+          <>
+            <Text dimColor> │ </Text>
+            <Text color={quotaColor}>{quotaRemaining}/{quotaLimit} free</Text>
           </>
         )}
         {savingsPct != null && savingsPct > 0 && (
@@ -80,7 +99,7 @@ export function StatusBar({
             <Text dimColor>ctx {formatTokens(contextTokens)}</Text>
           </>
         )}
-        <Text dimColor> │ v0.3.0</Text>
+        <Text dimColor> │ v0.3.0-β1</Text>
         {inspectorHint && (
           <>
             <Text dimColor> │ </Text>

@@ -83,9 +83,14 @@ export async function signup(): Promise<void> {
     }
 
     console.log(boxen(
-      `${chalk.bold.green('Account created!')}\n\n` +
-      `Email: ${chalk.cyan(data.user?.email ?? email)}\n\n` +
-      `${chalk.dim('Run `mint` to start coding.')}`,
+      `${chalk.bold.green('Account created! 🎉')}\n\n` +
+      `Email: ${chalk.cyan(data.user?.email ?? email)}\n` +
+      `Plan:  ${chalk.yellow('FREE')} ${chalk.dim('(50 requests/month)')}\n\n` +
+      `${chalk.bold('Next steps:')}\n` +
+      `  ${chalk.green('1.')} ${chalk.cyan('cd')} into your project\n` +
+      `  ${chalk.green('2.')} Run ${chalk.cyan('mint init')} to scan files\n` +
+      `  ${chalk.green('3.')} Run ${chalk.cyan('mint "your task"')} to code\n\n` +
+      `${chalk.dim('Check quota anytime with ')} ${chalk.cyan('mint quota')}`,
       { padding: 1, borderColor: 'green', borderStyle: 'round' }
     ));
   } catch (err) {
@@ -158,9 +163,12 @@ export async function login(): Promise<void> {
     }
 
     console.log(boxen(
-      `${chalk.bold.green('Signed in!')}\n\n` +
+      `${chalk.bold.green('Signed in! 👋')}\n\n` +
       `Email: ${chalk.cyan(loginData.user?.email ?? email)}\n\n` +
-      `${chalk.dim('Run `mint` to start coding.')}`,
+      `${chalk.bold('Quick start:')}\n` +
+      `  ${chalk.cyan('mint init')}  ${chalk.dim('- scan your project')}\n` +
+      `  ${chalk.cyan('mint')}       ${chalk.dim('- start coding')}\n` +
+      `  ${chalk.cyan('mint quota')} ${chalk.dim('- check your usage')}`,
       { padding: 1, borderColor: 'green', borderStyle: 'round' }
     ));
   } catch (err) {

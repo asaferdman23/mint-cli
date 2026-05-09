@@ -1,12 +1,12 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join, dirname, resolve, sep } from 'node:path';
-import { runPrompt } from './commands/run.js';
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import { login, logout, whoami, signup } from './commands/auth.js';
 import { showConfig, setConfig } from './commands/config.js';
-import { compareModels } from './commands/compare.js';
 import { showUsage } from './commands/usage.js';
+import { showQuota } from './commands/quota.js';
+import { showAccount } from './commands/account.js';
 import { config } from '../utils/config.js';
 
 const program = new Command();
@@ -20,103 +20,53 @@ program
 program
   .argument('[prompt...]', 'The prompt to send to the AI')
   .option('-m, --model <model>', 'Model to use (auto, deepseek, sonnet, opus)', 'auto')
-  .option('-c, --compare', 'Compare results across models')
-  .option('--no-context', 'Disable automatic context gathering')
   .option('-v, --verbose', 'Show detailed output including tokens and cost')
-  .option('--v2', 'V2 orchestrator mode — single smart loop with tool calling')
-  .option('--simple', 'Simple mode — one LLM call, no agents, just diffs')
-  .option('--legacy', 'Use legacy single-call mode instead of pipeline')
   .option('--auto', 'Auto mode — apply changes without asking')
   .option('--yolo', 'Full autonomy — no approvals at all')
-  .option('--plan', 'Plan mode — ask clarifying questions first')
+  .option('--plan', 'Plan mode — dry run, no writes')
   .option('--diff', 'Diff mode — review each file change')
-  .option('--think', 'Force deepseek-reasoner (thinking mode)')
-  .option('--fast', 'Force deepseek-chat (fast mode)')
+  .option('--think', 'Prefer reasoning-enabled models')
+  .option('--fast', 'Prefer low-latency models')
   .action(async (promptParts: string[], options) => {
     const prompt = promptParts.join(' ').trim();
-    const agentMode = options.yolo ? 'yolo' : options.plan ? 'plan' : options.diff ? 'diff' : options.auto ? 'auto' : undefined;
-
-    if (options.simple && prompt) {
-      const { runSimple } = await import('./commands/simple.js');
-      await runSimple(prompt);
-      return;
-    }
+    const brainMode: 'plan' | 'diff' | 'auto' | 'yolo' = options.yolo
+      ? 'yolo'
+      : options.plan
+      ? 'plan'
+      : options.diff
+      ? 'diff'
+      : options.auto
+      ? 'auto'
+      : 'diff';
 
     if (!prompt) {
-      // No args → open TUI with orchestrator
+      // No args → run onboarding checks first.
+      // If user is not authenticated or project isn't indexed, route them
+      // through a friendly welcome flow instead of dropping into an empty TUI.
+      const { runOnboarding } = await import('./onboarding.js');
+      const onboardingHandled = await runOnboarding();
+      if (onboardingHandled) return;
+
+      // Ready — open the TUI.
       const { render } = await import('ink');
       const React = await import('react');
-      const { App } = await import('../tui/App.js');
+      const { BrainApp } = await import('../tui/BrainApp.js');
       const app = render(
-        React.default.createElement(App, {
+        React.default.createElement(BrainApp, {
           modelPreference: options.model,
-          agentMode,
-          useOrchestrator: !options.legacy,
+          agentMode: brainMode,
         })
       );
       await app.waitUntilExit();
       return;
     }
 
-    // Legacy pipeline mode
-    if (options.legacy) {
-      await runOneShotPipeline(prompt, options);
-      return;
-    }
-
-    // V2 orchestrator mode (old default, now behind --v2)
-    if (options.v2) {
-      const { runOrchestratorCLI } = await import('./commands/orchestrator.js');
-      await runOrchestratorCLI(prompt);
-      return;
-    }
-
-    // Default: Mint Phase 1 — smart context + DeepSeek
-    // If no local DEEPSEEK_API_KEY, routes through gateway automatically
-    const { runMintTask } = await import('../agent/mint-loop.js');
-    const forceModel = options.think ? 'deepseek-reasoner' as const : options.fast ? 'deepseek-chat' as const : undefined;
-
-    try {
-      const result = await runMintTask(prompt, {
-        cwd: process.cwd(),
-        forceModel,
-        stream: true,
-        callbacks: {
-          onProgress: (msg) => process.stderr.write(chalk.dim(`  ${msg}\n`)),
-          onStream: (text) => process.stdout.write(text),
-          onToolCall: (tool, cmd) => process.stderr.write(chalk.dim(`  [tool] ${tool}: ${cmd.slice(0, 80)}\n`)),
-        },
-      });
-
-      process.stdout.write('\n');
-
-      // Show diffs
-      if (result.diffs && result.diffs.length > 0) {
-        console.log(chalk.cyan('\n  Changes:'));
-        for (const d of result.diffs) {
-          console.log(chalk.green(`  + ${d.file}`) + chalk.dim(` (+${d.additions} -${d.deletions})`));
-        }
-
-        // Ask to apply
-        const answer = await askUser('\n  Apply changes? [Y/n] ');
-        if (answer.toLowerCase() !== 'n') {
-          const { applyExecDiffs } = await import('./exec.js');
-          applyExecDiffs(result.diffs, process.cwd());
-        }
-      }
-
-      // Show cost summary
-      const claudeEstimate = result.tokensUsed * 0.000015; // rough Opus estimate
-      const savingsPct = claudeEstimate > 0 ? Math.round((1 - result.cost / claudeEstimate) * 100) : 0;
-      console.log(chalk.dim(`\n  $${result.cost.toFixed(4)} · ${(result.durationMs / 1000).toFixed(1)}s · ${result.tokensUsed} tokens · ${result.model}`));
-      if (savingsPct > 0) {
-        console.log(chalk.dim(`  Claude Code estimate: ~$${claudeEstimate.toFixed(2)} · saved ${savingsPct}%`));
-      }
-      console.log('');
-    } catch (err) {
-      console.error(chalk.red(`\n  Error: ${err instanceof Error ? err.message : String(err)}`));
-      process.exit(1);
-    }
+    await runOneShotBrain(prompt, {
+      model: options.model,
+      think: options.think,
+      fast: options.fast,
+      auto: options.auto || options.yolo,
+    });
   });
 
 // Exec command — headless mode for agent integration
@@ -208,14 +158,23 @@ program
   .description('Set a configuration value')
   .action(setConfig);
 
-// Compare command
+// Trace command — reliability/observability for brain runs
 program
-  .command('compare <prompt...>')
-  .description('Run prompt on multiple models and compare results')
-  .option('--models <models>', 'Comma-separated list of models', 'deepseek,sonnet')
-  .action(async (promptParts: string[], options) => {
-    const prompt = promptParts.join(' ');
-    await compareModels(prompt, options);
+  .command('trace [sessionId]')
+  .description('List recent agent sessions, or replay one by session id')
+  .option('-n, --limit <n>', 'How many sessions to list', '20')
+  .option('--tail', 'Follow the most recent live session')
+  .action(async (sessionId: string | undefined, options: { limit?: string; tail?: boolean }) => {
+    const { runTraceList, runTraceReplay, runTraceTail } = await import('./commands/trace.js');
+    if (options.tail) {
+      await runTraceTail();
+      return;
+    }
+    if (sessionId) {
+      runTraceReplay(sessionId);
+      return;
+    }
+    runTraceList(parseInt(options.limit ?? '20', 10) || 20);
   });
 
 // Usage command (legacy text view)
@@ -233,6 +192,18 @@ program
     const { renderDashboard } = await import('../usage/dashboard.js');
     await renderDashboard();
   });
+
+// Quota command — show remaining free requests
+program
+  .command('quota')
+  .description('Show your free tier usage and remaining requests')
+  .action(showQuota);
+
+// Account dashboard command
+program
+  .command('account')
+  .description('Show account overview with usage, quota, and settings')
+  .action(showAccount);
 
 // Savings command — one-liner for sharing
 program
@@ -266,14 +237,23 @@ program
   .action(async (promptParts: string[], options) => {
     const { render } = await import('ink');
     const React = await import('react');
-    const { App } = await import('../tui/App.js');
+    const { BrainApp } = await import('../tui/BrainApp.js');
     const initialPrompt = promptParts.join(' ').trim();
-    const agentMode = options.yolo ? 'yolo' : options.plan ? 'plan' : options.diff ? 'diff' : options.auto ? 'auto' : undefined;
+    const brainMode: 'plan' | 'diff' | 'auto' | 'yolo' = options.yolo
+      ? 'yolo'
+      : options.plan
+      ? 'plan'
+      : options.diff
+      ? 'diff'
+      : options.auto
+      ? 'auto'
+      : 'diff';
+
     const app = render(
-      React.default.createElement(App, {
+      React.default.createElement(BrainApp, {
         initialPrompt: initialPrompt || undefined,
         modelPreference: options.model,
-        agentMode,
+        agentMode: brainMode,
       })
     );
     await app.waitUntilExit();
@@ -293,88 +273,14 @@ program
   .action(async (taskParts: string[], options) => {
     const task = taskParts.join(' ').trim();
     if (!task) {
-      console.error(chalk.red('Error: task description required. Example: axon agent "add a hello world function"'));
+      console.error(chalk.red('Error: task description required. Example: mint agent "add a hello world function"'));
       process.exit(1);
     }
-    const { runAgent } = await import('../agent/index.js');
-    type AgentMode = 'yolo' | 'plan' | 'diff' | 'auto';
-    const mode: AgentMode = resolveAgentMode(options);
-
-    const abortController = new AbortController();
-
-    // Handle Ctrl+C
-    process.on('SIGINT', () => {
-      abortController.abort();
-      process.stdout.write('\n' + chalk.yellow('[agent] Interrupted\n'));
-      process.exit(0);
+    const mode: 'yolo' | 'plan' | 'diff' | 'auto' = resolveAgentMode(options);
+    await runOneShotBrain(task, {
+      model: options.model,
+      auto: mode === 'auto' || mode === 'yolo',
     });
-
-    console.log(chalk.cyan(`\n[axon agent] Task: ${task}`));
-    console.log(chalk.gray(`[axon agent] Model: ${options.model} | Mode: ${mode} | cwd: ${process.cwd()}\n`));
-
-    // Interactive approval callbacks (used in auto/diff modes)
-    const readline = await import('node:readline');
-
-    const onIterationApprovalNeeded = async (
-      iteration: number,
-      toolCalls: Array<{ name: string; input: Record<string, unknown> }>,
-    ): Promise<boolean> => {
-      console.log(chalk.blue(`\n[review] Iteration ${iteration} proposes destructive actions:`));
-      for (const toolCall of toolCalls) {
-        const preview = JSON.stringify(toolCall.input).slice(0, 120);
-        console.log(chalk.dim(`  - ${toolCall.name} ${preview}`));
-      }
-
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      return new Promise(resolve => {
-        rl.question(chalk.yellow('Continue with this iteration? [y/N] '), (answer) => {
-          rl.close();
-          resolve(answer.trim().toLowerCase() === 'y');
-        });
-      });
-    };
-
-    const onApprovalNeeded = async (toolName: string, toolInput: Record<string, unknown>): Promise<boolean> => {
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      return new Promise(resolve => {
-        rl.question(
-          chalk.yellow(`\n[approve] ${toolName}(${JSON.stringify(toolInput).slice(0, 80)})\nAllow? [y/n] `),
-          (answer) => {
-            rl.close();
-            resolve(answer.trim().toLowerCase() === 'y');
-          }
-        );
-      });
-    };
-
-    const onDiffProposed = async (filePath: string, diff: string): Promise<boolean> => {
-      const { formatRawUnifiedDiff } = await import('../pipeline/index.js');
-      console.log(chalk.blue(`\n--- diff: ${filePath} ---`));
-      console.log(formatRawUnifiedDiff(diff));
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-      return new Promise(resolve => {
-        rl.question(chalk.yellow('Apply? [y/n] '), (answer) => {
-          rl.close();
-          resolve(answer.trim().toLowerCase() === 'y');
-        });
-      });
-    };
-
-    try {
-      await runAgent(task, {
-        model: options.model,
-        cwd: process.cwd(),
-        signal: abortController.signal,
-        verbose: options.verbose ?? false,
-        mode,
-        onApprovalNeeded: mode !== 'yolo' ? onApprovalNeeded : undefined,
-        onDiffProposed: mode === 'diff' ? onDiffProposed : undefined,
-        onIterationApprovalNeeded: mode === 'diff' ? onIterationApprovalNeeded : undefined,
-      });
-    } catch (err) {
-      console.error(chalk.red('[agent error]'), err instanceof Error ? err.message : String(err));
-      process.exit(1);
-    }
   });
 
 // Models command
@@ -626,270 +532,114 @@ async function generateMintMd(
   return lines.join('\n');
 }
 
-// ─── One-shot pipeline ──────────────────────────────────────────────────────
+// ─── Brain one-shot runner ──────────────────────────────────────────────────
 
-async function runOneShotPipeline(
-  task: string,
-  options: { model?: string; verbose?: boolean },
+async function runOneShotBrain(
+  prompt: string,
+  options: { model?: string; think?: boolean; fast?: boolean; auto?: boolean },
 ): Promise<void> {
-  const { runPipeline, formatDiffs, formatCostSummary } = await import('../pipeline/index.js');
-  const { createUsageTracker } = await import('../usage/tracker.js');
-  const { MODELS } = await import('../providers/types.js');
-  const { getTier } = await import('../providers/tiers.js');
+  const { runHeadless } = await import('../brain/index.js');
   const cwd = process.cwd();
 
-  const modelMap: Record<string, string> = {
-    deepseek: 'deepseek-v3', sonnet: 'claude-sonnet-4', opus: 'claude-opus-4',
-    gemini: 'gemini-2-flash', groq: 'groq-llama-70b',
-  };
-  const modelId = options.model && options.model !== 'auto'
-    ? (modelMap[options.model] ?? options.model) as import('../providers/types.js').ModelId
-    : undefined;
-
-  console.log(chalk.cyan(`\n  Task: ${task}\n`));
-
-  const abortController = new AbortController();
-  process.on('SIGINT', () => {
-    abortController.abort();
+  const abort = new AbortController();
+  const onSigint = () => {
+    abort.abort();
     console.log(chalk.yellow('\n  Interrupted'));
-    process.exit(0);
-  });
+  };
+  process.on('SIGINT', onSigint);
+
+  const overrideModel = options.model && options.model !== 'auto' ? options.model : undefined;
 
   try {
-    let result: import('../pipeline/types.js').PipelineResult | undefined;
-
-    // Stream pipeline events — show each phase as it happens
-    for await (const chunk of runPipeline(task, {
+    const { result, error } = await runHeadless({
+      task: prompt,
       cwd,
-      model: modelId,
-      signal: abortController.signal,
-    })) {
-      switch (chunk.type) {
-        case 'phase-start': {
-          const model = chunk.phaseModel ? chalk.dim(` · ${chunk.phaseModel}`) : '';
-          process.stdout.write(chalk.cyan(`  ⟳ ${chunk.phase}${model}...`));
-          // Show subtask list for parallel builders
-          if (chunk.subtasks && chunk.subtasks.length > 0) {
-            process.stdout.write('\n');
-            for (let i = 0; i < chunk.subtasks.length; i++) {
-              const st = chunk.subtasks[i];
-              const prefix = i === chunk.subtasks.length - 1 ? '  └─' : '  ├─';
-              console.log(chalk.dim(`${prefix} #${st.id} ${st.description}`));
+      mode: options.auto ? 'auto' : 'auto',
+      signal: abort.signal,
+      model: overrideModel as import('../providers/types.js').ModelId | undefined,
+      reasoning: options.think ? true : options.fast ? false : undefined,
+      onEvent: (event) => {
+        switch (event.type) {
+          case 'classify':
+            process.stderr.write(
+              chalk.dim(
+                `  [classify] ${event.kind} · ${event.complexity} · ${event.model} (conf ${event.confidence.toFixed(2)})\n`,
+              ),
+            );
+            break;
+          case 'context.retrieved':
+            process.stderr.write(
+              chalk.dim(`  [context] ${event.files.length} files · ${event.tokensUsed} tokens\n`),
+            );
+            break;
+          case 'tool.call':
+            process.stderr.write(chalk.dim(`  [tool] ${event.name}\n`));
+            break;
+          case 'tool.result':
+            if (!event.ok) {
+              process.stderr.write(chalk.red(`  [error] ${event.output.slice(0, 120)}\n`));
             }
-          }
-          break;
+            break;
+          case 'diff.applied':
+            process.stderr.write(
+              chalk.green(`  + ${event.file}`) +
+                chalk.dim(` (+${event.additions} -${event.deletions})\n`),
+            );
+            break;
+          case 'text.delta':
+            process.stdout.write(event.text);
+            break;
+          case 'warn':
+            process.stderr.write(chalk.yellow(`  [warn] ${event.message}\n`));
+            break;
+          case 'error':
+            process.stderr.write(chalk.red(`  [error] ${event.error}\n`));
+            break;
         }
-
-        case 'phase-done': {
-          // Clear the "⟳ PHASE..." line and replace with "✓ PHASE"
-          process.stdout.write('\r\x1B[K'); // clear current line
-          const dur = chunk.phaseDuration != null ? chalk.dim(` · ${chunk.phaseDuration < 1000 ? `${chunk.phaseDuration}ms` : `${(chunk.phaseDuration / 1000).toFixed(1)}s`}`) : '';
-          const cost = chunk.phaseCost != null ? chalk.dim(` · ${chunk.phaseCost < 0.01 ? `${(chunk.phaseCost * 100).toFixed(3)}¢` : `$${chunk.phaseCost.toFixed(4)}`}`) : '';
-          console.log(chalk.green(`  ✓ ${chunk.phase}${dur}${cost}`));
-          if (chunk.phaseSummary) {
-            console.log(chalk.dim(`    ${chunk.phaseSummary}`));
-          }
-          // Show completed subtasks
-          if (chunk.subtasks && chunk.subtasks.length > 0) {
-            for (let i = 0; i < chunk.subtasks.length; i++) {
-              const st = chunk.subtasks[i];
-              const prefix = i === chunk.subtasks.length - 1 ? '    └─' : '    ├─';
-              const stDur = st.duration != null ? ` · ${st.duration < 1000 ? `${st.duration}ms` : `${(st.duration / 1000).toFixed(1)}s`}` : '';
-              const stCost = st.cost != null ? ` · ${st.cost < 0.01 ? `${(st.cost * 100).toFixed(3)}¢` : `$${st.cost.toFixed(4)}`}` : '';
-              console.log(chalk.dim(`${prefix} ✓ #${st.id} ${st.description}${stDur}${stCost}`));
-            }
-          }
-          break;
-        }
-
-        case 'task-start':
-          if (chunk.task) {
-            console.log(chalk.cyan(`    ⟳ #${chunk.task.subtaskId ?? chunk.task.taskId} ${chunk.task.description}`));
-          }
-          break;
-
-        case 'task-progress':
-          if (chunk.task?.progressSummary) {
-            console.log(chalk.dim(`      ${chunk.task.progressSummary}`));
-          }
-          break;
-
-        case 'task-done':
-          if (chunk.task) {
-            const suffix = [
-              chunk.task.model,
-              chunk.task.duration != null ? (chunk.task.duration < 1000 ? `${chunk.task.duration}ms` : `${(chunk.task.duration / 1000).toFixed(1)}s`) : null,
-              chunk.task.cost != null ? (chunk.task.cost < 0.01 ? `${(chunk.task.cost * 100).toFixed(3)}¢` : `$${chunk.task.cost.toFixed(4)}`) : null,
-            ].filter(Boolean).join(' · ');
-            console.log(chalk.green(`    ✓ #${chunk.task.subtaskId ?? chunk.task.taskId} ${chunk.task.description}${suffix ? ` · ${suffix}` : ''}`));
-          }
-          break;
-
-        case 'task-failed':
-          if (chunk.task) {
-            console.log(chalk.red(`    ✗ #${chunk.task.subtaskId ?? chunk.task.taskId} ${chunk.task.description}`));
-            if (chunk.task.progressSummary) {
-              console.log(chalk.red(`      ${chunk.task.progressSummary}`));
-            }
-          }
-          break;
-
-        case 'task-notification':
-        case 'task-log':
-          break;
-
-        case 'text':
-          // Don't show raw text — we'll show formatted diffs from the result
-          break;
-
-        case 'done':
-          result = chunk.result;
-          break;
-
-        case 'error':
-          throw new Error(chunk.error);
-      }
-    }
-
-    if (!result) throw new Error('Pipeline completed without producing a result');
-
-    // Show the response text (without diff blocks or reasoning headers)
-    let textWithoutDiffs = result.response
-      .replace(/```diff[\s\S]*?```/g, '')
-      .replace(/^#{1,3}\s*Reasoning\b.*$/im, '')
-      .replace(/<think>[\s\S]*?<\/think>/g, '')
-      .trim();
-    textWithoutDiffs = textWithoutDiffs.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '').replace(/\n+$/, '');
-    if (textWithoutDiffs) {
-      console.log('\n' + textWithoutDiffs);
-    }
-
-    // Show colored diffs
-    if (result.diffs.length > 0) {
-      console.log(formatDiffs(result.diffs));
-    }
-
-    // Show cost summary
-    console.log(formatCostSummary(
-      result.cost,
-      result.opusCost,
-      result.duration,
-      result.diffs.map(d => d.filePath),
-    ));
-
-    // Track usage
-    const tracker = createUsageTracker(Date.now().toString(36), 'pipeline');
-    const modelInfo = MODELS[result.model];
-    tracker.track({
-      model: result.model,
-      provider: modelInfo?.provider ?? 'unknown',
-      tier: getTier(result.model),
-      inputTokens: result.inputTokens,
-      outputTokens: result.outputTokens,
-      cost: result.cost,
-      opusCost: result.opusCost,
-      savedAmount: Math.max(0, result.opusCost - result.cost),
-      routingReason: `pipeline → ${result.model}`,
-      taskPreview: task,
-      latencyMs: result.duration,
-      costSonnet: 0,
+      },
     });
 
-    // Apply diffs if any
-    if (result.diffs.length > 0) {
-      const answer = await askUser('\n  Apply changes? [Y/n] ');
-      if (answer.toLowerCase() !== 'n') {
-        applyDiffs(result.diffs, cwd);
-      } else {
-        console.log(chalk.dim('  Changes not applied.'));
-      }
+    process.stdout.write('\n');
+
+    if (error) {
+      console.error(chalk.red(`  Error: ${error}`));
+      process.exit(1);
     }
 
-    console.log('');
-  } catch (err) {
-    console.error(chalk.red(`\n  Error: ${err instanceof Error ? err.message : String(err)}`));
-    process.exit(1);
-  }
-}
-
-async function askUser(prompt: string): Promise<string> {
-  const { createInterface } = await import('node:readline');
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise(resolve => {
-    rl.question(prompt, (answer) => {
-      rl.close();
-      resolve(answer.trim());
-    });
-  });
-}
-
-function applyDiffs(
-  diffs: import('../pipeline/types.js').ParsedDiff[],
-  cwd: string,
-): void {
-  const cwdAbs = resolve(cwd);
-  for (const diff of diffs) {
-    const fullPath = resolve(cwdAbs, diff.filePath);
-    if (!fullPath.startsWith(cwdAbs + sep) && fullPath !== cwdAbs) {
-      console.log(chalk.red(`  ! Blocked path outside project: ${diff.filePath}`));
-      continue;
+    if (!result) {
+      console.error(chalk.red('  Brain produced no result'));
+      process.exit(1);
     }
 
     try {
-      // New file (old was /dev/null)
-      if (diff.oldContent === '') {
-        mkdirSync(dirname(fullPath), { recursive: true });
-        const newContent = diff.hunks
-          .flatMap(h => h.lines.filter(l => l.type !== 'remove').map(l => l.content))
-          .join('\n');
-        writeFileSync(fullPath, newContent + '\n', 'utf-8');
-        console.log(chalk.green(`  + Created ${diff.filePath}`));
-        continue;
-      }
-
-      // Edit existing file — apply hunks
-      const current = readFileSync(fullPath, 'utf-8');
-      let updated = current;
-
-      for (const hunk of diff.hunks) {
-        const removeLines = hunk.lines.filter(l => l.type === 'remove').map(l => l.content);
-        const addLines = hunk.lines.filter(l => l.type === 'add').map(l => l.content);
-
-        if (removeLines.length > 0) {
-          const oldBlock = removeLines.join('\n');
-          const newBlock = addLines.join('\n');
-          if (updated.includes(oldBlock)) {
-            updated = updated.replace(oldBlock, newBlock);
-          } else {
-            // Fallback: try matching each remove line individually (trimmed)
-            // Handles minor whitespace differences in model output
-            let fallbackUpdated = updated;
-            let allFound = true;
-            for (let i = 0; i < removeLines.length; i++) {
-              const removeLine = removeLines[i];
-              const addLine = addLines[i] ?? '';
-              if (fallbackUpdated.includes(removeLine)) {
-                fallbackUpdated = fallbackUpdated.replace(removeLine, addLine);
-              } else {
-                allFound = false;
-                break;
-              }
-            }
-            if (allFound && fallbackUpdated !== updated) {
-              updated = fallbackUpdated;
-            }
-          }
-        }
-      }
-
-      if (updated !== current) {
-        writeFileSync(fullPath, updated, 'utf-8');
-        console.log(chalk.green(`  ~ Modified ${diff.filePath}`));
-      } else {
-        console.log(chalk.yellow(`  ? Could not apply diff to ${diff.filePath} (text not found)`));
-      }
-    } catch (err) {
-      console.log(chalk.red(`  ! Error applying to ${diff.filePath}: ${err instanceof Error ? err.message : String(err)}`));
+      const { trackBrainRun } = await import('../usage/tracker.js');
+      trackBrainRun({
+        sessionId: Date.now().toString(36),
+        task: prompt,
+        model: result.model,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+        cost: result.totalCostUsd,
+        durationMs: result.durationMs,
+      });
+    } catch {
+      /* best-effort */
     }
+
+    const filesCount = result.filesTouched.length;
+    if (filesCount > 0) {
+      console.log(chalk.cyan(`\n  Touched ${filesCount} file${filesCount === 1 ? '' : 's'}:`));
+      for (const f of result.filesTouched) console.log(chalk.dim(`  - ${f}`));
+    }
+
+    const totalTokens = result.inputTokens + result.outputTokens;
+    console.log(
+      chalk.dim(
+        `\n  $${result.totalCostUsd.toFixed(4)} · ${(result.durationMs / 1000).toFixed(1)}s · ${totalTokens} tokens · ${result.model}`,
+      ),
+    );
+    console.log('');
+  } finally {
+    process.off('SIGINT', onSigint);
   }
 }
