@@ -32,6 +32,7 @@ export const MODEL_TIERS: Record<ModelId, ContextTier> = {
   'groq-gpt-oss-120b':   'fast',
   'groq-gpt-oss-20b':    'ultra',
   'grok-4-beta':          'apex',
+  'grok-4.1-fast':        'smart',
   'mistral-small':        'ultra',
 };
 

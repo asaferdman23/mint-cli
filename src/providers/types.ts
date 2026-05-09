@@ -307,4 +307,5 @@ export interface Provider {
   name: string;
   complete(request: CompletionRequest): Promise<CompletionResponse>;
   streamComplete?(request: CompletionRequest): AsyncIterable<string>;
+  streamAgent?(request: CompletionRequest): AsyncIterable<AgentStreamChunk>;
 }

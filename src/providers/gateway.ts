@@ -31,6 +31,25 @@ function buildGatewayError(kind: 'chat' | 'agent', status: number, body: string)
     return new Error(`Gateway ${kind} error 401: Unauthorized. ${AUTH_HELP}`)
   }
 
+  if (status === 429) {
+    // Parse error body for quota info
+    try {
+      const data = JSON.parse(body)
+      if (data.error?.includes('quota') || data.error?.includes('limit')) {
+        return new Error(
+          `You've used all your free requests.\n\n` +
+          `To continue:\n` +
+          `  • Upgrade to Pro: https://usemint.dev/upgrade\n` +
+          `  • Add your own API keys: mint config:set providers.deepseek <key>\n` +
+          `  • Check quota: mint quota`
+        )
+      }
+    } catch {
+      // Fall through to generic 429
+    }
+    return new Error(`Gateway ${kind} error 429: Rate limit exceeded. Run 'mint quota' to check your usage.`)
+  }
+
   return new Error(`Gateway ${kind} error ${status}: ${body}`)
 }
 

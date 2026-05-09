@@ -1,19 +1,12 @@
 /**
  * Headless exec mode — runs a task with NO interactive TUI.
  *
- * Outputs structured JSON to stdout, progress to stderr.
- * Designed for agent integration (OpenClaw, LangChain, scripts).
- *
- * Usage:
- *   mint exec "fix the auth bug"           → JSON with diffs (not applied)
- *   mint exec --apply "fix the auth bug"   → JSON + auto-apply diffs
- *   mint exec --think "complex refactor"   → Force deepseek-reasoner
- *   mint exec --fast "rename variable"     → Force deepseek-chat
+ * Outputs structured JSON to stdout, progress to stderr. Designed for agent
+ * integration (scripts, CI, other orchestrators). All execution goes through
+ * the brain; the JSON shape is preserved for byte-compat with existing callers.
  */
-import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
-import { join, dirname, resolve, sep } from 'node:path';
-import { runMintTask, type TaskResult, type ParsedDiff, type MintLoopOptions } from '../agent/mint-loop.js';
-import type { DeepSeekModel } from '../context/classifier.js';
+import { runHeadless } from '../brain/index.js';
+import type { ModelId } from '../providers/types.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -56,63 +49,83 @@ export interface ExecResult {
   error?: string;
 }
 
-// ─── Progress to stderr ─────────────────────────────────────────────────────
-
 function progress(msg: string): void {
   process.stderr.write(`[mint] ${msg}\n`);
 }
 
-// ─── Main exec function ─────────────────────────────────────────────────────
+// ─── Main ──────────────────────────────────────────────────────────────────
 
 export async function runExec(options: ExecOptions): Promise<ExecResult> {
   const cwd = options.workdir ?? process.cwd();
-  const forceModel: DeepSeekModel | undefined = options.think
-    ? 'deepseek-reasoner'
-    : options.fast
-      ? 'deepseek-chat'
-      : undefined;
 
   try {
-    const loopOptions: MintLoopOptions = {
+    const { result, error } = await runHeadless({
+      task: options.task,
       cwd,
-      forceModel,
-      maxToolCalls: options.maxToolCalls ?? 5,
-      stream: false,
-      callbacks: {
-        onProgress: progress,
-        onToolCall: (tool, cmd) => progress(`Tool: ${tool} ${cmd.slice(0, 80)}`),
+      mode: options.apply ? 'auto' : 'plan',
+      reasoning: options.think ? true : options.fast ? false : undefined,
+      onEvent: (event) => {
+        switch (event.type) {
+          case 'classify':
+            progress(`classify ${event.kind}/${event.complexity} → ${event.model}`);
+            break;
+          case 'tool.call':
+            progress(`tool ${event.name}`);
+            break;
+          case 'diff.applied':
+            progress(`applied ${event.file} (+${event.additions} -${event.deletions})`);
+            break;
+        }
       },
-    };
+    });
 
-    const result = await runMintTask(options.task, loopOptions);
-
-    // Apply diffs if requested
-    let applied = false;
-    if (options.apply && result.diffs && result.diffs.length > 0) {
-      applyExecDiffs(result.diffs, cwd);
-      applied = true;
-      progress(`Applied changes to ${result.diffs.length} file(s)`);
+    if (error || !result) {
+      return {
+        success: false,
+        task: options.task,
+        complexity: 'unknown',
+        model: 'unknown',
+        stats: emptyStats(),
+        error: error ?? 'brain produced no result',
+      };
     }
 
-    progress(`Done in ${(result.durationMs / 1000).toFixed(1)}s · $${result.cost.toFixed(4)}`);
+    try {
+      const { trackBrainRun } = await import('../usage/tracker.js');
+      trackBrainRun({
+        sessionId: Date.now().toString(36),
+        task: options.task,
+        model: result.model,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+        cost: result.totalCostUsd,
+        durationMs: result.durationMs,
+      });
+    } catch {
+      /* best-effort */
+    }
 
     return {
-      success: true,
+      success: result.success,
       task: options.task,
-      complexity: result.complexity,
+      complexity: 'brain',
       model: result.model,
-      diffs: result.diffs,
-      applied: options.apply ? applied : undefined,
-      message: result.message,
-      toolCalls: result.toolCalls,
+      diffs: result.filesTouched.map((file) => ({
+        file,
+        hunks: '',
+        additions: 0,
+        deletions: 0,
+      })),
+      applied: options.apply,
+      message: result.output || undefined,
       stats: {
-        inputTokens: result.contextTokens,
-        outputTokens: result.tokensUsed - result.contextTokens,
-        cost: result.cost,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+        cost: result.totalCostUsd,
         durationMs: result.durationMs,
-        filesSearched: result.filesSearched,
-        filesLoaded: result.filesLoaded,
-        contextTokens: result.contextTokens,
+        filesSearched: 0,
+        filesLoaded: 0,
+        contextTokens: 0,
       },
     };
   } catch (err) {
@@ -123,67 +136,20 @@ export async function runExec(options: ExecOptions): Promise<ExecResult> {
       task: options.task,
       complexity: 'unknown',
       model: 'unknown',
-      stats: {
-        inputTokens: 0,
-        outputTokens: 0,
-        cost: 0,
-        durationMs: 0,
-        filesSearched: 0,
-        filesLoaded: 0,
-        contextTokens: 0,
-      },
+      stats: emptyStats(),
       error: errorMsg,
     };
   }
 }
 
-// ─── Diff application (shared) ──────────────────────────────────────────────
-
-export function applyExecDiffs(diffs: ParsedDiff[], cwd: string): void {
-  const cwdAbs = resolve(cwd);
-
-  for (const diff of diffs) {
-    const fullPath = resolve(cwdAbs, diff.file);
-    if (!fullPath.startsWith(cwdAbs + sep) && fullPath !== cwdAbs) {
-      progress(`Blocked path outside project: ${diff.file}`);
-      continue;
-    }
-
-    try {
-      // Parse hunks and apply changes
-      const hunkLines = diff.hunks.split('\n');
-      const removeLines: string[] = [];
-      const addLines: string[] = [];
-
-      for (const line of hunkLines) {
-        if (line.startsWith('-') && !line.startsWith('---')) {
-          removeLines.push(line.slice(1));
-        } else if (line.startsWith('+') && !line.startsWith('+++')) {
-          addLines.push(line.slice(1));
-        }
-      }
-
-      if (removeLines.length === 0 && addLines.length > 0) {
-        // New file
-        mkdirSync(dirname(fullPath), { recursive: true });
-        writeFileSync(fullPath, addLines.join('\n') + '\n', 'utf-8');
-        progress(`Created ${diff.file}`);
-        continue;
-      }
-
-      // Edit existing file
-      const current = readFileSync(fullPath, 'utf-8');
-      const oldBlock = removeLines.join('\n');
-      const newBlock = addLines.join('\n');
-
-      if (current.includes(oldBlock)) {
-        writeFileSync(fullPath, current.replace(oldBlock, newBlock), 'utf-8');
-        progress(`Modified ${diff.file}`);
-      } else {
-        progress(`Could not apply diff to ${diff.file} (text not found)`);
-      }
-    } catch (err) {
-      progress(`Error applying to ${diff.file}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
+function emptyStats(): ExecResult['stats'] {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    cost: 0,
+    durationMs: 0,
+    filesSearched: 0,
+    filesLoaded: 0,
+    contextTokens: 0,
+  };
 }

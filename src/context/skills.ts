@@ -6,7 +6,24 @@
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import type { SpecialistType } from '../agents/specialists/types.js';
+
+/**
+ * Historic specialist-type union, used as the `applies_to` filter in skill
+ * frontmatter. Kept as a string so authored skills don't break; the brain's
+ * retriever treats this as a tag, not a narrow enum.
+ */
+export type SpecialistType =
+  | 'frontend'
+  | 'backend'
+  | 'fullstack'
+  | 'database'
+  | 'devops'
+  | 'mobile'
+  | 'ai'
+  | 'testing'
+  | 'docs'
+  | 'debugging'
+  | 'general';
 
 export interface Skill {
   name: string;

@@ -10,8 +10,41 @@ import { qwenProvider } from './qwen.js';
 import { geminiProvider } from './gemini.js';
 import { gatewayProvider } from './gateway.js';
 
-// Registry of all providers
-const providers: Map<string, Provider> = new Map([
+// Per-model fallback chain — used by completeWithFallback / streamAgent when
+// a provider returns a retryable error. Keep this in sync with MODELS.
+const FALLBACK_CHAIN: Partial<Record<ModelId, ModelId[]>> = {
+  'mistral-small': ['groq-llama-70b', 'deepseek-v3'],
+  'deepseek-v3': ['groq-llama-70b', 'mistral-small'],
+  'deepseek-coder': ['deepseek-v3', 'groq-llama-70b'],
+  'grok-4-beta': ['grok-4.1-fast', 'deepseek-v3'],
+  'grok-4.1-fast': ['deepseek-v3', 'groq-llama-70b'],
+  'grok-3': ['grok-4-beta', 'deepseek-v3'],
+  'grok-3-fast': ['grok-3', 'deepseek-v3'],
+  'grok-3-mini-fast': ['mistral-small', 'deepseek-v3'],
+  'groq-llama-70b': ['deepseek-v3', 'mistral-small'],
+  'groq-llama-8b': ['mistral-small', 'groq-llama-70b'],
+  'groq-gpt-oss-120b': ['deepseek-v3', 'groq-llama-70b'],
+  'groq-gpt-oss-20b': ['mistral-small', 'deepseek-v3'],
+  'claude-sonnet-4': ['deepseek-v3', 'groq-llama-70b'],
+  'claude-opus-4': ['claude-sonnet-4', 'deepseek-v3'],
+  'gemini-2-flash': ['mistral-small', 'deepseek-v3'],
+  'gemini-2-pro': ['gemini-2-flash', 'deepseek-v3'],
+  'gemini-1-5-flash': ['mistral-small', 'deepseek-v3'],
+  'gemini-1-5-pro': ['gemini-2-pro', 'deepseek-v3'],
+  'gpt-4o': ['deepseek-v3', 'groq-llama-70b'],
+  'qwen-coder-32b': ['deepseek-v3', 'groq-llama-70b'],
+  'kimi-k2': ['deepseek-v3', 'groq-llama-70b'],
+  'moonshot-v1-8k': ['mistral-small', 'deepseek-v3'],
+  'moonshot-v1-32k': ['moonshot-v1-8k', 'deepseek-v3'],
+};
+
+function getFallbacks(model: ModelId): ModelId[] {
+  return FALLBACK_CHAIN[model] ?? ['deepseek-v3', 'groq-llama-70b'];
+}
+
+// Registry of all providers — typed as Provider so the discriminated union of
+// provider instances doesn't force TS to narrow to one concrete class.
+const providers: Map<string, Provider> = new Map<string, Provider>([
   ['anthropic', anthropicProvider],
   ['deepseek', deepseekProvider],
   ['kimi', kimiProvider],
@@ -65,7 +98,6 @@ function isRetryableError(err: unknown): boolean {
 }
 
 export async function completeWithFallback(request: CompletionRequest): Promise<CompletionResponse> {
-  const { getFallbacks } = await import('../agents/model-selector.js');
   const models: ModelId[] = [request.model, ...getFallbacks(request.model)];
 
   for (const model of models) {
@@ -84,7 +116,6 @@ export async function completeWithFallback(request: CompletionRequest): Promise<
 }
 
 export async function* streamCompleteWithFallback(request: CompletionRequest): AsyncIterable<string> {
-  const { getFallbacks } = await import('../agents/model-selector.js');
   const models: ModelId[] = [request.model, ...getFallbacks(request.model)];
 
   for (const model of models) {
@@ -137,7 +168,6 @@ export async function* streamAgent(request: CompletionRequest): AsyncIterable<Ag
   }
 
   // Try fallback models that have direct keys
-  const { getFallbacks } = await import('../agents/model-selector.js');
   const fallbacks = getFallbacks(request.model);
   for (const fallbackModel of fallbacks) {
     const fbInfo = MODELS[fallbackModel];

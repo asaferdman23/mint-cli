@@ -45,7 +45,7 @@ export class DeepSeekProvider implements Provider {
       messages: request.messages.map(m => ({
         role: m.role,
         content: m.content,
-      })),
+      })) as OpenAI.Chat.ChatCompletionMessageParam[],
     });
 
     const latency = Date.now() - startTime;
@@ -81,7 +81,7 @@ export class DeepSeekProvider implements Provider {
       messages: request.messages.map(m => ({
         role: m.role,
         content: m.content,
-      })),
+      })) as OpenAI.Chat.ChatCompletionMessageParam[],
       stream: true,
     }, { signal: request.signal });
 

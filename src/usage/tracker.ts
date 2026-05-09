@@ -84,3 +84,50 @@ export function getMonthCost(): { cost: number; opusCost: number; saved: number;
     return { cost: 0, opusCost: 0, saved: 0, requests: 0 };
   }
 }
+
+// ─── Brain-stream tracking ──────────────────────────────────────────────────
+
+/**
+ * Track a brain run from its final BrainResult. Computes real Opus comparison
+ * from actual token counts — no more hardcoded multipliers.
+ */
+export interface BrainRunSummary {
+  sessionId: string;
+  task: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cost: number;
+  durationMs: number;
+  /** Optional — the kind/provider routing decision, for reporting. */
+  kind?: string;
+  provider?: string;
+  tier?: string;
+}
+
+export function trackBrainRun(summary: BrainRunSummary): void {
+  try {
+    const opusCost = calculateOpusCost(summary.inputTokens, summary.outputTokens);
+    const costSonnet = calculateSonnetCost(summary.inputTokens, summary.outputTokens);
+    const record: Omit<UsageRecord, 'id'> = {
+      timestamp: Date.now(),
+      sessionId: summary.sessionId,
+      command: 'brain',
+      model: summary.model,
+      provider: summary.provider ?? 'gateway',
+      tier: summary.tier ?? 'brain',
+      inputTokens: summary.inputTokens,
+      outputTokens: summary.outputTokens,
+      cost: summary.cost,
+      opusCost,
+      savedAmount: Math.max(0, opusCost - summary.cost),
+      routingReason: summary.kind ? `brain → ${summary.kind}` : 'brain',
+      taskPreview: summary.task.slice(0, 80),
+      latencyMs: summary.durationMs,
+      costSonnet,
+    };
+    getDb().insert(record);
+  } catch {
+    /* tracking failures never crash the main flow */
+  }
+}

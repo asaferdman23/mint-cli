@@ -1,8 +1,19 @@
 // src/tui/types.ts
-import type { PipelinePhaseName, PipelineTaskStatus } from '../pipeline/types.js';
+// These types used to come from the legacy pipeline; inlined after the
+// deletes so the TUI stays independent of the removed pipeline module.
 
-export type PhaseName = PipelinePhaseName;
+export type PhaseName = 'SCOUT' | 'ARCHITECT' | 'BUILDER' | 'REVIEWER';
 export type PhaseStatus = 'pending' | 'active' | 'done' | 'skipped';
+
+export type PipelineTaskStatus =
+  | 'pending'
+  | 'queued'
+  | 'blocked'
+  | 'running'
+  | 'waiting_approval'
+  | 'done'
+  | 'retry'
+  | 'failed';
 
 export interface SubtaskData {
   id: string;

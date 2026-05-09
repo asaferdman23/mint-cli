@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "defaults": {
+    "toolBudget": 20,
+    "maxIterations": 30,
+    "compactionTokens": 80000
+  },
+  "routes": {
+    "question": {
+      "model": "mistral-small",
+      "fallbacks": ["groq-llama-70b"],
+      "toolBudget": 3,
+      "maxIterations": 4,
+      "needsPlan": false
+    },
+    "edit_small": {
+      "model": "deepseek-v3",
+      "fallbacks": ["kimi-k2", "groq-llama-70b"],
+      "toolBudget": 10,
+      "maxIterations": 15,
+      "needsPlan": false
+    },
+    "edit_multi": {
+      "model": "kimi-k2",
+      "fallbacks": ["deepseek-v3", "groq-llama-70b"],
+      "toolBudget": 20,
+      "maxIterations": 25,
+      "needsPlan": false
+    },
+    "refactor": {
+      "model": "kimi-k2",
+      "fallbacks": ["deepseek-v3"],
+      "toolBudget": 30,
+      "maxIterations": 40,
+      "needsPlan": true
+    },
+    "debug": {
+      "model": "grok-4.1-fast",
+      "fallbacks": ["deepseek-v3", "kimi-k2"],
+      "toolBudget": 25,
+      "maxIterations": 30,
+      "needsPlan": false,
+      "providerOptions": { "reasoning": { "enabled": true } }
+    },
+    "scaffold": {
+      "model": "deepseek-v3",
+      "fallbacks": ["kimi-k2"],
+      "toolBudget": 15,
+      "maxIterations": 20,
+      "needsPlan": true
+    },
+    "review": {
+      "model": "mistral-small",
+      "fallbacks": ["deepseek-v3"],
+      "toolBudget": 5,
+      "maxIterations": 6,
+      "needsPlan": false
+    },
+    "explain": {
+      "model": "mistral-small",
+      "fallbacks": ["groq-llama-70b"],
+      "toolBudget": 0,
+      "maxIterations": 2,
+      "needsPlan": false
+    }
+  },
+  "complexityOverrides": {
+    "complex": {
+      "model": "grok-4-beta",
+      "providerOptions": { "reasoning": { "enabled": true } }
+    },
+    "moderate": {},
+    "simple": {},
+    "trivial": {
+      "model": "mistral-small"
+    }
+  },
+  "writeCode": {
+    "model": "deepseek-v3",
+    "fallbacks": ["kimi-k2"]
+  },
+  "embedding": {
+    "model": "embedding-small"
+  },
+  "classifier": {
+    "model": "mistral-small",
+    "timeoutMs": 4000,
+    "weights": {
+      "fileCount": 0.35,
+      "taskLength": 0.15,
+      "verbComplex": 0.25,
+      "pastSuccess": -0.25,
+      "hasMultipleFiles": 0.2,
+      "mentionsTest": 0.1
+    }
+  }
+}

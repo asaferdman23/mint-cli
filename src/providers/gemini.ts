@@ -99,7 +99,8 @@ export class GeminiProvider implements Provider {
 
     const model = this.getSDK().getGenerativeModel({
       model: modelString,
-      tools,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      tools: tools as any,
       systemInstruction: request.systemPrompt,
     });
 

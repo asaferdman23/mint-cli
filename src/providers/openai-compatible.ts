@@ -1,6 +1,13 @@
 // src/providers/openai-compatible.ts
 import OpenAI from 'openai';
-import type { Provider, CompletionRequest, CompletionResponse, ModelId, AgentStreamChunk } from './types.js';
+import type {
+  Provider,
+  ProviderId,
+  CompletionRequest,
+  CompletionResponse,
+  ModelId,
+  AgentStreamChunk,
+} from './types.js';
 import { calculateCost } from './router.js';
 import { config } from '../utils/config.js';
 import {
@@ -19,13 +26,13 @@ export interface OpenAICompatibleConfig {
 }
 
 export class OpenAICompatibleProvider implements Provider {
-  readonly id: string;
+  readonly id: ProviderId;
   readonly name: string;
   private client: OpenAI | null = null;
   private cfg: OpenAICompatibleConfig;
 
   constructor(cfg: OpenAICompatibleConfig) {
-    this.id = cfg.providerId;
+    this.id = cfg.providerId as ProviderId;
     this.name = cfg.providerName;
     this.cfg = cfg;
   }
@@ -58,13 +65,14 @@ export class OpenAICompatibleProvider implements Provider {
     const startTime = Date.now();
 
     const messages = buildOAIMessages(request);
-    const response = await client.chat.completions.create({
+    const response = (await client.chat.completions.create({
       model: modelString,
       max_tokens: request.maxTokens ?? 4096,
       temperature: request.temperature ?? 0.7,
       messages,
+      stream: false,
       ...request.providerOptions as Record<string, unknown>,
-    } as Parameters<typeof client.chat.completions.create>[0]);
+    } as Parameters<typeof client.chat.completions.create>[0])) as OpenAI.Chat.ChatCompletion;
 
     const latency = Date.now() - startTime;
     const inputTokens = response.usage?.prompt_tokens ?? 0;
@@ -85,14 +93,14 @@ export class OpenAICompatibleProvider implements Provider {
     const modelString = this.resolveModel(request.model);
     const messages = buildOAIMessages(request);
 
-    const stream = await client.chat.completions.create({
+    const stream = (await client.chat.completions.create({
       model: modelString,
       max_tokens: request.maxTokens ?? 4096,
       temperature: request.temperature ?? 0.7,
       messages,
       stream: true,
       ...request.providerOptions as Record<string, unknown>,
-    } as Parameters<typeof client.chat.completions.create>[0], { signal: request.signal });
+    } as Parameters<typeof client.chat.completions.create>[0], { signal: request.signal })) as AsyncIterable<OpenAI.Chat.ChatCompletionChunk>;
 
     for await (const chunk of stream) {
       const content = chunk.choices[0]?.delta?.content;
@@ -106,7 +114,7 @@ export class OpenAICompatibleProvider implements Provider {
     const messages = buildOpenAICompatibleAgentMessages(request);
     const tools = buildOpenAICompatibleToolDefinitions(request.tools);
 
-    const stream = await client.chat.completions.create({
+    const stream = (await client.chat.completions.create({
       model: modelString,
       max_tokens: request.maxTokens ?? 8192,
       temperature: request.temperature ?? 0.7,
@@ -115,7 +123,7 @@ export class OpenAICompatibleProvider implements Provider {
       tool_choice: tools && tools.length > 0 ? 'auto' : undefined,
       stream: true,
       ...request.providerOptions as Record<string, unknown>,
-    } as Parameters<typeof client.chat.completions.create>[0], { signal: request.signal });
+    } as Parameters<typeof client.chat.completions.create>[0], { signal: request.signal })) as AsyncIterable<OpenAI.Chat.ChatCompletionChunk>;
 
     const toolCallAccumulators: Map<number, { id: string; name: string; arguments: string }> = new Map();
 

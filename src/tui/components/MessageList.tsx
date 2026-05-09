@@ -1,12 +1,10 @@
 // src/tui/components/MessageList.tsx
-import React, { useEffect, useState } from 'react';
+//
+// Renders the chat transcript. Pipeline phase rendering was removed when the
+// brain took over — live tool calls are surfaced in BrainToolInspector, and
+// phase summaries flow through the normal text delta stream.
+import React from 'react';
 import { Box, Text } from 'ink';
-import {
-  ACTIVE_TASK_AUTO_EXPAND_DELAY_MS,
-  PipelinePhase,
-  countPhaseRenderLines,
-  renderPipelinePhaseLines,
-} from './PipelinePhase.js';
 import { MarkdownContent, countContentLines, renderMarkdownLineElements } from './MarkdownContent.js';
 import type { PipelinePhaseData } from '../types.js';
 
@@ -23,11 +21,8 @@ export interface ChatMessage {
 interface MessageListProps {
   messages: ChatMessage[];
   streamingContent: string;
-  /** Available height in terminal rows for the message area. */
   availableHeight?: number;
-  /** Live pipeline phases for the currently streaming message. */
   livePhases?: PipelinePhaseData[];
-  /** Line scroll offset (lines scrolled up from bottom). */
   scrollOffset?: number;
 }
 
@@ -39,11 +34,8 @@ function estimateMessageHeight(
   msg: ChatMessage,
   termWidth: number,
   isFirst: boolean,
-  livePhases?: PipelinePhaseData[],
-  nowMs = Date.now(),
 ): number {
   const contentWidth = Math.max(20, termWidth - 4);
-  const phases = msg.isStreaming ? livePhases : msg.phases;
   let lines = isFirst ? 0 : 1;
 
   if (msg.role === 'user') {
@@ -51,9 +43,8 @@ function estimateMessageHeight(
     return lines;
   }
 
-  lines += countPhaseRenderLines(phases, contentWidth, nowMs);
   if (hasVisibleAssistantBody(msg)) {
-    lines += 1;
+    lines += 1; // header
     lines += countContentLines(msg.content, contentWidth);
   }
 
@@ -64,11 +55,8 @@ function buildAssistantRenderLines(
   msg: ChatMessage,
   termWidth: number,
   isFirst: boolean,
-  livePhases?: PipelinePhaseData[],
-  nowMs = Date.now(),
 ): React.ReactElement[] {
   const contentWidth = Math.max(20, termWidth - 4);
-  const phases = msg.isStreaming ? livePhases : msg.phases;
   const lines: React.ReactElement[] = [];
 
   if (!isFirst) {
@@ -76,14 +64,6 @@ function buildAssistantRenderLines(
       <Box key={`${msg.id}-separator`} marginTop={0} marginBottom={0}>
         <Text dimColor>{'─'.repeat(Math.min(60, termWidth - 2))}</Text>
       </Box>,
-    );
-  }
-
-  if (phases && phases.length > 0) {
-    lines.push(
-      ...phases.flatMap((phase, phaseIndex) =>
-        renderPipelinePhaseLines(phase, contentWidth, `${msg.id}-phase-${phaseIndex}`, nowMs),
-      ),
     );
   }
 
@@ -100,35 +80,37 @@ function buildAssistantRenderLines(
   return lines;
 }
 
+function buildUserRenderLines(
+  msg: ChatMessage,
+  termWidth: number,
+  isFirst: boolean,
+): React.ReactElement[] {
+  const contentWidth = Math.max(20, termWidth - 4);
+  const lines: React.ReactElement[] = [];
+  if (!isFirst) {
+    lines.push(
+      <Box key={`${msg.id}-separator`} marginBottom={0}>
+        <Text dimColor>{'─'.repeat(Math.min(60, termWidth - 2))}</Text>
+      </Box>,
+    );
+  }
+  lines.push(
+    <Text key={`${msg.id}-header`} color="cyan" bold>
+      You
+    </Text>,
+  );
+  lines.push(...renderMarkdownLineElements(msg.content, contentWidth, `${msg.id}-user`));
+  return lines;
+}
+
 export function MessageList({
   messages,
   streamingContent,
   availableHeight,
-  livePhases,
   scrollOffset = 0,
 }: MessageListProps): React.ReactElement {
   const termWidth = process.stdout.columns ?? 80;
   const maxHeight = availableHeight ?? (process.stdout.rows ?? 24) - 6;
-  const [nowMs, setNowMs] = useState(() => Date.now());
-
-  useEffect(() => {
-    const hasActiveSingleTask = (livePhases ?? []).some((phase) =>
-      phase.status === 'active'
-      && phase.subtasks?.length === 1
-      && phase.subtasks[0]?.status === 'running'
-      && phase.subtasks[0]?.startedAt != null,
-    );
-
-    if (!hasActiveSingleTask) {
-      return undefined;
-    }
-
-    const timer = setInterval(() => {
-      setNowMs(Date.now());
-    }, Math.max(250, ACTIVE_TASK_AUTO_EXPAND_DELAY_MS / 6));
-
-    return () => clearInterval(timer);
-  }, [livePhases]);
 
   const allMessages = messages.map((msg) => {
     if (msg.isStreaming) {
@@ -137,158 +119,39 @@ export function MessageList({
     return msg;
   });
 
-  // Window: show as many recent messages as fit in available height
-  let visibleMessages = allMessages;
-  if (maxHeight > 0 && allMessages.length > 0) {
-    let totalLines = 0;
-    let startIdx = allMessages.length;
-
-    for (let i = allMessages.length - 1; i >= 0; i--) {
-      const isFirst = i === 0;
-      const msgHeight = estimateMessageHeight(allMessages[i], termWidth, isFirst, livePhases, nowMs);
-      if (totalLines + msgHeight > maxHeight && i < allMessages.length - 1) {
-        break;
-      }
-      totalLines += msgHeight;
-      startIdx = i;
+  // Flatten every message into line-sized React elements so scrolling is
+  // line-granular, not message-granular. Without this, long assistant
+  // replies are effectively unscrollable past their message boundary.
+  const allLines: React.ReactElement[] = [];
+  allMessages.forEach((msg, idx) => {
+    const isFirst = idx === 0;
+    if (msg.role === 'user') {
+      allLines.push(...buildUserRenderLines(msg, termWidth, isFirst));
+    } else {
+      allLines.push(...buildAssistantRenderLines(msg, termWidth, isFirst));
     }
+  });
 
-    visibleMessages = allMessages.slice(startIdx);
-  }
-
-  const truncated = visibleMessages.length < allMessages.length;
-  const contentWidth = Math.max(20, termWidth - 4);
-  const baseNoticeLines = truncated ? 1 : 0;
-  const lastVisibleIndex = visibleMessages.length - 1;
-  const lastVisibleMessage = lastVisibleIndex >= 0 ? visibleMessages[lastVisibleIndex] : undefined;
-
-  let effectiveScrollOffset = 0;
-  let lastMessageLineOffset = 0;
-  let lastMessageMaxLines: number | undefined;
-
-  if (
-    maxHeight > 0 &&
-    lastVisibleMessage &&
-    lastVisibleMessage.role === 'assistant'
-  ) {
-    const linesBeforeLastMessage = visibleMessages.slice(0, -1).reduce((total, msg, idx) => {
-      const isFirst = idx === 0 && !truncated;
-      return total + estimateMessageHeight(msg, termWidth, isFirst, livePhases, nowMs);
-    }, 0);
-    const lastIsFirst = lastVisibleIndex === 0 && !truncated;
-    const totalMessageLines = estimateMessageHeight(lastVisibleMessage, termWidth, lastIsFirst, livePhases, nowMs);
-
-    const computeViewport = (showScrollNotice: boolean) => {
-      const noticeLines = baseNoticeLines + (showScrollNotice ? 1 : 0);
-      const availableContentLines = Math.max(1, maxHeight - noticeLines - linesBeforeLastMessage);
-      const maxScrollableLines = Math.max(0, totalMessageLines - availableContentLines);
-      const clampedScrollOffset = Math.max(0, Math.min(scrollOffset, maxScrollableLines));
-
-      return {
-        availableContentLines,
-        clampedScrollOffset,
-      };
-    };
-
-    let viewport = computeViewport(scrollOffset > 0);
-    if ((scrollOffset > 0) !== (viewport.clampedScrollOffset > 0)) {
-      viewport = computeViewport(viewport.clampedScrollOffset > 0);
-    }
-
-    effectiveScrollOffset = viewport.clampedScrollOffset;
-    lastMessageLineOffset = Math.max(0, totalMessageLines - viewport.availableContentLines - effectiveScrollOffset);
-    lastMessageMaxLines = viewport.availableContentLines;
-  }
+  // Window: pin to the bottom, move `scrollOffset` lines up from there.
+  const windowSize = Math.max(1, maxHeight);
+  const totalLines = allLines.length;
+  const clampedOffset = Math.min(Math.max(0, scrollOffset), Math.max(0, totalLines - windowSize));
+  const end = totalLines - clampedOffset;
+  const start = Math.max(0, end - windowSize);
+  const visibleLines = allLines.slice(start, end);
 
   return (
-    <Box flexDirection="column" flexGrow={1} justifyContent="flex-end" paddingX={1} overflow="hidden">
-      {allMessages.length === 0 && (
-        <Box paddingTop={1}>
-          <Text dimColor>Type a message to start chatting. /help for commands. Ctrl+C to exit.</Text>
+    <Box flexDirection="column" paddingX={1} overflow="hidden" height={maxHeight}>
+      {visibleLines.map((element, i) => (
+        <React.Fragment key={`line-${start + i}`}>{element}</React.Fragment>
+      ))}
+      {clampedOffset > 0 && (
+        <Box marginTop={0}>
+          <Text dimColor>
+            ▲ {clampedOffset} more line{clampedOffset === 1 ? '' : 's'} below — ↓ / PgDn to scroll back
+          </Text>
         </Box>
       )}
-
-      {truncated && (
-        <Text dimColor>{'  ↑ '}{allMessages.length - visibleMessages.length} earlier messages</Text>
-      )}
-      {effectiveScrollOffset > 0 && (
-        <Text dimColor>{'  ↑ '}scrolled {effectiveScrollOffset} lines · ↓ to scroll down</Text>
-      )}
-
-      {visibleMessages.map((msg, idx) => {
-        const isFirst = idx === 0 && !truncated;
-        const isLast = idx === visibleMessages.length - 1;
-
-        if (msg.role === 'assistant' && isLast) {
-          const assistantLines = buildAssistantRenderLines(msg, termWidth, isFirst, livePhases, nowMs);
-          const visibleLines = assistantLines.slice(
-            lastMessageLineOffset,
-            lastMessageMaxLines !== undefined ? lastMessageLineOffset + lastMessageMaxLines : undefined,
-          );
-
-          return (
-            <Box key={msg.id} flexDirection="column" marginBottom={0}>
-              {visibleLines}
-            </Box>
-          );
-        }
-
-        return (
-          <Box key={msg.id} flexDirection="column" marginBottom={0}>
-            {/* Separator between turns (not before very first message) */}
-            {!isFirst && (
-              <Box marginTop={0} marginBottom={0}>
-                <Text dimColor>{'─'.repeat(Math.min(60, termWidth - 2))}</Text>
-              </Box>
-            )}
-
-            {msg.role === 'user' ? (
-              <Box flexDirection="column">
-                <Text color="cyan">{msg.content}</Text>
-              </Box>
-            ) : (
-              <Box flexDirection="column">
-                {/* Pipeline phases — use live phases for streaming message */}
-                {(() => {
-                  const phases = msg.isStreaming ? livePhases : msg.phases;
-                  if (phases && phases.length > 0) {
-                    return (
-                      <Box flexDirection="column" marginBottom={0}>
-                        {phases.map((phase, phaseIndex) => (
-                          <PipelinePhase key={`${phase.name}-${phaseIndex}`} phase={phase} />
-                        ))}
-                      </Box>
-                    );
-                  }
-                  return null;
-                })()}
-
-                {/* Assistant response text */}
-                {hasVisibleAssistantBody(msg) && (
-                  <Box flexDirection="column">
-                    <Text color="green" bold>
-                      {'Mint'}
-                      {msg.model ? <Text dimColor> [{msg.model}]</Text> : null}
-                    </Text>
-                    {(() => {
-                      const content = msg.content;
-                      const isLast = idx === visibleMessages.length - 1;
-                      return (
-                        <MarkdownContent
-                          content={content}
-                          lineOffset={isLast ? lastMessageLineOffset : 0}
-                          maxLines={isLast ? lastMessageMaxLines : undefined}
-                          maxWidth={contentWidth}
-                        />
-                      );
-                    })()}
-                  </Box>
-                )}
-              </Box>
-            )}
-          </Box>
-        );
-      })}
     </Box>
   );
 }
