@@ -187,6 +187,22 @@ program
     await runResume(sessionId);
   });
 
+// Tune command — outcomes-driven classifier and route tuning
+program
+  .command('tune')
+  .description('Analyze recent outcomes and propose routing changes')
+  .option('--apply', 'Write proposed changes to .mint/routing.json (default is dry-run)')
+  .option('--min-samples <n>', 'Minimum outcomes per (kind, model) before suggesting a swap', '30')
+  .option('--limit <n>', 'How many recent outcomes to analyze', '200')
+  .action(async (options: { apply?: boolean; minSamples?: string; limit?: string }) => {
+    const { runTune } = await import('./commands/tune.js');
+    await runTune({
+      apply: options.apply,
+      minSamples: parseInt(options.minSamples ?? '30', 10) || 30,
+      limit: parseInt(options.limit ?? '200', 10) || 200,
+    });
+  });
+
 // Usage command (legacy text view)
 program
   .command('usage:legacy')

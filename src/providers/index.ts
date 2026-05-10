@@ -9,6 +9,7 @@ import { mistralProvider } from './mistral.js';
 import { qwenProvider } from './qwen.js';
 import { geminiProvider } from './gemini.js';
 import { gatewayProvider } from './gateway.js';
+import { isRecording, isReplaying, recordStream, replayStream } from './record-replay.js';
 
 // Per-model fallback chain — used by completeWithFallback / streamAgent when
 // a provider returns a retryable error. Keep this in sync with MODELS.
@@ -137,6 +138,13 @@ export async function* streamCompleteWithFallback(request: CompletionRequest): A
 }
 
 export async function* streamAgent(request: CompletionRequest): AsyncIterable<AgentStreamChunk> {
+  // Replay short-circuits everything: tests pin behaviour without ever hitting
+  // a provider. Recording wraps the live stream below.
+  if (isReplaying()) {
+    yield* replayStream(request);
+    return;
+  }
+
   // Agent streaming requires tool-call support (OpenAI function calling format).
   // The gateway doesn't support this — only direct providers do.
   // Try: 1) direct provider for requested model, 2) any direct provider with a key, 3) error.
@@ -199,7 +207,9 @@ export async function* streamAgent(request: CompletionRequest): AsyncIterable<Ag
           console.error(`[agent] Falling back to ${candidate.label}`);
         }
 
-        for await (const chunk of candidate.provider.streamAgent(candidate.request)) {
+        const live = candidate.provider.streamAgent(candidate.request);
+        const stream = isRecording() ? recordStream(candidate.request, live) : live;
+        for await (const chunk of stream) {
           emittedAny = true;
           yield chunk;
         }
@@ -217,7 +227,9 @@ export async function* streamAgent(request: CompletionRequest): AsyncIterable<Ag
   // Fall back to the gateway — it supports agent streaming via /v1/agent
   if (hasAgent(gatewayProvider)) {
     // silent — gateway fallback is expected behavior
-    yield* gatewayProvider.streamAgent(request);
+    const live = gatewayProvider.streamAgent(request);
+    const stream = isRecording() ? recordStream(request, live) : live;
+    yield* stream;
     return;
   }
 

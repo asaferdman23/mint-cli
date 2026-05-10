@@ -18,6 +18,7 @@ import { Session, type EventSink } from './session.js';
 import { TokenBudget, countTokens, approxCostUsd } from './tokens.js';
 import { loadRoutingTable, resolveRoute, type RouteEntry } from './router.js';
 import { classify, type ClassifyFeatures } from './classifier.js';
+import { extractClassifierFeatures } from './classifier.js';
 import { buildBM25Index } from './memory/bm25.js';
 import { retrieve } from './memory/retriever.js';
 import { openOutcomesStore } from './memory/outcomes.js';
@@ -453,6 +454,7 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
       toolCalls: totals.toolCalls,
       iterations: totals.iterations,
       success: result.success,
+      classifierFeatures: extractClassifierFeatures(features),
     });
   } catch {
     /* outcomes are best-effort */

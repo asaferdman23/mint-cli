@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:replay": "node --experimental-vm-modules scripts/test-replay.mjs",
     "prepublishOnly": "npm run build"
   },
   "keywords": [

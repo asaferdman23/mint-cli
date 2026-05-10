@@ -165,24 +165,39 @@ function detectKind(task: string): TaskKind {
 
 /** Linear feature scorer — outputs a complexity score in [0, 1]. */
 function scoreComplexity(features: ClassifyFeatures, weights: Record<string, number>): number {
-  const task = features.task.toLowerCase();
-  const words = task.split(/\s+/).filter(Boolean).length;
-  const fileCount = features.projectFileCount ?? 0;
-
-  const pastSuccessRate = features.pastOutcomes?.length
-    ? features.pastOutcomes.filter((o) => o.success).length / features.pastOutcomes.length
-    : 0.5;
-
+  const vec = extractClassifierFeatures(features);
   const raw =
-    (weights.fileCount ?? 0) * Math.min(1, fileCount / 500) +
-    (weights.taskLength ?? 0) * Math.min(1, words / 30) +
-    (weights.verbComplex ?? 0) * (COMPLEX_VERBS.test(task) ? 1 : 0) +
-    (weights.hasMultipleFiles ?? 0) * (MULTI_FILE_HINTS.test(task) ? 1 : 0) +
-    (weights.mentionsTest ?? 0) * (TEST_MENTION.test(task) ? 1 : 0) +
-    (weights.pastSuccess ?? 0) * pastSuccessRate;
+    (weights.fileCount ?? 0) * vec.fileCount +
+    (weights.taskLength ?? 0) * vec.taskLength +
+    (weights.verbComplex ?? 0) * vec.verbComplex +
+    (weights.hasMultipleFiles ?? 0) * vec.hasMultipleFiles +
+    (weights.mentionsTest ?? 0) * vec.mentionsTest +
+    (weights.pastSuccess ?? 0) * vec.pastSuccess;
 
   // Squash to 0..1 via sigmoid so individual weights don't dominate.
   return 1 / (1 + Math.exp(-raw * 4));
+}
+
+/**
+ * Extract the numeric feature vector used by the fallback classifier. Exposed
+ * separately so `loop.ts` can record it alongside the outcome — `mint tune`
+ * uses these recorded vectors to refit weights.
+ */
+export function extractClassifierFeatures(features: ClassifyFeatures): Record<string, number> {
+  const task = features.task.toLowerCase();
+  const words = task.split(/\s+/).filter(Boolean).length;
+  const fileCount = features.projectFileCount ?? 0;
+  const pastSuccessRate = features.pastOutcomes?.length
+    ? features.pastOutcomes.filter((o) => o.success).length / features.pastOutcomes.length
+    : 0.5;
+  return {
+    fileCount: Math.min(1, fileCount / 500),
+    taskLength: Math.min(1, words / 30),
+    verbComplex: COMPLEX_VERBS.test(task) ? 1 : 0,
+    hasMultipleFiles: MULTI_FILE_HINTS.test(task) ? 1 : 0,
+    mentionsTest: TEST_MENTION.test(task) ? 1 : 0,
+    pastSuccess: pastSuccessRate,
+  };
 }
 
 function bucketComplexity(score: number): Complexity {

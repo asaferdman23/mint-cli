@@ -36,6 +36,8 @@ export interface OutcomeRow {
   success: boolean;
   userAccepted: -1 | 0 | 1;
   embedding: Buffer | null;
+  /** Recorded classifier feature vector (used by `mint tune`). */
+  classifierFeatures: Record<string, number> | null;
 }
 
 export interface RecordOutcomeInput {
@@ -58,6 +60,8 @@ export interface RecordOutcomeInput {
   userAccepted?: -1 | 0 | 1;
   /** Raw f32 embedding for the task description, if available. */
   embedding?: Float32Array;
+  /** Classifier feature vector at the moment of routing (for `mint tune`). */
+  classifierFeatures?: Record<string, number>;
 }
 
 export function hashTask(task: string): string {
@@ -108,15 +112,26 @@ export class OutcomesStore {
       CREATE INDEX IF NOT EXISTS idx_ts ON outcomes(ts);
     `);
 
+    // Add classifier_features column to existing tables. SQLite has no
+    // ALTER TABLE IF NOT EXISTS so we check the table info and skip if present.
+    try {
+      const cols = this.db.prepare(`PRAGMA table_info(outcomes)`).all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === 'classifier_features')) {
+        this.db.exec(`ALTER TABLE outcomes ADD COLUMN classifier_features TEXT`);
+      }
+    } catch {
+      /* migration is best-effort — schema may already be ahead of us */
+    }
+
     this.insertStmt = this.db.prepare(`
       INSERT INTO outcomes (
         ts, session_id, task, task_hash, kind, complexity, plan_json, files_touched,
         model, fallback_model, tokens_in, tokens_out, cost_usd, duration_ms,
-        tool_calls, iterations, success, user_accepted, embedding
+        tool_calls, iterations, success, user_accepted, embedding, classifier_features
       ) VALUES (
         @ts, @sessionId, @task, @taskHash, @kind, @complexity, @planJson, @filesTouched,
         @model, @fallbackModel, @tokensIn, @tokensOut, @costUsd, @durationMs,
-        @toolCalls, @iterations, @success, @userAccepted, @embedding
+        @toolCalls, @iterations, @success, @userAccepted, @embedding, @classifierFeatures
       )
     `);
 
@@ -162,6 +177,7 @@ export class OutcomesStore {
       success: input.success ? 1 : 0,
       userAccepted: input.userAccepted ?? -1,
       embedding: input.embedding ? Buffer.from(input.embedding.buffer) : null,
+      classifierFeatures: input.classifierFeatures ? JSON.stringify(input.classifierFeatures) : null,
     };
     const result = this.insertStmt.run(row);
     return Number(result.lastInsertRowid);
@@ -216,6 +232,7 @@ interface RawRow {
   success: number;
   user_accepted: number;
   embedding: Buffer | null;
+  classifier_features: string | null;
 }
 
 function rowToOutcome(r: RawRow): OutcomeRow {
@@ -224,6 +241,14 @@ function rowToOutcome(r: RawRow): OutcomeRow {
     filesTouched = JSON.parse(r.files_touched);
   } catch {
     /* keep empty */
+  }
+  let classifierFeatures: Record<string, number> | null = null;
+  if (r.classifier_features) {
+    try {
+      classifierFeatures = JSON.parse(r.classifier_features) as Record<string, number>;
+    } catch {
+      classifierFeatures = null;
+    }
   }
   return {
     id: r.id,
@@ -246,6 +271,7 @@ function rowToOutcome(r: RawRow): OutcomeRow {
     success: r.success === 1,
     userAccepted: (r.user_accepted as -1 | 0 | 1) ?? -1,
     embedding: r.embedding,
+    classifierFeatures,
   };
 }
 
