@@ -61,9 +61,25 @@ export interface UseBrainEventsReturn {
   recentToolCalls: RecentToolCall[];
   streamingText: string;
   pendingApproval: PendingApproval | null;
+  /** Last `diff.proposed` event — used to render a diff preview popup
+   *  alongside `pendingApproval` when reason === 'diff'. */
+  lastDiff: LastDiff | null;
+  /** Rolling buffer of the most recent events (last 200), for /trace. */
+  recentEvents: AgentEvent[];
   resolveApproval: (ok: boolean) => void;
   apply: (event: AgentEvent) => void;
   reset: () => void;
+}
+
+export interface LastDiff {
+  file: string;
+  hunks: Array<{
+    oldStart: number;
+    oldLines: number;
+    newStart: number;
+    newLines: number;
+    lines: Array<{ type: 'context' | 'add' | 'remove'; content: string }>;
+  }>;
 }
 
 export interface PendingApproval {
@@ -76,12 +92,16 @@ export interface PendingApproval {
  * React hook wrapping the brain's event stream into TUI-renderable state.
  * Call `apply(event)` for each event the async iterable yields.
  */
+const RECENT_EVENT_CAP = 200;
+
 export function useBrainEvents(): UseBrainEventsReturn {
   const [panelState, setPanelState] = useState<PanelState>(emptyPanel());
   const [pipelinePhases, setPipelinePhases] = useState<PipelinePhaseData[]>([]);
   const [streamingText, setStreamingText] = useState('');
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const [recentToolCalls, setRecentToolCalls] = useState<RecentToolCall[]>([]);
+  const [lastDiff, setLastDiff] = useState<LastDiff | null>(null);
+  const [recentEvents, setRecentEvents] = useState<AgentEvent[]>([]);
 
   // Map tool.call.id → { name, timestamp } so we can pair results correctly
   // even when tools run in parallel.
@@ -95,6 +115,10 @@ export function useBrainEvents(): UseBrainEventsReturn {
   }, []);
 
   const apply = useCallback((event: AgentEvent) => {
+    setRecentEvents((prev) => {
+      const next = prev.length >= RECENT_EVENT_CAP ? prev.slice(-RECENT_EVENT_CAP + 1) : prev;
+      return [...next, event];
+    });
     switch (event.type) {
       case 'session.start':
         setStreamingText('');
@@ -189,6 +213,12 @@ export function useBrainEvents(): UseBrainEventsReturn {
           ...prev,
           files: markFileEdited(prev.files, event.file),
         }));
+        // Clear the popup once the diff has been written.
+        setLastDiff((cur) => (cur && cur.file === event.file ? null : cur));
+        break;
+
+      case 'diff.proposed':
+        setLastDiff({ file: event.file, hunks: event.hunks });
         break;
 
       case 'cost.delta':
@@ -247,6 +277,8 @@ export function useBrainEvents(): UseBrainEventsReturn {
     setStreamingText('');
     setPendingApproval(null);
     setRecentToolCalls([]);
+    setLastDiff(null);
+    setRecentEvents([]);
     pendingToolCalls.current.clear();
   }, []);
 
@@ -256,6 +288,8 @@ export function useBrainEvents(): UseBrainEventsReturn {
     recentToolCalls,
     streamingText,
     pendingApproval,
+    lastDiff,
+    recentEvents,
     resolveApproval,
     apply,
     reset,

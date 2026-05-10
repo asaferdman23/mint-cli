@@ -301,10 +301,14 @@ function printEvent(event: AgentEvent): void {
       }
       break;
     case 'phase':
-      console.log(
-        `${prefix}  ${chalk.yellow('§')} phase ${event.name} ${chalk.dim(event.status)}` +
-          (event.durationMs != null ? chalk.dim(`  ${formatDuration(event.durationMs)}`) : ''),
-      );
+      {
+        const stepLabel = event.name === 'build' && event.stepId ? ` step ${event.stepId}` : '';
+        const indent = event.name === 'build' && event.stepId ? '   ' : '';
+        console.log(
+          `${prefix}  ${indent}${chalk.yellow('§')} phase ${event.name}${stepLabel} ${chalk.dim(event.status)}` +
+            (event.durationMs != null ? chalk.dim(`  ${formatDuration(event.durationMs)}`) : ''),
+        );
+      }
       break;
     case 'tool.call':
       console.log(

@@ -116,7 +116,7 @@ export async function runDeepMode(
   for (const step of steps) {
     if (session.aborted()) break;
     const buildStart = Date.now();
-    session.emit({ type: 'phase', name: 'build', status: 'start' });
+    session.emit({ type: 'phase', name: 'build', status: 'start', stepId: step.id });
     try {
       await executeSubtask(step);
     } catch (err) {
@@ -130,6 +130,7 @@ export async function runDeepMode(
       name: 'build',
       status: 'end',
       durationMs: Date.now() - buildStart,
+      stepId: step.id,
     });
   }
 

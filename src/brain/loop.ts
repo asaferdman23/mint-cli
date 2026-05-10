@@ -257,11 +257,17 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
         route,
         contextFiles: retrieved.files,
       },
-      // For now, deep mode just plans + reviews around the single tool loop.
-      // The per-subtask executor receives each step and appends it as a user
-      // turn in the main message history.
-      async () => {
-        /* no-op — single-pass deep mode for now */
+      // Per-step executor. Today this announces the subtask in the event
+      // stream so `mint trace` shows a clear plan→build hierarchy. The actual
+      // tool work for each step happens in the outer loop below, guided by
+      // the plan block injected into the system prompt. A future change can
+      // replace this with a focused inner tool loop per step (see roadmap).
+      async (step) => {
+        const filesHint = step.filesHint?.length ? ` [${step.filesHint.join(', ')}]` : '';
+        session.emit({
+          type: 'text.delta',
+          text: `\n→ step ${step.id}: ${step.description}${filesHint}\n`,
+        });
       },
     );
     if (deep.planSteps.length > 0) {

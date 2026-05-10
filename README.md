@@ -32,6 +32,19 @@ mint "add a pricing section with 3 tiers"
 ✅ **Smart routing** - cheap models for simple tasks, powerful for complex  
 ✅ **Transparent costs** - see exactly what you spend  
 ✅ **Own your keys** - BYOK support for all major providers  
+✅ **Replay every session** — `mint trace` shows the full event log of any past task
+
+## Reliability — `mint trace`
+
+Every Mint session writes a structured event log to `~/.mint/traces/`. You can:
+
+```bash
+mint trace             # list recent sessions, newest first
+mint trace <id>        # replay one session as a readable transcript
+mint trace --tail      # follow the most recent live session
+```
+
+This is the same observability surface the team uses to debug brain runs — there is no hidden state. If a task did something surprising, `mint trace` shows you why: classification, retrieved files, every tool call, every cost delta.
 
 ## How It Works
 

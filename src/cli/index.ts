@@ -178,6 +178,15 @@ program
     runTraceList(parseInt(options.limit ?? '20', 10) || 20);
   });
 
+// Resume command — re-open a session with prior task context as a hint
+program
+  .command('resume <sessionId>')
+  .description('Open the TUI seeded with the context of a prior session')
+  .action(async (sessionId: string) => {
+    const { runResume } = await import('./commands/resume.js');
+    await runResume(sessionId);
+  });
+
 // Usage command (legacy text view)
 program
   .command('usage:legacy')

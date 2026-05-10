@@ -29,6 +29,45 @@ interface BrainAppProps {
 let messageIdCounter = 0;
 const nextId = (): string => `brain-${++messageIdCounter}`;
 
+/** One-line summary of an AgentEvent for the in-TUI /trace view. */
+function formatEventLine(event: AgentEvent): string {
+  const t = new Date(event.ts).toISOString().slice(11, 19);
+  switch (event.type) {
+    case 'session.start':
+      return `${t}  ● session ${event.sessionId.slice(0, 12)}  mode=${event.mode}`;
+    case 'classify':
+      return `${t}  ◆ classify ${event.kind}/${event.complexity}  model=${event.model}`;
+    case 'context.retrieved':
+      return `${t}  ▤ context ${event.files.length} files (${event.tokensUsed}/${event.tokenBudget} tokens)`;
+    case 'phase':
+      return `${t}  § phase ${event.name}${event.stepId ? ` step ${event.stepId}` : ''} ${event.status}${event.durationMs ? ` ${event.durationMs}ms` : ''}`;
+    case 'plan.draft':
+      return `${t}  ◇ plan ${event.steps.length} steps`;
+    case 'tool.call':
+      return `${t}  → tool ${event.name}  iter=${event.iteration}`;
+    case 'tool.result':
+      return `${t}  ← result ${event.ok ? 'ok' : 'err'} ${event.durationMs}ms`;
+    case 'diff.proposed':
+      return `${t}  ~ diff ${event.file} (${event.hunks.length} hunks)`;
+    case 'diff.applied':
+      return `${t}  + applied ${event.file} +${event.additions} -${event.deletions}`;
+    case 'cost.delta':
+      return `${t}  $ ${event.usd.toFixed(5)} (${event.inputTokens}+${event.outputTokens} tok)`;
+    case 'compact':
+      return `${t}  ⇢ compact ${event.beforeTokens} → ${event.afterTokens}`;
+    case 'approval.needed':
+      return `${t}  ? approval ${event.reason}`;
+    case 'warn':
+      return `${t}  ⚠ ${event.message}`;
+    case 'error':
+      return `${t}  ✗ ${event.error}`;
+    case 'done':
+      return `${t}  ✓ done  cost=$${event.result.totalCostUsd.toFixed(4)}  ${event.result.iterations} iter  ${event.result.toolCalls} tools`;
+    default:
+      return `${t}  · ${(event as { type: string }).type}`;
+  }
+}
+
 export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreference }: BrainAppProps): React.ReactElement {
   const { exit } = useApp();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -54,10 +93,17 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
     recentToolCalls,
     streamingText,
     pendingApproval,
+    lastDiff,
+    recentEvents,
     resolveApproval,
     apply,
     reset,
   } = useBrainEvents();
+
+  // Whether the cost-budget warning has been shown for this session. Reset
+  // on /clear via `reset()` below — we mirror it in a ref so a session can
+  // only fire the warning once.
+  const budgetWarnedRef = useRef(false);
 
   // Terminal size tracking. We let Ink re-layout on size change rather than
   // hard-clearing the screen — clearing wipes the user's scrollback mid-session.
@@ -249,6 +295,7 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
               'Brain commands:',
               '  /help    — this help',
               '  /clear   — clear chat',
+              '  /trace   — show recent events from this session',
               '  /auto    — auto mode (no approvals)',
               '  /diff    — diff mode (per-file approval)',
               '  /plan    — plan mode (no writes)',
@@ -263,6 +310,25 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
       if (trimmed === '/clear') {
         setMessages([]);
         reset();
+        budgetWarnedRef.current = false;
+        setInput('');
+        return;
+      }
+      if (trimmed === '/trace') {
+        // Render the in-memory event buffer for this session. We render a
+        // compact one-line summary per event — use `mint trace <id>` for the
+        // full transcript.
+        const lines: string[] = recentEvents.length === 0
+          ? ['(no events yet — start a task)']
+          : recentEvents.slice(-60).map(formatEventLine);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: nextId(),
+            role: 'assistant',
+            content: ['Recent events (this session):', ...lines].join('\n'),
+          },
+        ]);
         setInput('');
         return;
       }
@@ -310,6 +376,28 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
 
           if (event.type === 'classify') {
             setCurrentModel(event.model);
+          }
+          if (event.type === 'cost.delta' && !budgetWarnedRef.current) {
+            // Cost-budget warning: read threshold lazily so changes via
+            // `mint config:set brain.sessionBudgetUsd <n>` take effect on the
+            // next run without a restart.
+            try {
+              const { config } = await import('../utils/config.js');
+              const budget = (config.get('brain') as { sessionBudgetUsd?: number } | undefined)?.sessionBudgetUsd ?? 0.5;
+              if (budget > 0 && panelState.totalCost + event.usd > budget) {
+                budgetWarnedRef.current = true;
+                setMessages((prev) => [
+                  ...prev,
+                  {
+                    id: nextId(),
+                    role: 'assistant',
+                    content: `⚠️  Session cost has exceeded $${budget.toFixed(2)}. Press Ctrl+C to abort, or continue — you'll only be warned once per session. Adjust with: mint config:set brain.sessionBudgetUsd <usd>`,
+                  },
+                ]);
+              }
+            } catch {
+              /* config read is best-effort */
+            }
           }
           if (event.type === 'error') {
             setErrorMsg(event.error);
@@ -373,11 +461,18 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
   const inspectorHeight = isInspectorOpen && recentToolCalls.length > 0
     ? Math.min(12, Math.max(6, Math.floor(termSize.rows * 0.32)))
     : 0;
+  const showDiffPopup = pendingApproval?.reason === 'diff' && lastDiff !== null;
+  const diffPopupRows = showDiffPopup
+    ? Math.min(
+        12,
+        2 + lastDiff!.hunks.reduce((acc, h) => acc + h.lines.length, 0),
+      )
+    : 0;
   const approvalNotice = pendingApproval
     ? `Approve ${pendingApproval.reason}? Press y or Enter for yes, n for no.`
     : null;
   const inputAreaHeight = approvalNotice ? 4 : 3;
-  const reservedRows = (errorMsg ? 1 : 0) + inspectorHeight + inputAreaHeight + 1;
+  const reservedRows = (errorMsg ? 1 : 0) + inspectorHeight + diffPopupRows + inputAreaHeight + 1;
   const messageAreaHeight = Math.max(1, termSize.rows - reservedRows);
 
   return (
@@ -402,6 +497,32 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
 
       {isInspectorOpen && !showWelcome && (
         <BrainToolInspector calls={recentToolCalls} maxHeight={inspectorHeight} />
+      )}
+
+      {showDiffPopup && lastDiff && (
+        <Box
+          flexDirection="column"
+          borderStyle="round"
+          borderColor="yellow"
+          paddingX={1}
+          height={diffPopupRows}
+          overflow="hidden"
+        >
+          <Text color="yellow" bold>
+            Diff: {lastDiff.file}
+          </Text>
+          {lastDiff.hunks.flatMap((h, hi) =>
+            h.lines.slice(0, 8).map((l, li) => (
+              <Text
+                key={`${hi}-${li}`}
+                color={l.type === 'add' ? 'green' : l.type === 'remove' ? 'red' : undefined}
+                dimColor={l.type === 'context'}
+              >
+                {l.type === 'add' ? '+' : l.type === 'remove' ? '-' : ' '} {l.content}
+              </Text>
+            )),
+          )}
+        </Box>
       )}
 
       <Box height={inputAreaHeight} overflow="hidden" flexDirection="column">

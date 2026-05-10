@@ -52,7 +52,54 @@ This release represents a complete architectural simplification. We deleted 8,00
 - Improved error handling throughout
 - More reliable gateway authentication
 
-### 📝 Developer Experience
+### �️ Reliability & Hardening (Phase 2 audit — 44 issues fixed)
+
+**Blockers**
+- Approval promise settles on abort/timeout (no demo hangs on Ctrl+C)
+- Iteration cap emits `warn` + `success: false` when incomplete
+- Gateway 5xx/network errors retry 2× with backoff before surfacing
+- Malformed tool calls from providers dropped with `warn`
+- Quota warnings deduped (no longer spam after every refresh)
+- All gateway fetches now have a 10s timeout via shared `gatewayFetch` helper
+- `EACCES` on config save shows a real error instead of being silent
+- 120s hard timeout on pending approvals (auto-deny)
+
+**Majors**
+- Cost accounting skipped on turn failure (no inflated fake costs)
+- Diff-preview failures surface to the approval UI
+- Empty-task guard in `runBrain`
+- Rejected iterations emit a clear "skipped N tools" warning
+- Tab key no longer fights between `InputBox` and `BrainApp`
+- Slash-autocomplete list matches reality (no phantom commands)
+- Approval prompt wording clarified ("Press y or Enter for yes")
+- StatusBar truncates gracefully on narrow terminals (mode/quota/model always visible)
+- Resize no longer wipes chat history
+- Onboarding handles TTY/Ctrl+C; BYOK completes inline (no dead-end)
+- Auth errors distinguish network / 4xx / 5xx
+- `mint login` while authed offers account switch
+- Quota display validated against NaN, negative, and unknown `plan_type`
+- `mint init` caps at 20k files (no OOM on monorepos)
+- Init skips symlink loops (`git ls-files` handles it)
+- Windows password visible-input fallback with warning
+- Compaction + deep-mode fallback emit `warn` events
+
+**Minors & hardening**
+- NaN cost guard in `approxCostUsd`
+- `apiBaseUrl` URL validation
+- Unknown config keys rejected with "did you mean X?" hint
+- BYOK key format sanity check (prefix detection)
+- Corrupted config file auto-moved aside; CLI keeps working
+- Nested `.gitignore` support in glob fallback
+- Binary file detection in indexer (no garbage in `context.json`)
+- `mint init` re-index confirmation (`--force` to skip)
+- Spinner shows elapsed seconds + Ctrl+C hint after 8s
+- Windows ASCII logo fallback for legacy terminals
+- JWT vs API token tracking with re-login hint
+- Quota offline cold-cache (`~/.mint-quota-cache.json`)
+- Outcomes DB corruption recovery
+- New `mint doctor` command — 7 health checks (Node version, config writable, gateway reachable, auth, indexer, traces dir, BYOK keys)
+
+### �📝 Developer Experience
 - Cleaner codebase (deleted: agents/, context/classifier.ts, orchestrator.ts)
 - Single entry point: `brain/index.ts`
 - Simpler tool system

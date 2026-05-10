@@ -28,6 +28,15 @@ const configSchema = z.object({
   
   // Backend
   apiBaseUrl: z.string().default('https://api.usemint.dev'),
+
+  // Brain runtime knobs
+  brain: z
+    .object({
+      /** Per-session cost budget (USD). When the running cost exceeds this,
+       *  the TUI shows a warning. 0 disables the warning. */
+      sessionBudgetUsd: z.number().default(0.5),
+    })
+    .default({ sessionBudgetUsd: 0.5 }),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -66,6 +75,13 @@ function createConf(): Conf<Config> {
       }
     },
       apiBaseUrl: { type: 'string', default: 'https://api.usemint.dev' },
+      brain: {
+        type: 'object',
+        default: { sessionBudgetUsd: 0.5 },
+        properties: {
+          sessionBudgetUsd: { type: 'number', default: 0.5 },
+        },
+      },
     },
   } as const;
 

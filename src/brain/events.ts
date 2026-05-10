@@ -154,6 +154,9 @@ export type AgentEvent =
       name: PhaseName;
       status: 'start' | 'end';
       durationMs?: number;
+      /** When set on a `build` phase, identifies which deep-mode subtask this
+       *  belongs to. Lets `mint trace` render plan→build hierarchy. */
+      stepId?: string;
       ts: number;
     }
   | { type: 'warn'; sessionId: string; message: string; ts: number }
