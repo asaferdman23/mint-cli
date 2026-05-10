@@ -49,11 +49,16 @@ export function countTokensMany(items: Array<string | { content?: string | null 
   return total;
 }
 
-/** Convert token usage to USD using the price table in providers/types.ts. */
+/** Convert token usage to USD using the price table in providers/types.ts.
+ *  Returns 0 (never NaN) when inputs are non-finite or the model is unknown —
+ *  callers render cost in the UI and NaN display looks broken. */
 export function approxCostUsd(model: ModelId, inputTokens: number, outputTokens: number): number {
   const info = MODELS[model];
   if (!info) return 0;
-  return (inputTokens / 1_000_000) * info.inputPrice + (outputTokens / 1_000_000) * info.outputPrice;
+  const safeInput = Number.isFinite(inputTokens) ? Math.max(0, inputTokens) : 0;
+  const safeOutput = Number.isFinite(outputTokens) ? Math.max(0, outputTokens) : 0;
+  const cost = (safeInput / 1_000_000) * info.inputPrice + (safeOutput / 1_000_000) * info.outputPrice;
+  return Number.isFinite(cost) ? cost : 0;
 }
 
 /**

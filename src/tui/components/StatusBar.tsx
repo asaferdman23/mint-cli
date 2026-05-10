@@ -63,15 +63,35 @@ export function StatusBar({
   if (quotaPercent >= 90) quotaColor = 'red';
   else if (quotaPercent >= 70) quotaColor = 'yellow';
 
+  // Responsive layout priority (narrow → wide):
+  //   1. mode           (always show; critical safety indicator)
+  //   2. quota          (always show if set; critical for free-tier UX)
+  //   3. model          (always show; users want to know what's running)
+  //   4. session cost   (hide < 70 cols)
+  //   5. tokens         (hide < 90 cols)
+  //   6. month cost / savings / context / inspector hint / version (hide < 110 cols)
+  const cols = process.stdout.columns ?? 80;
+  const showDetails = cols >= 70;
+  const showTokens = cols >= 90;
+  const showExtras = cols >= 110;
+
   return (
     <Box paddingX={1}>
       <Box flexGrow={1} flexShrink={1} gap={0} overflow="hidden">
         <Text dimColor>{model}{isThinking ? ' [thinking]' : ''}</Text>
-        <Text dimColor> │ </Text>
-        <Text dimColor>{formatTokens(sessionTokens)} tokens</Text>
-        <Text dimColor> │ </Text>
-        <Text dimColor>session {formatCost(sessionCost)}</Text>
-        {monthlyCost != null && monthlyCost > 0 && (
+        {showTokens && (
+          <>
+            <Text dimColor> │ </Text>
+            <Text dimColor>{formatTokens(sessionTokens)} tokens</Text>
+          </>
+        )}
+        {showDetails && (
+          <>
+            <Text dimColor> │ </Text>
+            <Text dimColor>session {formatCost(sessionCost)}</Text>
+          </>
+        )}
+        {showExtras && monthlyCost != null && monthlyCost > 0 && (
           <>
             <Text dimColor> │ </Text>
             <Text color="cyan">month {formatCost(monthlyCost)}</Text>
@@ -83,7 +103,7 @@ export function StatusBar({
             <Text color={quotaColor}>{quotaRemaining}/{quotaLimit} free</Text>
           </>
         )}
-        {savingsPct != null && savingsPct > 0 && (
+        {showExtras && savingsPct != null && savingsPct > 0 && (
           <>
             <Text dimColor> │ </Text>
             <Text color="green" bold>-{savingsPct}% vs Opus</Text>
@@ -93,14 +113,14 @@ export function StatusBar({
       <Box flexShrink={0} gap={0}>
         <Text dimColor> │ </Text>
         <Text color={modeColor(agentMode) as Parameters<typeof Text>[0]['color']}>{agentMode}</Text>
-        {contextTokens != null && contextTokens > 0 && (
+        {showExtras && contextTokens != null && contextTokens > 0 && (
           <>
             <Text dimColor> │ </Text>
             <Text dimColor>ctx {formatTokens(contextTokens)}</Text>
           </>
         )}
-        <Text dimColor> │ v0.3.0-β1</Text>
-        {inspectorHint && (
+        {showExtras && <Text dimColor> │ v0.3.0-β1</Text>}
+        {showExtras && inspectorHint && (
           <>
             <Text dimColor> │ </Text>
             <Text dimColor>{inspectorHint}</Text>

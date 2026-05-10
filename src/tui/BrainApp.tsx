@@ -44,6 +44,9 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
 
   const abortRef = useRef<AbortController | null>(null);
   const assistantMsgIdRef = useRef<string>('');
+  // Track which quota thresholds we've warned about so we don't spam the chat
+  // with the same message after every task.
+  const quotaWarningShownRef = useRef<'none' | 'approaching' | 'exceeded'>('none');
 
   const {
     panelState,
@@ -56,14 +59,14 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
     reset,
   } = useBrainEvents();
 
-  // Terminal size tracking
+  // Terminal size tracking. We let Ink re-layout on size change rather than
+  // hard-clearing the screen — clearing wipes the user's scrollback mid-session.
   const [termSize, setTermSize] = useState({
     cols: process.stdout.columns ?? 80,
     rows: process.stdout.rows ?? 24,
   });
   useEffect(() => {
     const onResize = () => {
-      process.stdout.write('\x1B[2J\x1B[H');
       setTermSize({
         cols: process.stdout.columns ?? 80,
         rows: process.stdout.rows ?? 24,
@@ -81,53 +84,98 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
     };
   }, []);
 
-  // Fetch quota on mount and after each task
+  // Fetch quota on mount and after each task.
+  // Deduplicates warnings: each threshold (approaching 80%, exceeded 100%) is
+  // shown at most once per session — we use a ref so React state updates don't
+  // cause re-fires.
+  //
+  // Offline UX: we cache the last successful response in ~/.mint-quota-cache.json
+  // so the status bar keeps showing *something* when the gateway is unreachable.
   const fetchQuota = useCallback(async () => {
+    const { config } = await import('../utils/config.js');
+    if (!config.isAuthenticated()) return;
+
+    const gatewayUrl = config.getGatewayUrl();
+    const apiToken = config.get('gatewayToken');
+
+    // Seed from cache on mount so the UI has something to show before the
+    // fetch resolves (and so offline users see stale-but-useful numbers).
     try {
-      const { config } = await import('../utils/config.js');
-      if (!config.isAuthenticated()) return;
+      const { readFileSync, existsSync } = await import('node:fs');
+      const { join: joinPath } = await import('node:path');
+      const { homedir } = await import('node:os');
+      const cachePath = joinPath(homedir(), '.mint-quota-cache.json');
+      if (existsSync(cachePath) && quotaUsed == null) {
+        const cached = JSON.parse(readFileSync(cachePath, 'utf-8')) as {
+          requests_used?: number;
+          requests_limit?: number;
+        };
+        if (cached.requests_used != null) setQuotaUsed(cached.requests_used);
+        if (cached.requests_limit != null) setQuotaLimit(cached.requests_limit);
+      }
+    } catch {
+      // Cache miss / parse error — continue with live fetch.
+    }
 
-      const gatewayUrl = config.getGatewayUrl();
-      const apiToken = config.get('gatewayToken');
-
+    try {
       const response = await fetch(`${gatewayUrl}/auth/quota`, {
         headers: {
           'Authorization': `Bearer ${apiToken}`,
         },
+        signal: AbortSignal.timeout(10_000),
       });
 
-      if (response.ok) {
-        const data = await response.json() as { requests_used: number; requests_limit: number; plan_type?: string };
-        setQuotaUsed(data.requests_used);
-        setQuotaLimit(data.requests_limit);
+      if (!response.ok) return;
 
-        // Show warning if free tier and >= 80% used
-        if (data.plan_type === 'free' && data.requests_limit > 0) {
-          const usagePercent = (data.requests_used / data.requests_limit) * 100;
-          if (usagePercent >= 80 && usagePercent < 100) {
-            const remaining = data.requests_limit - data.requests_used;
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: nextId(),
-                role: 'assistant',
-                content: `⚠️  You've used ${data.requests_used} of your ${data.requests_limit} free requests (${remaining} remaining).\n\nTo continue after your quota:\n  • Upgrade to Pro for unlimited requests\n  • Add your own API keys with: mint config:set providers.deepseek <key>`,
-              },
-            ]);
-          } else if (usagePercent >= 100) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: nextId(),
-                role: 'assistant',
-                content: `🚫 You've used all ${data.requests_limit} free requests.\n\nTo continue:\n  • Upgrade to Pro at https://usemint.dev/upgrade\n  • Add your own API keys: mint config:set providers.deepseek <key>`,
-              },
-            ]);
-          }
-        }
+      const data = await response.json() as {
+        requests_used: number;
+        requests_limit: number;
+        plan_type?: string;
+      };
+      setQuotaUsed(data.requests_used);
+      setQuotaLimit(data.requests_limit);
+
+      // Persist cache for next cold start.
+      try {
+        const { writeFileSync } = await import('node:fs');
+        const { join: joinPath } = await import('node:path');
+        const { homedir } = await import('node:os');
+        const cachePath = joinPath(homedir(), '.mint-quota-cache.json');
+        writeFileSync(cachePath, JSON.stringify(data), 'utf-8');
+      } catch {
+        // Cache write failure is non-fatal.
+      }
+
+      // Only free-tier users get quota warnings; pro/enterprise have no cap.
+      if (data.plan_type !== 'free' || data.requests_limit <= 0) return;
+
+      const usagePercent = (data.requests_used / data.requests_limit) * 100;
+      const shown = quotaWarningShownRef.current;
+
+      if (usagePercent >= 100 && shown !== 'exceeded') {
+        quotaWarningShownRef.current = 'exceeded';
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: nextId(),
+            role: 'assistant',
+            content: `🚫 You've used all ${data.requests_limit} free requests.\n\nTo continue:\n  • Upgrade to Pro at https://usemint.dev/upgrade\n  • Add your own API keys: mint config:set providers.deepseek <key>`,
+          },
+        ]);
+      } else if (usagePercent >= 80 && usagePercent < 100 && shown === 'none') {
+        quotaWarningShownRef.current = 'approaching';
+        const remaining = data.requests_limit - data.requests_used;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: nextId(),
+            role: 'assistant',
+            content: `⚠️  You've used ${data.requests_used} of your ${data.requests_limit} free requests (${remaining} remaining).\n\nTo continue after your quota:\n  • Upgrade to Pro for unlimited requests\n  • Add your own API keys with: mint config:set providers.deepseek <key>`,
+          },
+        ]);
       }
     } catch {
-      // Silently fail - quota is optional
+      // Quota is advisory — a fetch failure should never break the TUI.
     }
   }, []);
 
@@ -326,7 +374,7 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
     ? Math.min(12, Math.max(6, Math.floor(termSize.rows * 0.32)))
     : 0;
   const approvalNotice = pendingApproval
-    ? `Approval needed (${pendingApproval.reason}). Enter = yes, 'n' = no.`
+    ? `Approve ${pendingApproval.reason}? Press y or Enter for yes, n for no.`
     : null;
   const inputAreaHeight = approvalNotice ? 4 : 3;
   const reservedRows = (errorMsg ? 1 : 0) + inspectorHeight + inputAreaHeight + 1;

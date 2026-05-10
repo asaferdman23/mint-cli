@@ -68,6 +68,14 @@ export async function runToolCalls(
         },
       });
       if (!approved) {
+        // Emit a clear warning with counts so the user sees what was skipped.
+        // Files recorded BEFORE this rejection remain in filesTouched — those
+        // changes were already applied; only this batch of destructive calls is
+        // being skipped.
+        session.emit({
+          type: 'warn',
+          message: `Iteration ${options.iteration} rejected — skipped ${destructive.length} destructive tool call${destructive.length === 1 ? '' : 's'} (${destructive.map((c) => c.name).join(', ')}).`,
+        });
         return calls.map((c) => toRejected(c, 'iteration rejected'));
       }
     }
@@ -131,14 +139,29 @@ async function runSingle(
   const mustApprove = shouldAskApproval(session.mode, call);
   if (mustApprove) {
     // For diff-producing writes, emit a diff.proposed first so the TUI can
-    // show a real patch preview before approval.
+    // show a real patch preview before approval. If preview generation fails,
+    // flag the approval payload so the UI can warn the user they're approving
+    // a change they can't visually verify.
+    let diffFailed = false;
     if (needsDiffPreview(call.name)) {
-      await emitDiffPreview(session, call);
+      const previewResult = await emitDiffPreview(session, call);
+      if (!previewResult.ok) {
+        diffFailed = true;
+        session.emit({
+          type: 'warn',
+          message: `Couldn't generate diff preview for ${call.name} — approving without visual review.`,
+        });
+      }
     }
 
     const approved = await askApproval(session, {
       reason: needsDiffPreview(call.name) ? 'diff' : 'tool',
-      payload: { name: call.name, input: call.input, iteration: options.iteration },
+      payload: {
+        name: call.name,
+        input: call.input,
+        iteration: options.iteration,
+        diffFailed,
+      },
     });
     if (!approved) {
       return finish(session, call, startedAt, {
@@ -206,15 +229,20 @@ function shouldAskApproval(mode: Session['mode'], call: BrainToolCall): boolean 
 
 // ─── Diff preview emission ──────────────────────────────────────────────────
 
-async function emitDiffPreview(session: Session, call: BrainToolCall): Promise<void> {
+async function emitDiffPreview(
+  session: Session,
+  call: BrainToolCall,
+): Promise<{ ok: boolean }> {
   try {
     const hunks = await buildDiffHunks(session.cwd, call);
     if (hunks.length > 0) {
       const path = String(call.input.path ?? call.input.file ?? '');
       session.emit({ type: 'diff.proposed', file: path, hunks });
     }
+    return { ok: true };
   } catch {
-    // Preview is best-effort; approval still goes through.
+    // Preview is best-effort; approval still goes through but we flag it.
+    return { ok: false };
   }
 }
 

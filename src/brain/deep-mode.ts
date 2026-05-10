@@ -96,6 +96,11 @@ export async function runDeepMode(
   const steps = planResult.steps;
   if (steps.length === 0) {
     // No plan — fall back to single-pass. Outer loop continues normally.
+    // Surface this to the user because deep mode was expected to help here.
+    session.emit({
+      type: 'warn',
+      message: 'Deep-mode planner returned no steps — falling back to single-pass execution.',
+    });
     return {
       planSteps: [],
       reviewSummary: '',

@@ -15,6 +15,25 @@ import { glob } from 'glob';
 import ignore from 'ignore';
 import { DependencyGraph } from './graph.js';
 
+/**
+ * Cheap binary sniff — scans the first chunk for NUL bytes and a high ratio of
+ * non-printable characters. Far less reliable than git's `core.binary-detection`
+ * but catches the common cases (images, compiled binaries, sqlite files) that
+ * cause `toString('utf-8')` to return garbage.
+ */
+function isLikelyBinary(head: Buffer): boolean {
+  if (head.length === 0) return false;
+  let nonPrintable = 0;
+  for (let i = 0; i < head.length; i++) {
+    const byte = head[i];
+    // NUL byte → almost certainly binary
+    if (byte === 0) return true;
+    // Control chars other than tab, LF, CR
+    if (byte < 9 || (byte > 13 && byte < 32)) nonPrintable++;
+  }
+  return nonPrintable / head.length > 0.3;
+}
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export interface SymbolInfo {
@@ -137,6 +156,17 @@ export async function indexProject(cwd: string, options: IndexOptions = {}): Pro
     }
   }
 
+  // Hard cap to prevent OOM on very large monorepos. If we hit the cap we keep
+  // the smallest-path files (closer to project root → more likely to be the
+  // user's own code, not vendored).
+  const MAX_INDEXED_FILES = 20_000;
+  if (sourceFiles.length > MAX_INDEXED_FILES) {
+    onProgress?.(`Large project: capping index at ${MAX_INDEXED_FILES} files (found ${sourceFiles.length})`);
+    sourceFiles = sourceFiles
+      .sort((a, b) => a.split('/').length - b.split('/').length || a.length - b.length)
+      .slice(0, MAX_INDEXED_FILES);
+  }
+
   onProgress?.(`Found ${sourceFiles.length} source files`);
 
   // Process each file
@@ -151,7 +181,13 @@ export async function indexProject(cwd: string, options: IndexOptions = {}): Pro
     const language = LANGUAGE_MAP[ext] ?? 'text';
 
     try {
-      const content = await readFile(join(cwd, filePath), 'utf-8');
+      // Skip files we can clearly identify as binary — readFile('utf-8') would
+      // produce garbage that downstream parsers choke on.
+      const head = await readFile(join(cwd, filePath));
+      if (isLikelyBinary(head.subarray(0, 512))) {
+        continue;
+      }
+      const content = head.toString('utf-8');
       const lines = content.split('\n');
       const loc = lines.filter(l => l.trim().length > 0).length;
 
@@ -597,9 +633,36 @@ function resolveImportPath(
 async function loadIgnoreFilter(cwd: string) {
   const ig = ignore();
   ig.add(DEFAULT_IGNORES);
+  // Root .gitignore
   try {
     const content = await readFile(join(cwd, '.gitignore'), 'utf-8');
     ig.add(content.split('\n').filter(l => l.trim() && !l.startsWith('#')));
   } catch { /* no .gitignore */ }
+  // Nested .gitignore files — only walk shallow directories to bound the cost.
+  // This only matters when the git ls-files fast-path fails; git itself handles
+  // nested ignores correctly.
+  try {
+    const nested = await glob('**/.gitignore', {
+      cwd,
+      nodir: true,
+      absolute: false,
+      ignore: ['node_modules/**', '.git/**'],
+      maxDepth: 5,
+    });
+    for (const rel of nested) {
+      if (rel === '.gitignore') continue;
+      const dir = dirname(rel);
+      try {
+        const content = await readFile(join(cwd, rel), 'utf-8');
+        const patterns = content
+          .split('\n')
+          .filter((l) => l.trim() && !l.startsWith('#'))
+          // Scope patterns to the subdirectory so parent `.gitignore` rules
+          // stay properly anchored.
+          .map((l) => (l.startsWith('/') ? `${dir}${l}` : `${dir}/${l}`));
+        ig.add(patterns);
+      } catch { /* ignore read errors */ }
+    }
+  } catch { /* glob failure — root ignores still applied */ }
   return ig;
 }

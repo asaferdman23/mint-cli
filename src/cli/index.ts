@@ -7,6 +7,7 @@ import { showConfig, setConfig } from './commands/config.js';
 import { showUsage } from './commands/usage.js';
 import { showQuota } from './commands/quota.js';
 import { showAccount } from './commands/account.js';
+import { runDoctor } from './commands/doctor.js';
 import { config } from '../utils/config.js';
 
 const program = new Command();
@@ -205,6 +206,12 @@ program
   .description('Show account overview with usage, quota, and settings')
   .action(showAccount);
 
+// Doctor command — diagnose common setup issues
+program
+  .command('doctor')
+  .description('Run health checks to diagnose setup issues')
+  .action(runDoctor);
+
 // Savings command — one-liner for sharing
 program
   .command('savings')
@@ -300,9 +307,39 @@ program
 program
   .command('init')
   .description('Scan project and build search index')
-  .action(async () => {
+  .option('-f, --force', 'Re-index even if a recent index already exists')
+  .action(async (options: { force?: boolean }) => {
     const { indexProject } = await import('../context/index.js');
     const cwd = process.cwd();
+
+    // Warn about re-init when a recent index already exists. We don't block —
+    // re-indexing is cheap and sometimes needed — but we let the user cancel
+    // if they ran `mint init` accidentally.
+    if (!options.force) {
+      try {
+        const { existsSync, statSync } = await import('node:fs');
+        const indexPath = join(cwd, '.mint', 'context.json');
+        if (existsSync(indexPath)) {
+          const ageMs = Date.now() - statSync(indexPath).mtimeMs;
+          const ageHours = ageMs / (1000 * 60 * 60);
+          if (ageHours < 1) {
+            const mins = Math.max(1, Math.round(ageMs / 60_000));
+            const { createInterface } = await import('node:readline');
+            const rl = createInterface({ input: process.stdin, output: process.stdout });
+            const answer = await new Promise<string>((resolve) => {
+              rl.question(
+                chalk.yellow(`  This project was indexed ${mins}m ago. Re-index now? [y/N] `),
+                (a) => { rl.close(); resolve(a.trim().toLowerCase()); }
+              );
+            });
+            if (answer !== 'y' && answer !== 'yes') {
+              console.log(chalk.dim('  Skipped. Run ') + chalk.cyan('mint init --force') + chalk.dim(' to override.\n'));
+              return;
+            }
+          }
+        }
+      } catch { /* stat failed — just proceed with init */ }
+    }
 
     console.log(chalk.cyan('\n  Mint Init\n'));
     console.log(chalk.dim('  Scanning project...\n'));

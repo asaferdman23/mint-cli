@@ -249,8 +249,33 @@ function rowToOutcome(r: RawRow): OutcomeRow {
   };
 }
 
-/** Open (or create) the outcomes store for the given cwd. */
+/**
+ * Open (or create) the outcomes store for the given cwd.
+ *
+ * Recovers from SQLite corruption (partial writes from a hard crash, disk
+ * full mid-write, file truncated). If the first open fails with a database
+ * error, we move the bad file aside and create a fresh one. Outcomes are a
+ * cache — losing history is acceptable; losing the ability to run is not.
+ */
 export function openOutcomesStore(cwd: string): OutcomesStore {
   const path = join(cwd, '.mint', 'outcomes.sqlite');
-  return new OutcomesStore(path);
+  try {
+    return new OutcomesStore(path);
+  } catch (err) {
+    // Typical errors: "SQLITE_NOTADB", "database disk image is malformed"
+    try {
+      const fs = require('node:fs') as typeof import('node:fs');
+      if (fs.existsSync(path)) {
+        const backupPath = `${path}.corrupted-${Date.now()}`;
+        fs.renameSync(path, backupPath);
+        process.stderr.write(
+          `[mint] Outcomes DB corrupted (${(err as Error).message}). Moved to:\n       ${backupPath}\n`
+        );
+      }
+    } catch {
+      // If we can't even move the file, fall through and hope the second
+      // open succeeds (unlikely but graceful).
+    }
+    return new OutcomesStore(path);
+  }
 }

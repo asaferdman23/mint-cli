@@ -47,12 +47,17 @@ export function SlashAutocomplete({
   );
 }
 
-/** All registered slash commands for autocomplete. */
+/**
+ * All registered slash commands for autocomplete.
+ * Keep this list in sync with the `if (trimmed === '/...'` branches in
+ * BrainApp.tsx — a command that isn't handled there will silently be sent
+ * as a regular prompt and confuse users.
+ */
 export const SLASH_COMMANDS: SlashCommandDef[] = [
   { name: 'help', description: 'show commands + keyboard shortcuts' },
   { name: 'clear', description: 'clear chat history' },
-  { name: 'model', description: 'show current model' },
-  { name: 'auto', description: 'toggle auto mode (skip approvals)' },
-  { name: 'yolo', description: 'toggle yolo mode (full autonomy)' },
-  { name: 'usage', description: 'session stats + savings' },
+  { name: 'diff', description: 'switch to diff mode (per-file approval)' },
+  { name: 'auto', description: 'switch to auto mode (skip approvals)' },
+  { name: 'plan', description: 'switch to plan mode (no writes)' },
+  { name: 'yolo', description: 'switch to yolo mode (full autonomy)' },
 ];

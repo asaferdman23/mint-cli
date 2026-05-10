@@ -26,6 +26,61 @@ function getToken(): string {
   throw new Error(`Mint Gateway auth is not configured. ${AUTH_HELP}`)
 }
 
+// Status codes where a retry is likely to succeed (transient gateway / upstream hiccups).
+// We only retry before any stream chunks have been yielded — once the user sees text,
+// a retry would replay the start and confuse the session.
+const RETRYABLE_STATUS = new Set([500, 502, 503, 504])
+
+/**
+ * Make a POST request to the gateway with up to N retries on network errors and
+ * 5xx responses. Only safe to call before you start consuming the stream body.
+ *
+ * Each retry waits `backoffMs * 2^attempt` to back off gently.
+ */
+async function postWithRetry(
+  url: string,
+  init: RequestInit,
+  opts: { maxRetries?: number; backoffMs?: number; onRetry?: (attempt: number, reason: string) => void } = {},
+): Promise<Response> {
+  const maxRetries = opts.maxRetries ?? 2
+  const backoffMs = opts.backoffMs ?? 500
+
+  let lastError: unknown
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetch(url, init)
+      if (res.ok || !RETRYABLE_STATUS.has(res.status)) {
+        return res
+      }
+      // Drain the body so we don't leak the connection, then retry.
+      lastError = new Error(`HTTP ${res.status}`)
+      await res.text().catch(() => {})
+      if (attempt < maxRetries) {
+        opts.onRetry?.(attempt + 1, `gateway returned ${res.status}`)
+        await new Promise((r) => setTimeout(r, backoffMs * 2 ** attempt))
+        continue
+      }
+      return res
+    } catch (err) {
+      // Network error (DNS, connection refused, reset, etc.) — retry.
+      // AbortError is user-initiated; bail out immediately.
+      const isAbort = err instanceof Error && (err.name === 'AbortError' || err.message.includes('aborted'))
+      if (isAbort) throw err
+      lastError = err
+      if (attempt < maxRetries) {
+        const msg = err instanceof Error ? err.message : String(err)
+        opts.onRetry?.(attempt + 1, `network error: ${msg}`)
+        await new Promise((r) => setTimeout(r, backoffMs * 2 ** attempt))
+        continue
+      }
+      throw err
+    }
+  }
+  // Exhausted retries on a retryable status; return the (failed) last response.
+  // Callers will check .ok and surface the error to the user.
+  throw lastError ?? new Error('Gateway request failed after retries')
+}
+
 function buildGatewayError(kind: 'chat' | 'agent', status: number, body: string): Error {
   if (status === 401) {
     return new Error(`Gateway ${kind} error 401: Unauthorized. ${AUTH_HELP}`)
@@ -78,7 +133,7 @@ export const gatewayProvider: Provider = {
     const chatMessages = req.messages.filter(m => m.role !== 'system')
     const systemPrompt = getCombinedSystemPrompt(req)
 
-    const res = await fetch(`${getGatewayUrl()}/v1/chat`, {
+    const res = await postWithRetry(`${getGatewayUrl()}/v1/chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -135,7 +190,7 @@ export const gatewayProvider: Provider = {
       .filter((message) => message.role !== 'system');
     const tools = buildOpenAICompatibleToolDefinitions(req.tools);
 
-    const res = await fetch(`${getGatewayUrl()}/v1/agent`, {
+    const res = await postWithRetry(`${getGatewayUrl()}/v1/agent`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -201,9 +256,17 @@ export const gatewayProvider: Provider = {
             const finish = parsed.choices?.[0]?.finish_reason;
             if (finish === 'tool_calls' || finish === 'stop') {
               for (const [, acc] of toolCallAccs) {
+                // Skip tool calls the provider never named — downstream would
+                // route them to "unknown" and silently fail.
+                if (!acc.name || !acc.name.trim()) continue;
                 let parsedInput: Record<string, unknown> = {};
-                try { parsedInput = JSON.parse(acc.arguments || '{}'); }
-                catch { parsedInput = { raw: acc.arguments }; }
+                try {
+                  parsedInput = JSON.parse(acc.arguments || '{}');
+                } catch {
+                  // Malformed JSON args — skip the call rather than passing raw
+                  // string that the tool can't handle.
+                  continue;
+                }
                 yield { type: 'tool_call', toolName: acc.name, toolInput: parsedInput, toolCallId: acc.id };
               }
               toolCallAccs.clear();

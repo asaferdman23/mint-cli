@@ -62,6 +62,20 @@ export async function* runBrain(options: RunBrainOptions): AsyncGenerator<AgentE
   const startedAt = Date.now();
   const mode = options.mode ?? DEFAULT_MODE;
 
+  // Guard against empty tasks — upstream callers shouldn't trigger this, but
+  // if they do we emit a clear error rather than paying for an LLM call to
+  // classify nothing.
+  if (!options.task || !options.task.trim()) {
+    yield {
+      type: 'error',
+      error: 'Task is empty. Type what you want Mint to do, then press Enter.',
+      recoverable: false,
+      sessionId: options.sessionId ?? 'empty',
+      ts: Date.now(),
+    } as AgentEvent;
+    return;
+  }
+
   const queue: AgentEvent[] = [];
   let wake: (() => void) | null = null;
   const pushWake = (): void => {
@@ -275,10 +289,16 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
   const tools = getToolDefinitions();
   const maxIterations = Math.min(options.maxIterations ?? route.maxIterations, route.maxIterations);
   let totalOutput = '';
+  // Track exit reason so the success flag can distinguish "LLM finished" from
+  // "we ran out of iterations mid-task".
+  let cleanExit = false;
+  let aborted = false;
+  let streamFailed = false;
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (session.aborted()) {
       session.emit({ type: 'error', error: 'aborted', recoverable: true });
+      aborted = true;
       break;
     }
     session.recordIteration();
@@ -308,9 +328,19 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
           turnText += chunk.text;
           session.emit({ type: 'text.delta', text: chunk.text });
         } else if (chunk.type === 'tool_call') {
+          // Drop tool calls with no name — the provider returned malformed data.
+          // Surface a warning so we notice instead of running with garbage input.
+          const name = (chunk.toolName ?? '').trim();
+          if (!name || name === 'unknown') {
+            session.emit({
+              type: 'warn',
+              message: 'Dropped malformed tool call from provider (missing name)',
+            });
+            continue;
+          }
           toolCalls.push({
             id: chunk.toolCallId ?? `tc_${Date.now()}_${toolCalls.length}`,
-            name: chunk.toolName ?? 'unknown',
+            name,
             input: chunk.toolInput ?? {},
           });
         }
@@ -322,27 +352,32 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
         recoverable: true,
       });
       turnFailed = true;
+      streamFailed = true;
       break;
     }
 
     // Cost accounting — rough (provider responses through streamAgent don't
     // always return usage). Real numbers come from completeWithFallback paths.
-    const turnInputTokens = Math.max(0, budget.used);
-    const turnOutputTokens = countTokens(turnText);
-    const turnCost = approxCostUsd(route.model, turnInputTokens, turnOutputTokens);
-    session.recordCost(turnInputTokens, turnOutputTokens, turnCost);
-    session.emit({
-      type: 'cost.delta',
-      model: route.model,
-      inputTokens: turnInputTokens,
-      outputTokens: turnOutputTokens,
-      usd: turnCost,
-    });
-    budget.add(turnOutputTokens);
-    totalOutput += turnText;
+    // Skip on turn failure so we don't charge users for partial/broken streams.
+    if (!turnFailed) {
+      const turnInputTokens = Math.max(0, budget.used);
+      const turnOutputTokens = countTokens(turnText);
+      const turnCost = approxCostUsd(route.model, turnInputTokens, turnOutputTokens);
+      session.recordCost(turnInputTokens, turnOutputTokens, turnCost);
+      session.emit({
+        type: 'cost.delta',
+        model: route.model,
+        inputTokens: turnInputTokens,
+        outputTokens: turnOutputTokens,
+        usd: turnCost,
+      });
+      budget.add(turnOutputTokens);
+      totalOutput += turnText;
+    }
 
     // 7c. No tool calls → we're done
     if (toolCalls.length === 0) {
+      cleanExit = true;
       break;
     }
 
@@ -369,6 +404,16 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
     } as unknown as Message);
   }
 
+  // Detect "hit max iterations without finishing" — surface it to the user
+  // instead of silently claiming success on partial work.
+  const hitMaxIterations = !cleanExit && !aborted && !streamFailed;
+  if (hitMaxIterations) {
+    session.emit({
+      type: 'warn',
+      message: `Reached max iterations (${maxIterations}) — the task may be incomplete. Try breaking it into smaller steps.`,
+    });
+  }
+
   // 8. Persist outcome
   const totals = session.totals;
   const result: BrainResult = {
@@ -381,7 +426,9 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
     iterations: totals.iterations,
     toolCalls: totals.toolCalls,
     filesTouched: totals.filesTouched,
-    success: totals.toolCalls > 0 || totalOutput.length > 0,
+    // Success means: LLM finished its reasoning AND we weren't aborted or stream-failed.
+    // Hitting maxIterations or aborting = incomplete, even if some tool calls succeeded.
+    success: cleanExit && !aborted && !streamFailed,
   };
 
   try {

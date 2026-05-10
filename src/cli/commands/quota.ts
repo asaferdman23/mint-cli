@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import boxen from 'boxen';
 import { config } from '../../utils/config.js';
+import { gatewayFetch, describeGatewayFailure, GatewayError } from '../../utils/gateway-fetch.js';
 
 export interface QuotaData {
   requests_used: number;
@@ -31,60 +32,79 @@ export async function showQuota(): Promise<void> {
   const apiToken = config.get('gatewayToken');
 
   try {
-    const response = await fetch(`${gatewayUrl}/auth/quota`, {
+    const response = await gatewayFetch(`${gatewayUrl}/auth/quota`, {
       headers: {
         'Authorization': `Bearer ${apiToken}`,
       },
     });
 
     if (!response.ok) {
-      if (response.status === 401) {
-        console.log(chalk.red('\n  Authentication expired. Please login again:\n'));
+      const err = await describeGatewayFailure(response);
+      if (err.status === 401) {
+        console.log(chalk.yellow('\n  ' + err.message));
         console.log(chalk.cyan('  mint login\n'));
         return;
       }
-      throw new Error(`API error: ${response.status}`);
+      throw err;
     }
 
     const data = await response.json() as QuotaData;
     displayQuota(data);
 
   } catch (error) {
-    console.log(chalk.red(`\n  Error fetching quota: ${(error as Error).message}\n`));
-    console.log(chalk.dim('  Make sure you\'re connected to the internet and try again.\n'));
+    if (error instanceof GatewayError) {
+      console.log(chalk.red('\n  ' + error.message + '\n'));
+    } else {
+      console.log(chalk.red(`\n  Error fetching quota: ${(error as Error).message}\n`));
+    }
   }
 }
 
 function displayQuota(data: QuotaData): void {
-  const { requests_used, requests_limit, tokens_used, cost_total, plan_type, reset_date, upgrade_url } = data;
+  // Defend against unexpected gateway responses: clamp to valid ranges and
+  // pick sensible defaults so we never render NaN or negative numbers.
+  const rawLimit = Number.isFinite(data.requests_limit) ? Math.max(0, Math.floor(data.requests_limit)) : 0;
+  const rawUsed = Number.isFinite(data.requests_used) ? Math.max(0, Math.floor(data.requests_used)) : 0;
+  const requests_limit = rawLimit;
+  const requests_used = rawLimit > 0 ? Math.min(rawUsed, rawLimit) : rawUsed;
+  const tokens_used = Number.isFinite(data.tokens_used) ? Math.max(0, data.tokens_used) : 0;
+  const cost_total = Number.isFinite(data.cost_total) ? Math.max(0, data.cost_total) : 0;
+  const { plan_type, reset_date, upgrade_url } = data;
+  const isUnlimited = requests_limit === 0 || requests_limit >= 999_999;
 
-  const requestsRemaining = requests_limit - requests_used;
-  const usagePercent = Math.round((requests_used / requests_limit) * 100);
+  const requestsRemaining = isUnlimited ? Infinity : requests_limit - requests_used;
+  const usagePercent = isUnlimited ? 0 : Math.round((requests_used / requests_limit) * 100);
 
   // Color based on usage
   let requestsColor = chalk.green;
   if (usagePercent >= 90) requestsColor = chalk.red;
   else if (usagePercent >= 70) requestsColor = chalk.yellow;
 
-  // Build usage bar
+  // Build usage bar (skipped for unlimited plans).
   const barWidth = 30;
-  const filledWidth = Math.round((requests_used / requests_limit) * barWidth);
+  const filledWidth = isUnlimited ? 0 : Math.round((requests_used / requests_limit) * barWidth);
   const emptyWidth = barWidth - filledWidth;
   const usageBar = requestsColor('█'.repeat(filledWidth)) + chalk.dim('░'.repeat(emptyWidth));
 
-  // Plan badge
+  // Plan badge — unknown plan types get a neutral gray badge rather than crashing.
   const planBadge = plan_type === 'free'
     ? chalk.bgYellow.black(' FREE ')
     : plan_type === 'pro'
     ? chalk.bgCyan.black(' PRO ')
-    : chalk.bgMagenta.black(' ENTERPRISE ');
+    : plan_type === 'enterprise'
+    ? chalk.bgMagenta.black(' ENTERPRISE ')
+    : chalk.bgGray.white(` ${String(plan_type ?? 'UNKNOWN').toUpperCase()} `);
 
   let content = `${planBadge} ${chalk.bold('Usage')}\n\n`;
 
   // Requests
   content += `${chalk.bold('Requests:')}\n`;
-  content += `${usageBar} ${requestsColor(`${requests_used}/${requests_limit}`)}\n`;
-  content += chalk.dim(`${requestsRemaining} requests remaining`) + '\n\n';
+  if (isUnlimited) {
+    content += chalk.green('  ∞ unlimited requests\n\n');
+  } else {
+    content += `${usageBar} ${requestsColor(`${requests_used}/${requests_limit}`)}\n`;
+    content += chalk.dim(`${requestsRemaining} requests remaining`) + '\n\n';
+  }
 
   // Tokens & Cost
   content += `${chalk.bold('Tokens:')} ${chalk.cyan(tokens_used.toLocaleString())}\n`;
@@ -100,8 +120,8 @@ function displayQuota(data: QuotaData): void {
     borderStyle: 'round'
   }));
 
-  // Show upgrade CTA if free plan and > 70% used
-  if (plan_type === 'free' && usagePercent >= 70) {
+  // Show upgrade CTA if free plan and > 70% used (not applicable to unlimited)
+  if (plan_type === 'free' && !isUnlimited && usagePercent >= 70) {
     console.log();
     if (requestsRemaining === 0) {
       console.log(chalk.red.bold('  ⚠️  You\'ve used all your free requests!\n'));

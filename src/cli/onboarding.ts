@@ -18,14 +18,26 @@ export async function runOnboarding(): Promise<boolean> {
   const indexed = existsSync(join(cwd, '.mint', 'context.json'));
   const hasOwnKeys = hasAnyProviderKey();
 
+  // Non-interactive terminals (piped input, CI, some IDEs) can't use readline
+  // prompts. Print guidance and exit cleanly instead of hanging.
+  const isInteractive = !!process.stdin.isTTY;
+
   // Path 1: Brand new user — not authenticated, no keys
   if (!authed && !hasOwnKeys) {
+    if (!isInteractive) {
+      printNonInteractiveHint();
+      return true;
+    }
     await showFirstRunWelcome();
     return true;
   }
 
   // Path 2: Authenticated but project not indexed
   if (!indexed) {
+    if (!isInteractive) {
+      console.log(chalk.dim('\n  Tip: run ') + chalk.cyan('mint init') + chalk.dim(' first to index this project.\n'));
+      return false; // Still open TUI — the brain will index lazily.
+    }
     const proceed = await showInitPrompt();
     if (!proceed) return true;
     // Run init, then fall through to TUI
@@ -37,22 +49,54 @@ export async function runOnboarding(): Promise<boolean> {
   return false;
 }
 
+function printNonInteractiveHint(): void {
+  console.log(chalk.cyan('\n  Mint CLI\n'));
+  console.log(chalk.white('  Get started:'));
+  console.log('    ' + chalk.cyan('mint signup') + chalk.dim('  — create a free account (50 requests/month)'));
+  console.log('    ' + chalk.cyan('mint login') + chalk.dim('   — sign in to an existing account'));
+  console.log('    ' + chalk.cyan('mint config:set providers.deepseek <key>') + chalk.dim('  — bring your own keys'));
+  console.log('');
+  console.log(chalk.dim('  Then run ') + chalk.cyan('mint "your task"') + chalk.dim(' or open the TUI with ') + chalk.cyan('mint') + chalk.dim('.\n'));
+}
+
 function hasAnyProviderKey(): boolean {
   const providers = config.get('providers') ?? {};
   return Object.values(providers).some((v) => !!v);
 }
 
+/** Unicode box-drawing logo — looks great on modern terminals. */
+const LOGO_UNICODE = [
+  '  ███╗   ███╗██╗███╗   ██╗████████╗     ██████╗██╗     ██╗',
+  '  ████╗ ████║██║████╗  ██║╚══██╔══╝    ██╔════╝██║     ██║',
+  '  ██╔████╔██║██║██╔██╗ ██║   ██║       ██║     ██║     ██║',
+  '  ██║╚██╔╝██║██║██║╚██╗██║   ██║       ██║     ██║     ██║',
+  '  ██║ ╚═╝ ██║██║██║ ╚████║   ██║       ╚██████╗███████╗██║',
+  '  ╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝   ╚═╝        ╚═════╝╚══════╝╚═╝',
+];
+
+/** ASCII fallback for legacy Windows terminals (cmd.exe, older PowerShell). */
+const LOGO_ASCII = [
+  '  #     #  ###  #   #  #######     #####  #       ###',
+  '  ##   ##   #   ##  #     #        #      #        # ',
+  '  # # # #   #   # # #     #        #      #        # ',
+  '  #  #  #   #   #  ##     #        #      #        # ',
+  '  #     #  ###  #   #     #        #####  #####   ###',
+];
+
+/**
+ * Legacy Windows terminals don't render Unicode box-drawing correctly.
+ * WT_SESSION is set by modern Windows Terminal; TERM_PROGRAM by most IDE terms.
+ * Anything else on Windows gets the ASCII fallback.
+ */
+function useAsciiLogo(): boolean {
+  if (process.platform !== 'win32') return false;
+  return !process.env.WT_SESSION && !process.env.TERM_PROGRAM;
+}
+
 function printLogo(): void {
-  const LOGO = [
-    '  ███╗   ███╗██╗███╗   ██╗████████╗     ██████╗██╗     ██╗',
-    '  ████╗ ████║██║████╗  ██║╚══██╔══╝    ██╔════╝██║     ██║',
-    '  ██╔████╔██║██║██╔██╗ ██║   ██║       ██║     ██║     ██║',
-    '  ██║╚██╔╝██║██║██║╚██╗██║   ██║       ██║     ██║     ██║',
-    '  ██║ ╚═╝ ██║██║██║ ╚████║   ██║       ╚██████╗███████╗██║',
-    '  ╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝   ╚═╝        ╚═════╝╚══════╝╚═╝',
-  ];
+  const logo = useAsciiLogo() ? LOGO_ASCII : LOGO_UNICODE;
   console.log('');
-  for (const line of LOGO) console.log(chalk.cyan(line));
+  for (const line of logo) console.log(chalk.cyan(line));
   console.log('');
   console.log(chalk.dim('  AI coding assistant · 98% cheaper than Claude Opus'));
   console.log('');
@@ -120,11 +164,11 @@ async function showFirstRunWelcome(): Promise<void> {
         boxen(
           chalk.bold('Bring Your Own Keys') +
             '\n\n' +
-            chalk.dim('Get keys from any of these:') +
+            chalk.dim('Get a key from any provider:') +
             '\n\n' +
             chalk.cyan('  DeepSeek') +
             chalk.dim('  https://platform.deepseek.com') +
-            chalk.dim('  (cheapest)') +
+            chalk.dim('  (cheapest — recommended)') +
             '\n' +
             chalk.cyan('  Anthropic') +
             chalk.dim(' https://console.anthropic.com') +
@@ -134,15 +178,47 @@ async function showFirstRunWelcome(): Promise<void> {
             '\n' +
             chalk.cyan('  Gemini') +
             chalk.dim('    https://ai.google.dev') +
-            chalk.dim('              (free tier)') +
-            '\n\n' +
-            chalk.white('Then run:') +
-            '\n\n' +
-            chalk.cyan('  mint config:set providers.deepseek <your-key>'),
+            chalk.dim('  (free tier)'),
           { padding: 1, borderColor: 'yellow', borderStyle: 'round' },
         ),
       );
       console.log('');
+
+      // Offer to configure a key right now. If the user has the key handy this
+      // finishes the whole setup; otherwise they can skip and do it later.
+      const haveKeyNow = await promptYesNo('  Have a key ready now?', true);
+      if (!haveKeyNow) {
+        console.log(chalk.dim('\n  No problem. When you have one, run:'));
+        console.log(chalk.cyan('    mint config:set providers.deepseek <your-key>\n'));
+        return;
+      }
+
+      const provider = await promptChoice(
+        '  Which provider is this key for?',
+        [
+          { key: '1', label: 'DeepSeek (recommended)', cmd: 'deepseek' },
+          { key: '2', label: 'Anthropic (Claude)', cmd: 'anthropic' },
+          { key: '3', label: 'OpenAI', cmd: 'openai' },
+          { key: '4', label: 'Gemini', cmd: 'gemini' },
+        ],
+      );
+
+      const key = await promptText('  Paste your API key: ');
+      if (!key) {
+        console.log(chalk.dim('\n  Skipped — no key entered. Run ') + chalk.cyan('mint config:set providers.' + provider + ' <key>') + chalk.dim(' later.\n'));
+        return;
+      }
+
+      try {
+        const providers = (config.get('providers') ?? {}) as Record<string, string>;
+        providers[provider] = key.trim();
+        config.set('providers', providers as never);
+        console.log(chalk.green('\n  ✓ Saved. You\'re ready to use Mint with your own key.'));
+        console.log(chalk.dim('  Next: ') + chalk.cyan('mint init') + chalk.dim(' to scan your project.\n'));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.log(chalk.red(`\n  Could not save key: ${msg}\n`));
+      }
       return;
     }
     case 'info':
@@ -206,6 +282,25 @@ async function runInit(): Promise<void> {
 }
 
 // ─── Simple input helpers ──────────────────────────────────────────────────
+//
+// All helpers use a try/finally close pattern so Ctrl+C or errors during the
+// prompt still release stdin — otherwise the TUI downstream would never get
+// its raw-mode initialized properly.
+
+function withReadline<T>(fn: (rl: ReturnType<typeof createInterface>) => Promise<T>): Promise<T> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  // Close on SIGINT as a last resort — without this, Ctrl+C during a prompt
+  // can leave the terminal in a half-configured state.
+  const onSigint = () => {
+    try { rl.close(); } catch { /* already closed */ }
+    process.exit(130);
+  };
+  rl.once('SIGINT', onSigint);
+  return fn(rl).finally(() => {
+    try { rl.removeListener('SIGINT', onSigint); } catch { /* ignore */ }
+    try { rl.close(); } catch { /* already closed */ }
+  });
+}
 
 function promptChoice(
   question: string,
@@ -217,26 +312,28 @@ function promptChoice(
   }
   console.log('');
 
-  return new Promise((resolve) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return withReadline((rl) => new Promise<string>((resolve) => {
     rl.question(chalk.dim('  Choose [1-' + options.length + ']: '), (answer) => {
-      rl.close();
       const trimmed = answer.trim();
       const match = options.find((o) => o.key === trimmed);
       resolve(match?.cmd ?? options[0].cmd);
     });
-  });
+  }));
 }
 
 function promptYesNo(question: string, defaultYes = true): Promise<boolean> {
-  return new Promise((resolve) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return withReadline((rl) => new Promise<boolean>((resolve) => {
     const hint = defaultYes ? chalk.dim(' [Y/n] ') : chalk.dim(' [y/N] ');
     rl.question(question + hint, (answer) => {
-      rl.close();
       const trimmed = answer.trim().toLowerCase();
       if (!trimmed) return resolve(defaultYes);
       resolve(trimmed === 'y' || trimmed === 'yes');
     });
-  });
+  }));
+}
+
+function promptText(question: string): Promise<string> {
+  return withReadline((rl) => new Promise<string>((resolve) => {
+    rl.question(question, (answer) => resolve(answer.trim()));
+  }));
 }

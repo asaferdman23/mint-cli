@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import boxen from 'boxen';
 import Table from 'cli-table3';
 import { config } from '../../utils/config.js';
+import { gatewayFetch } from '../../utils/gateway-fetch.js';
 import type { QuotaData } from './quota.js';
 
 export async function showAccount(): Promise<void> {
@@ -26,10 +27,11 @@ export async function showAccount(): Promise<void> {
   const hasGatewayToken = !!config.get('gatewayToken');
   const apiToken = config.get('gatewayToken');
 
-  // Fetch quota data
+  // Fetch quota data. Failure here is non-fatal — we still render the account
+  // header with whatever local info we have.
   let quotaData: QuotaData | null = null;
   try {
-    const response = await fetch(`${gatewayUrl}/auth/quota`, {
+    const response = await gatewayFetch(`${gatewayUrl}/auth/quota`, {
       headers: {
         'Authorization': `Bearer ${apiToken}`,
       },

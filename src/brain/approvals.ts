@@ -17,19 +17,58 @@ export interface AskApprovalArgs {
   fallback?: () => Promise<boolean>;
 }
 
+/** Max time the user has to respond before we auto-deny and unblock the loop. */
+const APPROVAL_TIMEOUT_MS = 120_000;
+
 /**
- * Emit an approval request and wait. If the event is not claimed before the
- * next tick (e.g. no one wired a handler), the fallback is used, or — if no
- * fallback is set — approval is DENIED for safety.
+ * Emit an approval request and wait. The promise always settles, even if:
+ *   - no handler is wired (fallback runs, or we default-deny)
+ *   - the session is aborted (deny, return immediately)
+ *   - the user walks away (timeout after APPROVAL_TIMEOUT_MS, deny)
  */
 export function askApproval(session: Session, args: AskApprovalArgs): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     let settled = false;
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    let abortListener: (() => void) | undefined;
+
+    const cleanup = () => {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      if (abortListener && session.signal) {
+        session.signal.removeEventListener('abort', abortListener);
+      }
+    };
+
     const wrappedResolve = (ok: boolean) => {
       if (settled) return;
       settled = true;
+      cleanup();
       resolve(ok);
     };
+
+    // If already aborted, deny immediately.
+    if (session.signal?.aborted) {
+      wrappedResolve(false);
+      return;
+    }
+
+    // Abort during the wait → deny.
+    if (session.signal) {
+      abortListener = () => {
+        session.emit({ type: 'warn', message: 'Approval cancelled — session aborted' });
+        wrappedResolve(false);
+      };
+      session.signal.addEventListener('abort', abortListener);
+    }
+
+    // Hard safety timeout.
+    timeoutHandle = setTimeout(() => {
+      session.emit({
+        type: 'warn',
+        message: `Approval timed out after ${APPROVAL_TIMEOUT_MS / 1000}s — denied automatically`,
+      });
+      wrappedResolve(false);
+    }, APPROVAL_TIMEOUT_MS);
 
     session.emit({
       type: 'approval.needed',
@@ -46,8 +85,7 @@ export function askApproval(session: Session, args: AskApprovalArgs): Promise<bo
         args.fallback().then(wrappedResolve, () => wrappedResolve(false));
       }
       // Otherwise: leave the promise pending — a real handler has until it
-      // calls resolve(). If no one ever does, the session's abort signal will
-      // eventually unblock the caller.
+      // calls resolve(), or the abort/timeout fires above.
     });
   });
 }

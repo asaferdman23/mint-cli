@@ -56,34 +56,133 @@ export async function showConfig(): Promise<void> {
   console.log(table.toString());
 }
 
+/** Config keys we recognize. Anything else gets rejected with a suggestion. */
+const VALID_TOP_LEVEL_KEYS = new Set([
+  'apiKey',
+  'gatewayToken',
+  'userId',
+  'email',
+  'orgId',
+  'defaultModel',
+  'autoContext',
+  'maxContextTokens',
+  'apiBaseUrl',
+]);
+
+const VALID_PROVIDERS = new Set([
+  'anthropic',
+  'deepseek',
+  'openai',
+  'openrouter',
+  'gemini',
+  'grok',
+  'mistral',
+  'groq',
+  'kimi',
+]);
+
+/** Known prefixes for provider keys — we warn but don't block on mismatch. */
+const PROVIDER_KEY_PREFIXES: Record<string, string[]> = {
+  anthropic: ['sk-ant-'],
+  openai: ['sk-'],
+  openrouter: ['sk-or-'],
+  deepseek: ['sk-'],
+  grok: ['xai-'],
+  groq: ['gsk_'],
+  gemini: ['AIza'],
+  mistral: [],
+  kimi: ['sk-'],
+};
+
+/** Levenshtein-ish closest match for "did you mean ___?" hints. */
+function closestMatch(input: string, candidates: string[]): string | null {
+  const lower = input.toLowerCase();
+  // Cheap scoring: rank by shared-prefix length.
+  let best: { key: string; score: number } | null = null;
+  for (const c of candidates) {
+    let shared = 0;
+    while (shared < lower.length && shared < c.length && lower[shared] === c.toLowerCase()[shared]) {
+      shared++;
+    }
+    if (shared >= 2 && (!best || shared > best.score)) {
+      best = { key: c, score: shared };
+    }
+  }
+  return best?.key ?? null;
+}
+
 export async function setConfig(key: string, value: string): Promise<void> {
-  // Handle nested keys like providers.anthropic
+  // ── Provider keys ────────────────────────────────────────────────────────
   if (key.startsWith('providers.')) {
     const provider = key.split('.')[1];
-    const currentProviders = config.get('providers') || {};
-    config.set('providers', {
-      ...currentProviders,
-      [provider]: value,
-    });
-    console.log(chalk.green(`✓ Set ${key}`));
+    if (!provider) {
+      console.log(chalk.red('  Missing provider name. Example: ') + chalk.cyan('mint config:set providers.deepseek <key>'));
+      return;
+    }
+    if (!VALID_PROVIDERS.has(provider)) {
+      const hint = closestMatch(provider, [...VALID_PROVIDERS]);
+      console.log(chalk.red(`  Unknown provider: ${provider}`));
+      if (hint) console.log(chalk.dim(`  Did you mean ${chalk.cyan('providers.' + hint)}?`));
+      console.log(chalk.dim(`  Supported: ${[...VALID_PROVIDERS].join(', ')}`));
+      return;
+    }
+
+    // Light sanity check on key format. Warn-only — we don't want to block
+    // provider changes if their formats evolve.
+    const expectedPrefixes = PROVIDER_KEY_PREFIXES[provider] ?? [];
+    if (expectedPrefixes.length > 0 && !expectedPrefixes.some((p) => value.startsWith(p))) {
+      console.log(chalk.yellow(`  Warning: ${provider} keys usually start with ${expectedPrefixes.map((p) => chalk.cyan(p)).join(' or ')}. Saving anyway.`));
+    }
+    if (value.length < 16) {
+      console.log(chalk.yellow('  Warning: key looks unusually short. Double-check you pasted the full value.'));
+    }
+
+    try {
+      const currentProviders = config.get('providers') || {};
+      config.set('providers', { ...currentProviders, [provider]: value });
+      console.log(chalk.green(`  ✓ Set ${key}`));
+    } catch (err) {
+      console.log(chalk.red(`  Could not save: ${(err as Error).message}`));
+    }
     return;
   }
 
-  // Handle boolean values
+  // ── Top-level keys ───────────────────────────────────────────────────────
+  if (!VALID_TOP_LEVEL_KEYS.has(key)) {
+    const hint = closestMatch(key, [...VALID_TOP_LEVEL_KEYS]);
+    console.log(chalk.red(`  Unknown setting: ${key}`));
+    if (hint) console.log(chalk.dim(`  Did you mean ${chalk.cyan(hint)}?`));
+    console.log(chalk.dim('  Run ') + chalk.cyan('mint config') + chalk.dim(' to see all settings.'));
+    return;
+  }
+
+  // apiBaseUrl — must be a parseable http(s) URL
+  if (key === 'apiBaseUrl') {
+    try {
+      const url = new URL(value);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        throw new Error('must use http or https');
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.log(chalk.red(`  Invalid URL: ${msg}`));
+      console.log(chalk.dim('  Example: ') + chalk.cyan('mint config:set apiBaseUrl https://api.usemint.dev'));
+      return;
+    }
+  }
+
+  // Typed coercion
+  let coerced: unknown = value;
   if (value === 'true' || value === 'false') {
-    config.set(key as any, value === 'true');
-    console.log(chalk.green(`✓ Set ${key} = ${value}`));
-    return;
+    coerced = value === 'true';
+  } else if (!isNaN(Number(value)) && value.trim() !== '') {
+    coerced = Number(value);
   }
 
-  // Handle numeric values
-  if (!isNaN(Number(value))) {
-    config.set(key as any, Number(value));
-    console.log(chalk.green(`✓ Set ${key} = ${value}`));
-    return;
+  try {
+    config.set(key as Parameters<typeof config.set>[0], coerced as never);
+    console.log(chalk.green(`  ✓ Set ${key} = ${value}`));
+  } catch (err) {
+    console.log(chalk.red(`  Could not save: ${(err as Error).message}`));
   }
-
-  // String value
-  config.set(key as any, value);
-  console.log(chalk.green(`✓ Set ${key} = ${value}`));
 }
