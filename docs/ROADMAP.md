@@ -1,83 +1,92 @@
 # Mint CLI — Near-future roadmap
 
-Updated: 2026-05-04. Post brain-rewrite. See `.claude/plans/lets-plan-one-architectual-ticklish-tower.md` for the architecture plan this replaces.
+Updated: 2026-05-10. Phase 3 in progress — P1, P4, P5 shipped (Plan A); P2 (replay harness), P3 (gateway embeddings), P6 (tune + weight refit) shipped (Plan B). P7 (docs) is this update.
 
-What's left, in priority order.
-
----
-
-## 🎯 Priority 1 — Ship it (1–2 days)
-
-**Release beta 9.**
-
-- Bump `package.json` to `0.3.0-beta.1` (major version bump signals the architecture rewrite).
-- Write a concise CHANGELOG with the "one brain, four engines deleted" pitch.
-- Update README examples — show `mint trace` prominently as the reliability feature.
-- Smoke-test from an empty project end to end: `mint init`, real LLM call, `mint trace`, `mint usage`.
-
-**Why first:** users stuck on beta 8 are running legacy code. Every day they don't upgrade is a day we're not seeing real-world brain traces come back.
+What's left, in priority order. Status legend: ✅ shipped, 🟡 partial, ⏳ pending.
 
 ---
 
-## 🎯 Priority 2 — Cost regression suite (2 days)
+## ✅ Priority 1 — Ship it
 
-Record/replay real tasks to guard against cost regressions as we iterate on the classifier/routing.
+**Released as 0.3.0-beta.1.**
 
-- Add `MINT_RECORD=1` to `streamAgent` — captures the full request/response stream to JSONL under `test/fixtures/recordings/<task-hash>.jsonl`.
-- `test/replay/cost.test.ts` — re-runs 10–20 recorded tasks with the provider mocked to replay from the fixture. Asserts `brain.cost ≤ 1.10 × recorded.cost`.
-- Wire into CI (GitHub Actions already configured? verify).
+- ✅ `package.json` bumped to `0.3.0-beta.1`.
+- ✅ CHANGELOG.md with the "one brain, four engines deleted" pitch.
+- ✅ README updated; `mint trace` is the headline reliability feature.
+- ✅ Smoke-tested end-to-end: `mint init` → real LLM call → `mint trace` → `mint usage`.
 
-**Why:** we just deleted the comparison baseline. The moment someone tweaks the routing table, we need a safety net or we'll silently 2× prod costs.
-
----
-
-## 🎯 Priority 3 — Gateway embeddings endpoint (1 day in `mint-gateway`)
-
-The brain auto-probes `/v1/embeddings` — if it appears, hybrid retrieval switches on without a client release. Pure gateway-side work.
-
-- `mint-gateway/src/routes/embeddings.ts` — proxy to Gemini's `embedContent` (`text-embedding-004`, free tier covers typical usage) or OpenAI `text-embedding-3-small` as fallback.
-- Cache embeddings in gateway Postgres by content hash (same as recordings) so repeat calls are free.
-
-**Why:** retrieval quality is the #1 lever for brain quality. Going from BM25 to BM25 + dense is typically a 15–25% relevance lift with zero code changes on the client.
+Remaining: actual `npm publish --tag beta` to pull users off beta 8.
 
 ---
 
-## 🎯 Priority 4 — Deep mode polish (1 day)
+## ✅ Priority 2 — Cost regression suite
 
-Deep mode today runs the planner and injects the subtask list into the system prompt. The plan called for full per-subtask mini-sessions.
+Record/replay harness landed in `src/providers/record-replay.ts` + `src/providers/__tests__/record-replay.test.ts` (6 tests, all green).
 
-- `executeSubtask()` actually runs a focused tool loop per plan step instead of no-op.
-- Each step emits its own `phase:build` event with the step id.
-- `mint trace` gains a plan→build hierarchy.
-
-**Why:** genuine complex refactors (>10 files) will benefit; the brain's single loop can hit its 40-iteration cap.
+- ✅ `MINT_RECORD=1` and `MINT_REPLAY=<dir>` env vars hook into the provider layer; SHA-256 keying over (model + system + messages + tools).
+- ✅ `npm run test:replay` script seeds `MINT_REPLAY` and runs the test bucket.
+- ⏳ Live cost regression test (`test/replay/cost.test.ts`) — needs a real `MINT_RECORD=1` session against the deployed gateway to seed 10–20 fixtures. Mechanism is ready; just needs a one-off recording pass.
 
 ---
 
-## 🎯 Priority 5 — TUI reliability polish (2 days)
+## ✅ Priority 3 — Gateway embeddings endpoint
 
-Based on the trace UI work but for the live session.
+Shipped in `mint-gateway` commits `eb6f68c` (route + provider + cache schema) and `f246f91` (in-process integration smoke). Auto-deployed via Railway on push.
 
-- `/trace` slash command inside `BrainApp` — shows the current session's live event list.
-- Diff preview popup when the brain proposes a write in `diff` mode — show the actual unified diff before approval, not just the filename.
-- Session resume — `mint resume <sessionId>` re-opens a session's trace and continues where it left off (works because `outcomes.sqlite` + `traces/*.jsonl` have enough context).
-- Cost budget warning — if `cost.delta` pushes session > $0.50 (configurable), prompt "continue? this is getting expensive".
+- ✅ `POST /v1/embeddings` (OpenAI-compatible request/response shape).
+- ✅ `OPTIONS /v1/embeddings` for the mint-cli auto-probe (returns 401 unauth / 204 auth — both treated as "available" by `probeEmbeddings`).
+- ✅ Provider order: Gemini `text-embedding-004` (primary, free tier covers typical usage) → OpenAI `text-embedding-3-small` (fallback on Gemini failure when both keys configured).
+- ✅ `embeddings_cache` table: `(hash PK, model, vector double precision[], dim, last_used_at)`. Cache key is `sha256(model + ':' + text)` so swapping default providers does not poison cached vectors.
+- ✅ Quota: 1 billable request per call regardless of batch size; tokens flow into `user_quota.tokens_used`.
 
----
-
-## 🎯 Priority 6 — `mint tune` for weights (1 day)
-
-The fallback classifier's weights live in `routing.default.json`. We track every outcome. Close the loop.
-
-- `mint tune` reads `.mint/outcomes.sqlite`, fits new `classifier.weights` via simple least-squares over the last 200 successful runs, writes the result to `.mint/routing.json`.
-- Proposes route changes: if `edit_multi` tasks with `kimi-k2` had 80% success but `deepseek-v3` had 95%, suggest swapping the route.
-
-**Why:** this is what "real classifier with memory" means in practice. Outcomes go in → routing improves automatically.
+Pending operationally: set `GEMINI_API` env var on Railway before users hit the endpoint.
 
 ---
 
-## 🎯 Priority 7 — Docs + marketing (ongoing)
+## ✅ Priority 4 — Deep mode polish
 
-- README screenshot of `mint trace` — the reliability story is the sell.
-- Blog post: "Why we deleted 8k lines to ship one brain".
-- Record a 30-second demo for the landing page.
+- ✅ `executeSubtask()` runs a focused tool loop per plan step (was previously a no-op).
+- ✅ Each step emits `phase:build` events with a `stepId` so traces show plan→build hierarchy.
+- ✅ `mint trace` renders step ids on phase events; tested in `src/brain/__tests__/deep-mode.test.ts`.
+
+---
+
+## ✅ Priority 5 — TUI reliability polish
+
+- ✅ `/trace` slash command inside `BrainApp` shows the live event list.
+- ✅ Diff preview popup when the brain proposes a write in diff mode (renders the unified diff, not just the filename).
+- ✅ `mint resume <sessionId>` re-opens a session's trace and continues where it left off; backed by the existing `outcomes.sqlite` + `traces/*.jsonl`.
+- ✅ Cost budget warning — `cost.delta` past `brain.sessionBudgetUsd` (default $0.50, configurable) prompts before continuing. Warning fires at most once per session via `budgetWarnedRef`.
+
+---
+
+## ✅ Priority 6 — `mint tune` for weights
+
+Shipped as `mint tune` + `mint tune --apply`.
+
+- ✅ Reads `.mint/outcomes.sqlite`; aggregates per-(kind, model) success rate, avg cost, avg iterations.
+- ✅ Proposes route swaps when an alternative model has ≥10pp success-rate lift over the current default with ≥30 samples (configurable via `--min-samples`).
+- ✅ Refits the 6 fallback-classifier weights via ridge least-squares (λ=0.5, Gauss-Jordan with partial pivoting) against recorded `classifierFeatures` vectors. Targets are derived by inverting `sigmoid(4·w·x)` on a complexity-band score with iteration-based correction. Proposals are blended (`α = min(0.7, n/100)`) with current weights for stability on small datasets.
+- ✅ `--apply` writes `routes` + `classifier.weights` to `.mint/routing.json`; merges with any existing override.
+- ✅ `outcomes.sqlite` gained a `classifier_features TEXT` column via non-destructive `ALTER TABLE`; written on every brain session via `extractClassifierFeatures(features)`.
+- ✅ 2 tests cover the <20-row guard and the RMSE-improvement invariant on synthetic data.
+
+---
+
+## 🟡 Priority 7 — Docs + marketing
+
+- ✅ ROADMAP status (this update).
+- ✅ PRODUCT_HUNT_CHECKLIST refreshed with current state.
+- ✅ README screenshot of `mint trace` — reliability is the sell.
+- ⏳ Blog post: "Why we deleted 8k lines to ship one brain".
+- ⏳ 30-second demo recording for the landing page.
+
+---
+
+## What's after this?
+
+1. `npm publish --tag beta` for `0.3.0-beta.1` (mechanism ready; needs a `npm whoami` + final smoke).
+2. Seed the cost-regression fixture corpus (one live `MINT_RECORD=1` run against the deployed gateway).
+3. `embeddings_cache` LRU cleanup job — schema has `last_used_at`; no cron yet. Not urgent until cache size becomes a problem.
+4. Per-task daily token cap on `/v1/embeddings` if we see abuse — current limit is the existing per-user monthly quota only.
+

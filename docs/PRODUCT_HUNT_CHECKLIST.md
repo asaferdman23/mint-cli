@@ -29,21 +29,26 @@ mint login      # Sign in
 
 ---
 
-## 🚧 Server-Side (To Do)
+## ✅ Server-Side (Completed)
 
-See `docs/SERVER_REQUIREMENTS.md` for detailed implementation guide.
+See `docs/SERVER_REQUIREMENTS.md` for the original spec; status below reflects the deployed `mint-gateway` (commits `eb6f68c` + `f246f91` on `main`, auto-deployed via Railway).
 
 ### Must Have
-- [ ] Implement `GET /auth/quota` endpoint
-- [ ] Add quota enforcement to `/v1/chat` and `/v1/agent`
-- [ ] Return 429 errors when quota exceeded
-- [ ] Database schema updates (quota fields)
-- [ ] Monthly quota reset cron job
-- [ ] Basic usage tracking
+- [x] `GET /auth/quota` endpoint (hooked through Supabase JWT and legacy API tokens)
+- [x] Quota enforcement on `/v1/chat`, `/v1/agent`, and `/v1/embeddings`
+- [x] 429 errors with `quota_used` / `quota_limit` / `upgrade_url`
+- [x] Database schema: `users`, `api_tokens`, `user_quota`, `embeddings_cache`
+- [x] Monthly quota reset (handled inline on first read of a new period — no cron required)
+- [x] Usage tracking via `requests` + `routing_decisions` tables
+
+### Recently Shipped
+- [x] `POST /v1/embeddings` — Gemini primary, OpenAI fallback, Postgres-backed cache
+- [x] In-process integration smoke (`scripts/smoke-embeddings.ts`, 5/5 scenarios)
+- [x] Auth tests still green (7/7) after schema additions
 
 ### Nice to Have
-- [ ] Usage analytics dashboard
-- [ ] Detailed usage history API
+- [ ] Usage analytics dashboard (data exists in `requests`; needs UI surface)
+- [ ] Detailed usage history API (currently exposed via `/admin` only)
 - [ ] Pro plan upgrade page
 - [ ] Webhook for quota alerts
 
@@ -52,22 +57,26 @@ See `docs/SERVER_REQUIREMENTS.md` for detailed implementation guide.
 ## 📦 Pre-Launch
 
 ### Testing
-- [ ] End-to-end test: signup → init → 50 requests → quota exceeded
-- [ ] Test quota warnings at 40/50, 45/50, 50/50
-- [ ] Test `mint quota` command with real gateway
-- [ ] Test `mint account` command displays correctly
-- [ ] Test BYOK fallback when quota exceeded
-- [ ] Verify TUI status bar updates in real-time
-- [ ] Test on Windows, Mac, Linux
+- [x] Unit tests: 69/69 in `mint-cli`, 13/13 (`auth` + `embeddings`) in `mint-gateway`
+- [x] In-process integration smoke for `/v1/embeddings`
+- [ ] Live end-to-end: signup → init → 50 requests → quota exceeded
+- [ ] Live quota warnings at 40/50, 45/50, 50/50
+- [ ] Live `mint quota` against deployed gateway
+- [ ] Live `mint account` dashboard
+- [ ] BYOK fallback when quota exceeded
+- [ ] TUI status bar updates in real-time
+- [ ] Cross-platform smoke (Windows ✓ verified locally; Mac, Linux pending)
 
 ### Documentation
-- [x] README.md - clear value prop and pricing
-- [x] CHANGELOG.md - 0.3.0-beta.1 release notes
-- [ ] Demo video/GIF (30-60 seconds)
+- [x] README.md — value prop, pricing, `mint trace` reliability story
+- [x] CHANGELOG.md — 0.3.0-beta.1 release notes
+- [x] ROADMAP.md — Phase 3 status (P1–P7)
+- [ ] Demo video/GIF (30–60 seconds)
 - [ ] Screenshots for Product Hunt
   - [ ] TUI with quota in status bar
-  - [ ] `mint quota` output
-  - [ ] `mint account` dashboard
+  - [ ] `mint trace` transcript output
+  - [ ] `mint tune` proposal table
+  - [ ] `mint quota` / `mint account`
   - [ ] Cost comparison table
 
 ### Assets

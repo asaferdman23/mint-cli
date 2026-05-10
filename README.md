@@ -108,6 +108,11 @@ mint quota                # See remaining free requests
 mint account              # Full account dashboard
 mint usage                # Cost breakdown with savings
 mint trace                # Browse recent tasks
+
+# Continue & improve
+mint resume <session>     # Re-open a past session and keep going
+mint tune                 # Suggest routing/classifier weights from your
+                          # recorded outcomes (dry-run; --apply to write)
 ```
 
 ### In the TUI
