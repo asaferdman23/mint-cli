@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { login, logout, whoami, signup } from './commands/auth.js';
+import { loginWithBrowser } from './commands/login-browser.js';
 import { showConfig, setConfig } from './commands/config.js';
 import { showUsage } from './commands/usage.js';
 import { showQuota } from './commands/quota.js';
@@ -130,13 +131,23 @@ program
 // Auth commands
 program
   .command('signup')
-  .description('Create a new Mint account')
-  .action(signup);
+  .description('Sign in with GitHub or Google in your browser (recommended)')
+  .action(() => loginWithBrowser());
 
 program
   .command('login')
-  .description('Login with email and password')
+  .description('Sign in via the browser (GitHub / Google) — same as `signup`')
+  .action(() => loginWithBrowser());
+
+program
+  .command('login:password')
+  .description('Sign in with email + password (legacy)')
   .action(login);
+
+program
+  .command('signup:password')
+  .description('Create an account with email + password (legacy)')
+  .action(signup);
 
 program
   .command('logout')

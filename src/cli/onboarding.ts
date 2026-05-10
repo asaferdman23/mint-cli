@@ -137,10 +137,9 @@ async function showFirstRunWelcome(): Promise<void> {
   const choice = await promptChoice(
     '  What would you like to do?',
     [
-      { key: '1', label: 'Create free account (recommended)', cmd: 'signup' },
-      { key: '2', label: 'Sign in to existing account', cmd: 'login' },
-      { key: '3', label: 'Use my own API keys', cmd: 'byok' },
-      { key: '4', label: 'Show me more info', cmd: 'info' },
+      { key: '1', label: 'Sign in with GitHub or Google (recommended)', cmd: 'signup' },
+      { key: '2', label: 'Use my own API keys', cmd: 'byok' },
+      { key: '3', label: 'Show me more info', cmd: 'info' },
     ],
   );
 
@@ -148,14 +147,24 @@ async function showFirstRunWelcome(): Promise<void> {
 
   switch (choice) {
     case 'signup': {
-      const { signup } = await import('./commands/auth.js');
-      await signup();
+      const { loginWithBrowser } = await import('./commands/login-browser.js');
+      try {
+        await loginWithBrowser();
+      } catch {
+        // The error is already printed by loginWithBrowser; fall through so
+        // the caller exits cleanly without a stack trace.
+        return;
+      }
       console.log(chalk.dim('\n  Next: ') + chalk.cyan('mint init') + chalk.dim(' to scan your project\n'));
       return;
     }
     case 'login': {
-      const { login } = await import('./commands/auth.js');
-      await login();
+      const { loginWithBrowser } = await import('./commands/login-browser.js');
+      try {
+        await loginWithBrowser();
+      } catch {
+        return;
+      }
       console.log(chalk.dim('\n  Next: ') + chalk.cyan('mint init') + chalk.dim(' to scan your project\n'));
       return;
     }
