@@ -562,6 +562,8 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
                 outputTokens: event.result.outputTokens,
                 cost: event.result.totalCostUsd,
                 durationMs: event.result.durationMs,
+                cacheReadTokens: event.result.cacheReadInputTokens,
+                cacheCreationTokens: event.result.cacheCreationInputTokens,
               });
             } catch {
               /* best-effort */

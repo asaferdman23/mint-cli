@@ -8,6 +8,22 @@ const MODEL_MAP: Partial<Record<ModelId, string>> = {
   'claude-opus-4': 'claude-opus-4-20250514',
 };
 
+/**
+ * Prompt-cache marker shape Anthropic expects. We attach this to the system
+ * block and the tools array so the static prefix of every request is billed
+ * at ~10% of the fresh-token price after the first turn.
+ *
+ * We mark the LAST tool only — the SDK caches "everything up to and
+ * including" the marker, so a single trailing marker covers the full tools
+ * array without bloating the request.
+ */
+const CACHE_EPHEMERAL = { type: 'ephemeral' as const };
+
+/** True if the env var explicitly disables prompt caching (escape hatch). */
+function cachingDisabled(): boolean {
+  return process.env.MINT_DISABLE_ANTHROPIC_CACHE === '1';
+}
+
 export class AnthropicProvider implements Provider {
   id = 'anthropic' as const;
   name = 'Anthropic';
@@ -39,10 +55,16 @@ export class AnthropicProvider implements Provider {
     const systemMessage = request.messages.find(m => m.role === 'system');
     const otherMessages = request.messages.filter(m => m.role !== 'system');
 
+    // Wrap system as a cacheable block when present. Anthropic bills the
+    // marked prefix at ~10% on subsequent calls within ~5 minutes.
+    const systemParam = systemMessage?.content && !cachingDisabled()
+      ? [{ type: 'text' as const, text: systemMessage.content, cache_control: CACHE_EPHEMERAL }]
+      : systemMessage?.content;
+
     const response = await client.messages.create({
       model: modelString,
       max_tokens: request.maxTokens ?? 4096,
-      system: systemMessage?.content,
+      system: systemParam,
       messages: otherMessages.map(m => ({
         role: m.role as 'user' | 'assistant',
         content: m.content,
@@ -52,6 +74,9 @@ export class AnthropicProvider implements Provider {
     const latency = Date.now() - startTime;
     const inputTokens = response.usage.input_tokens;
     const outputTokens = response.usage.output_tokens;
+    // Cache stats are only present when prompt caching is in play.
+    const cacheCreationTokens = (response.usage as { cache_creation_input_tokens?: number }).cache_creation_input_tokens ?? 0;
+    const cacheReadTokens = (response.usage as { cache_read_input_tokens?: number }).cache_read_input_tokens ?? 0;
 
     const content = response.content
       .filter(block => block.type === 'text')
@@ -65,8 +90,13 @@ export class AnthropicProvider implements Provider {
         inputTokens,
         outputTokens,
         totalTokens: inputTokens + outputTokens,
+        cacheCreationInputTokens: cacheCreationTokens || undefined,
+        cacheReadInputTokens: cacheReadTokens || undefined,
       },
-      cost: calculateCost(request.model, inputTokens, outputTokens),
+      cost: calculateCost(request.model, inputTokens, outputTokens, {
+        cacheCreationInputTokens: cacheCreationTokens,
+        cacheReadInputTokens: cacheReadTokens,
+      }),
       latency,
     };
   }
@@ -148,16 +178,29 @@ export class AnthropicProvider implements Provider {
       return { role: 'assistant' as const, content: m.content };
     });
 
-    const tools: Anthropic.Tool[] | undefined = request.tools?.map(t => ({
-      name: t.name,
-      description: t.description,
-      input_schema: t.input_schema,
-    }));
+    const tools: Anthropic.Tool[] | undefined = request.tools?.map((t, i, arr) => {
+      const tool: Anthropic.Tool = {
+        name: t.name,
+        description: t.description,
+        input_schema: t.input_schema,
+      };
+      // Tag the LAST tool so Anthropic caches the entire tools array prefix.
+      // Tool schemas are static across a session so this is pure savings.
+      if (i === arr.length - 1 && !cachingDisabled()) {
+        (tool as unknown as { cache_control?: typeof CACHE_EPHEMERAL }).cache_control = CACHE_EPHEMERAL;
+      }
+      return tool;
+    });
+
+    // System prompt as cacheable block (see complete()).
+    const systemParam = systemPrompt && !cachingDisabled()
+      ? [{ type: 'text' as const, text: systemPrompt, cache_control: CACHE_EPHEMERAL }]
+      : systemPrompt;
 
     const stream = client.messages.stream({
       model: modelString,
       max_tokens: request.maxTokens ?? 8192,
-      system: systemPrompt,
+      system: systemParam as unknown as string,
       messages: anthropicMessages,
       tools,
     }, { signal: request.signal });
@@ -180,6 +223,31 @@ export class AnthropicProvider implements Provider {
           };
         }
       }
+    }
+
+    // Emit a final usage chunk with the real cached/fresh token split. The
+    // SDK's finalMessage() resolves once the stream completes; usage there
+    // is the authoritative count (Anthropic doesn't include cache stats in
+    // any of the streaming deltas).
+    try {
+      const final = await stream.finalMessage();
+      const u = final.usage as {
+        input_tokens?: number;
+        output_tokens?: number;
+        cache_creation_input_tokens?: number;
+        cache_read_input_tokens?: number;
+      };
+      yield {
+        type: 'usage',
+        usage: {
+          inputTokens: u.input_tokens ?? 0,
+          outputTokens: u.output_tokens ?? 0,
+          cacheCreationInputTokens: u.cache_creation_input_tokens ?? 0,
+          cacheReadInputTokens: u.cache_read_input_tokens ?? 0,
+        },
+      };
+    } catch {
+      // finalMessage() can throw on aborted streams; usage is best-effort.
     }
   }
 }

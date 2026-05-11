@@ -265,11 +265,19 @@ export interface ToolDefinition {
 }
 
 export interface AgentStreamChunk {
-  type: 'text' | 'tool_call' | 'tool_result';
+  type: 'text' | 'tool_call' | 'tool_result' | 'usage';
   text?: string;
   toolName?: string;
   toolInput?: Record<string, unknown>;
   toolCallId?: string;
+  /** Final usage payload — emitted once per stream by providers that
+   *  expose token counts (Anthropic does, others may not). */
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheCreationInputTokens?: number;
+    cacheReadInputTokens?: number;
+  };
 }
 
 export interface CompletionRequest {
@@ -293,6 +301,10 @@ export interface CompletionResponse {
     inputTokens: number;
     outputTokens: number;
     totalTokens: number;
+    /** Tokens billed at the cache-write tier (~125% of fresh on Anthropic). */
+    cacheCreationInputTokens?: number;
+    /** Tokens billed at the cache-read tier (~10% of fresh on Anthropic). */
+    cacheReadInputTokens?: number;
   };
   cost: {
     input: number;

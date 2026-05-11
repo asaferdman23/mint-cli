@@ -125,10 +125,21 @@ export function getModelInfo(modelId: ModelId): ModelInfo {
 export function calculateCost(
   modelId: ModelId,
   inputTokens: number,
-  outputTokens: number
+  outputTokens: number,
+  cacheUsage?: { cacheCreationInputTokens?: number; cacheReadInputTokens?: number },
 ): { input: number; output: number; total: number } {
   const model = MODELS[modelId];
-  const input = (inputTokens / 1_000_000) * model.inputPrice;
+  // Anthropic prompt-cache pricing: cache writes are ~1.25x fresh input,
+  // cache reads are ~0.10x fresh input. Other providers price differently
+  // (or not at all) — they pass cacheUsage = undefined so this is a no-op.
+  const cacheWriteTokens = cacheUsage?.cacheCreationInputTokens ?? 0;
+  const cacheReadTokens = cacheUsage?.cacheReadInputTokens ?? 0;
+  // Anthropic reports cache_creation_input_tokens and cache_read_input_tokens
+  // SEPARATELY from input_tokens (input_tokens is fresh-only). So we add
+  // cache costs on top, not subtract.
+  const input = (inputTokens / 1_000_000) * model.inputPrice
+    + (cacheWriteTokens / 1_000_000) * model.inputPrice * 1.25
+    + (cacheReadTokens / 1_000_000) * model.inputPrice * 0.10;
   const output = (outputTokens / 1_000_000) * model.outputPrice;
   return {
     input,

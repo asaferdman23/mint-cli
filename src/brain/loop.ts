@@ -320,6 +320,12 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
     let turnText = '';
     const toolCalls: BrainToolCall[] = [];
     let turnFailed = false;
+    let realUsage: {
+      inputTokens: number;
+      outputTokens: number;
+      cacheCreationInputTokens?: number;
+      cacheReadInputTokens?: number;
+    } | null = null;
 
     try {
       for await (const chunk of streamAgent({
@@ -350,6 +356,9 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
             name,
             input: chunk.toolInput ?? {},
           });
+        } else if (chunk.type === 'usage' && chunk.usage) {
+          // Authoritative token counts from the provider (Anthropic today).
+          realUsage = chunk.usage;
         }
       }
     } catch (err) {
@@ -363,19 +372,28 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
       break;
     }
 
-    // Cost accounting — rough (provider responses through streamAgent don't
-    // always return usage). Real numbers come from completeWithFallback paths.
-    // Skip on turn failure so we don't charge users for partial/broken streams.
+    // Cost accounting — prefer real usage from the provider (Anthropic emits
+    // a 'usage' chunk with cache stats); fall back to local estimate otherwise.
     if (!turnFailed) {
-      const turnInputTokens = Math.max(0, budget.used);
-      const turnOutputTokens = countTokens(turnText);
-      const turnCost = approxCostUsd(route.model, turnInputTokens, turnOutputTokens);
-      session.recordCost(turnInputTokens, turnOutputTokens, turnCost);
+      const turnInputTokens = realUsage?.inputTokens ?? Math.max(0, budget.used);
+      const turnOutputTokens = realUsage?.outputTokens ?? countTokens(turnText);
+      const cacheRead = realUsage?.cacheReadInputTokens;
+      const cacheWrite = realUsage?.cacheCreationInputTokens;
+      const turnCost = approxCostUsd(route.model, turnInputTokens, turnOutputTokens, {
+        cacheCreationInputTokens: cacheWrite,
+        cacheReadInputTokens: cacheRead,
+      });
+      session.recordCost(turnInputTokens, turnOutputTokens, turnCost, {
+        cacheReadInputTokens: cacheRead,
+        cacheCreationInputTokens: cacheWrite,
+      });
       session.emit({
         type: 'cost.delta',
         model: route.model,
         inputTokens: turnInputTokens,
         outputTokens: turnOutputTokens,
+        cacheReadInputTokens: cacheRead,
+        cacheCreationInputTokens: cacheWrite,
         usd: turnCost,
       });
       budget.add(turnOutputTokens);
@@ -429,6 +447,8 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
     totalCostUsd: totals.costUsd,
     inputTokens: totals.inputTokens,
     outputTokens: totals.outputTokens,
+    cacheReadInputTokens: totals.cacheReadTokens,
+    cacheCreationInputTokens: totals.cacheCreationTokens,
     durationMs: Date.now() - startedAt,
     iterations: totals.iterations,
     toolCalls: totals.toolCalls,

@@ -2,6 +2,19 @@
 
 All notable changes to Mint CLI will be documented in this file.
 
+## [0.3.0-beta.4] - 2026-05-12
+
+### 💰 Anthropic prompt caching + per-session cost reporting
+
+The enterprise-cost slice. Multi-turn Claude sessions now reuse cached prompts (system + tool schemas), and a new `mint cost-report` shows where the savings landed.
+
+- **Anthropic prompt caching** — system prompt and the last tool definition are now tagged with `cache_control: { type: 'ephemeral' }` on every request. Repeat turns within ~5 minutes pay ~10% of the fresh input price for the cached portion. Expected ~60–70% reduction in input cost on multi-turn sessions.
+- **Real cache stats end-to-end** — `streamAgent()` now yields a final `usage` chunk with `cache_creation_input_tokens` and `cache_read_input_tokens` from `stream.finalMessage()`. The brain loop replaces its old budget-heuristic cost accounting with these authoritative numbers when present.
+- **Cost math knows about cache** — `calculateCost()` and `approxCostUsd()` accept a `cacheUsage` parameter and price cache writes at 1.25× fresh, cache reads at 0.10× fresh.
+- **`mint cost-report`** — per-session cost breakdown showing fresh vs cached tokens, cache hit %, $ spent, $ saved vs Opus, and the bigger “Opus, no-cache” baseline that captures both routing + caching savings. Supports `--since <days>`, `--limit <n>`, and `--export csv | json`.
+- **Schema migration** — `usage.db` gains `cacheReadTokens` and `cacheCreationTokens` columns via non-destructive `ALTER TABLE` (idempotent, safe on existing installs).
+- **Escape hatch** — set `MINT_DISABLE_ANTHROPIC_CACHE=1` to opt out of cache markers if Anthropic billing changes.
+
 ## [0.3.0-beta.3] - 2026-05-11
 
 ### ✨ Live Activity UI

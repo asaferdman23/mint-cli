@@ -103,6 +103,9 @@ export interface BrainRunSummary {
   kind?: string;
   provider?: string;
   tier?: string;
+  /** Anthropic prompt-cache stats. */
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
 }
 
 export function trackBrainRun(summary: BrainRunSummary): void {
@@ -125,6 +128,8 @@ export function trackBrainRun(summary: BrainRunSummary): void {
       taskPreview: summary.task.slice(0, 80),
       latencyMs: summary.durationMs,
       costSonnet,
+      cacheReadTokens: summary.cacheReadTokens,
+      cacheCreationTokens: summary.cacheCreationTokens,
     };
     getDb().insert(record);
   } catch {

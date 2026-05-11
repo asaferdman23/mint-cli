@@ -20,6 +20,9 @@ export interface UsageRecord {
   taskPreview: string;
   latencyMs: number;
   costSonnet: number;
+  /** Anthropic prompt-cache stats (0 for non-Anthropic providers). */
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
 }
 
 export interface UsageSummary {
@@ -75,6 +78,15 @@ export class UsageDb {
         costSonnet    REAL    NOT NULL DEFAULT 0
       )
     `);
+    // Non-destructive cache columns (added in 0.3.0-beta.4). The try/catch
+    // makes this idempotent across upgrades.
+    for (const col of ['cacheReadTokens', 'cacheCreationTokens']) {
+      try {
+        this.db.exec(`ALTER TABLE usage ADD COLUMN ${col} INTEGER NOT NULL DEFAULT 0`);
+      } catch {
+        // Column already exists.
+      }
+    }
   }
 
   insert(record: Omit<UsageRecord, 'id'>): void {
@@ -82,13 +94,19 @@ export class UsageDb {
       INSERT INTO usage
         (timestamp, sessionId, command, model, provider, tier,
          inputTokens, outputTokens, cost, opusCost, savedAmount,
-         routingReason, taskPreview, latencyMs, costSonnet)
+         routingReason, taskPreview, latencyMs, costSonnet,
+         cacheReadTokens, cacheCreationTokens)
       VALUES
         (@timestamp, @sessionId, @command, @model, @provider, @tier,
          @inputTokens, @outputTokens, @cost, @opusCost, @savedAmount,
-         @routingReason, @taskPreview, @latencyMs, @costSonnet)
+         @routingReason, @taskPreview, @latencyMs, @costSonnet,
+         @cacheReadTokens, @cacheCreationTokens)
     `);
-    stmt.run(record);
+    stmt.run({
+      ...record,
+      cacheReadTokens: record.cacheReadTokens ?? 0,
+      cacheCreationTokens: record.cacheCreationTokens ?? 0,
+    });
   }
 
   getAll(): UsageRecord[] {

@@ -236,6 +236,18 @@ program
   .description('Show your free tier usage and remaining requests')
   .action(showQuota);
 
+// Cost report — per-session cost with prompt-cache breakdown.
+program
+  .command('cost-report')
+  .description('Per-session cost breakdown with cache hit rate + savings')
+  .option('--since <days>', 'How many days back to include', '30')
+  .option('--limit <n>', 'Max rows to show', '100')
+  .option('--export <fmt>', 'Export format: csv | json')
+  .action(async (opts) => {
+    const { runCostReport } = await import('./commands/cost-report.js');
+    await runCostReport(opts);
+  });
+
 // Account dashboard command
 program
   .command('account')

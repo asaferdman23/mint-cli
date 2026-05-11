@@ -38,6 +38,8 @@ export class Session {
   private _costUsd = 0;
   private _inputTokens = 0;
   private _outputTokens = 0;
+  private _cacheReadTokens = 0;
+  private _cacheCreationTokens = 0;
   private _toolCalls = 0;
   private _iterations = 0;
 
@@ -77,6 +79,8 @@ export class Session {
       costUsd: this._costUsd,
       inputTokens: this._inputTokens,
       outputTokens: this._outputTokens,
+      cacheReadTokens: this._cacheReadTokens,
+      cacheCreationTokens: this._cacheCreationTokens,
       toolCalls: this._toolCalls,
       iterations: this._iterations,
       filesTouched: this.filesTouched,
@@ -87,9 +91,16 @@ export class Session {
     this._filesTouched.add(path);
   }
 
-  recordCost(inputTokens: number, outputTokens: number, usd: number): void {
+  recordCost(
+    inputTokens: number,
+    outputTokens: number,
+    usd: number,
+    cache?: { cacheReadInputTokens?: number; cacheCreationInputTokens?: number },
+  ): void {
     this._inputTokens += inputTokens;
     this._outputTokens += outputTokens;
+    this._cacheReadTokens += cache?.cacheReadInputTokens ?? 0;
+    this._cacheCreationTokens += cache?.cacheCreationInputTokens ?? 0;
     this._costUsd += usd;
   }
 

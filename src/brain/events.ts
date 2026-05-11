@@ -57,6 +57,9 @@ export interface BrainResult {
   totalCostUsd: number;
   inputTokens: number;
   outputTokens: number;
+  /** Anthropic prompt-cache stats. 0 when caching wasn't used. */
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
   durationMs: number;
   iterations: number;
   toolCalls: number;
@@ -145,6 +148,10 @@ export type AgentEvent =
       model: ModelId;
       inputTokens: number;
       outputTokens: number;
+      /** Tokens billed at cache-read tier (~10% of fresh). Anthropic only today. */
+      cacheReadInputTokens?: number;
+      /** Tokens billed at cache-write tier (~125% of fresh). Anthropic only today. */
+      cacheCreationInputTokens?: number;
       usd: number;
       ts: number;
     }
