@@ -4,6 +4,8 @@ Last updated: 2026-05-11.
 
 This document captures the forward-looking plan beyond what's tracked in [ROADMAP.md](./ROADMAP.md) (which covers Phase 3, now shipped).
 
+> **Active plan**: [PHASE4_PLAN.md](./PHASE4_PLAN.md) — Enterprise Cost Wedge (P1–P7).
+
 ---
 
 ## What's shipped (Phase 3 — `0.3.0-beta.x`)
