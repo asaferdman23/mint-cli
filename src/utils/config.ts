@@ -125,6 +125,10 @@ export function set<K extends keyof Config>(key: K, value: Config[K]): void {
   conf.set(key, value);
 }
 
+export function del<K extends keyof Config>(key: K): void {
+  conf.delete(key);
+}
+
 export function setAll(values: Partial<Config>): void {
   for (const [key, value] of Object.entries(values)) {
     conf.set(key as keyof Config, value);
@@ -150,6 +154,7 @@ export function getGatewayUrl(): string {
 export const config = {
   get,
   set,
+  del,
   setAll,
   clear,
   getConfig,

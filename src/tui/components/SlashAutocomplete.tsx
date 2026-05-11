@@ -56,6 +56,11 @@ export function SlashAutocomplete({
 export const SLASH_COMMANDS: SlashCommandDef[] = [
   { name: 'help', description: 'show commands + keyboard shortcuts' },
   { name: 'clear', description: 'clear chat history' },
+  { name: 'model', description: 'list or switch active model (e.g. /model claude-sonnet-4)' },
+  { name: 'login', description: 'sign in via browser (GitHub or Google)' },
+  { name: 'logout', description: 'sign out of the gateway' },
+  { name: 'usage', description: 'show free-tier quota + session cost' },
+  { name: 'trace', description: 'show recent events from this session' },
   { name: 'diff', description: 'switch to diff mode (per-file approval)' },
   { name: 'auto', description: 'switch to auto mode (skip approvals)' },
   { name: 'plan', description: 'switch to plan mode (no writes)' },

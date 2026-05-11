@@ -2,6 +2,14 @@
 
 All notable changes to Mint CLI will be documented in this file.
 
+## [0.3.0-beta.2] - 2026-05-11
+
+### ✨ New
+
+- **Browser OAuth login** — `mint signup` / `mint login` now open the browser to `https://usemint.dev/auth` and sign in via GitHub or Google (Claude-style). Email/password is still available as `mint signup:password` / `mint login:password`.
+- **In-TUI slash commands** — `/model [id|auto]` to list or switch the active model without restarting, `/login`, `/logout`, `/usage` for in-session account control. Old mode toggles (`/auto`, `/diff`, `/plan`, `/yolo`) still work.
+- **Monthly free-tier quota** — gateway now resets the 50-request free quota per calendar month (was daily), matching the docs and pricing page.
+
 ## [0.3.0-beta.1] - 2026-05-09
 
 ### 🚀 Major Architecture Rewrite

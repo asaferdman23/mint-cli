@@ -33,6 +33,13 @@ interface BrowserAuthOptions {
   timeoutMs?: number;
   /** Override the browser-launcher (test seam). */
   openFn?: (url: string) => Promise<unknown>;
+  /** Suppress stdout/stderr output (use inside the Ink TUI). */
+  silent?: boolean;
+}
+
+export interface BrowserAuthResult {
+  email: string;
+  plan: string;
 }
 
 interface CallbackPayload {
@@ -43,7 +50,7 @@ interface CallbackPayload {
 const DEFAULT_WEB_URL = 'https://usemint.dev';
 const DEFAULT_TIMEOUT_MS = 5 * 60_000; // 5 minutes
 
-export async function loginWithBrowser(opts: BrowserAuthOptions = {}): Promise<void> {
+export async function loginWithBrowser(opts: BrowserAuthOptions = {}): Promise<BrowserAuthResult> {
   const webUrl = opts.webUrl ?? process.env.MINT_WEB_URL ?? DEFAULT_WEB_URL;
   const gatewayUrl =
     opts.gatewayUrl ?? process.env.MINT_GATEWAY_URL ?? config.getGatewayUrl();
@@ -136,29 +143,36 @@ export async function loginWithBrowser(opts: BrowserAuthOptions = {}): Promise<v
 
     config.set('gatewayToken', exchanged.token);
     config.set('gatewayTokenKind', 'api');
-    if (exchanged.email ?? payload.email) {
-      config.set('email', exchanged.email ?? payload.email!);
+    const resolvedEmail = exchanged.email ?? payload.email ?? '';
+    if (resolvedEmail) {
+      config.set('email', resolvedEmail);
     }
+    const resolvedPlan = exchanged.plan ?? 'free';
 
-    console.log(
-      boxen(
-        chalk.bold.green('Signed in!') +
-          '\n\n' +
-          `Email: ${chalk.cyan(exchanged.email ?? payload.email ?? '(unknown)')}` +
-          '\n' +
-          `Plan:  ${chalk.yellow(exchanged.plan?.toUpperCase() ?? 'FREE')} ${chalk.dim('(50 requests/month)')}` +
-          '\n\n' +
-          chalk.bold('Next:') +
-          ` ${chalk.cyan('mint init')} ${chalk.dim('to scan this project')}`,
-        { padding: 1, borderColor: 'green', borderStyle: 'round' },
-      ),
-    );
+    if (!opts.silent) {
+      console.log(
+        boxen(
+          chalk.bold.green('Signed in!') +
+            '\n\n' +
+            `Email: ${chalk.cyan(resolvedEmail || '(unknown)')}` +
+            '\n' +
+            `Plan:  ${chalk.yellow(resolvedPlan.toUpperCase())} ${chalk.dim('(50 requests/month)')}` +
+            '\n\n' +
+            chalk.bold('Next:') +
+            ` ${chalk.cyan('mint init')} ${chalk.dim('to scan this project')}`,
+          { padding: 1, borderColor: 'green', borderStyle: 'round' },
+        ),
+      );
+    }
+    return { email: resolvedEmail, plan: resolvedPlan };
   } catch (err) {
-    if (err instanceof GatewayError) {
-      console.error(chalk.red('\n  ' + err.message + '\n'));
-    } else {
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(chalk.red('\n  Sign-in failed: ' + message + '\n'));
+    if (!opts.silent) {
+      if (err instanceof GatewayError) {
+        console.error(chalk.red('\n  ' + err.message + '\n'));
+      } else {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(chalk.red('\n  Sign-in failed: ' + message + '\n'));
+      }
     }
     throw err;
   } finally {

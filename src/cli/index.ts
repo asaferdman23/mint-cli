@@ -132,12 +132,12 @@ program
 program
   .command('signup')
   .description('Sign in with GitHub or Google in your browser (recommended)')
-  .action(() => loginWithBrowser());
+  .action(async () => { await loginWithBrowser(); });
 
 program
   .command('login')
   .description('Sign in via the browser (GitHub / Google) — same as `signup`')
-  .action(() => loginWithBrowser());
+  .action(async () => { await loginWithBrowser(); });
 
 program
   .command('login:password')

@@ -68,12 +68,13 @@ function formatEventLine(event: AgentEvent): string {
   }
 }
 
-export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreference }: BrainAppProps): React.ReactElement {
+export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreference: initialModelPref }: BrainAppProps): React.ReactElement {
   const { exit } = useApp();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isBusy, setIsBusy] = useState(false);
   const [mode, setMode] = useState<Mode>(initialMode ?? 'diff');
+  const [modelPreference, setModelPreference] = useState<string | undefined>(initialModelPref);
   const [currentModel, setCurrentModel] = useState<ModelId | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isInspectorOpen, setIsInspectorOpen] = useState(false);
@@ -293,14 +294,18 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
             role: 'assistant',
             content: [
               'Brain commands:',
-              '  /help    — this help',
-              '  /clear   — clear chat',
-              '  /trace   — show recent events from this session',
-              '  /auto    — auto mode (no approvals)',
-              '  /diff    — diff mode (per-file approval)',
-              '  /plan    — plan mode (no writes)',
-              '  /yolo    — yolo mode (full autonomy)',
-              '  Ctrl+C   — exit',
+              '  /help              — this help',
+              '  /clear             — clear chat',
+              '  /trace             — show recent events from this session',
+              '  /model [id|auto]   — list models or switch (e.g. /model claude-sonnet-4)',
+              '  /login             — sign in via browser (GitHub / Google)',
+              '  /logout            — sign out of the gateway',
+              '  /usage             — show free-tier quota + cost so far',
+              '  /auto              — auto mode (no approvals)',
+              '  /diff              — diff mode (per-file approval)',
+              '  /plan              — plan mode (no writes)',
+              '  /yolo              — yolo mode (full autonomy)',
+              '  Ctrl+C             — exit',
             ].join('\n'),
           },
         ]);
@@ -338,6 +343,124 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
         setMessages((prev) => [
           ...prev,
           { id: nextId(), role: 'assistant', content: `Mode: ${newMode}` },
+        ]);
+        setInput('');
+        return;
+      }
+
+      // /model — list or switch active model (in-session, no relaunch)
+      if (trimmed === '/model' || trimmed.startsWith('/model ')) {
+        const arg = trimmed.slice('/model'.length).trim();
+        const { MODEL_TIERS } = await import('../providers/tiers.js');
+        const allModels = Object.keys(MODEL_TIERS).sort();
+        if (!arg) {
+          const lines = allModels.map((m) => {
+            const tier = (MODEL_TIERS as Record<string, string>)[m];
+            const active = m === modelPreference ? ' ◀ active' : '';
+            return `  ${m.padEnd(24)} [${tier}]${active}`;
+          });
+          const activeLine = `Active: ${modelPreference ?? 'auto (routed)'}`;
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: nextId(),
+              role: 'assistant',
+              content: [activeLine, '', 'Available models (use `/model <id>` or `/model auto`):', ...lines].join('\n'),
+            },
+          ]);
+          setInput('');
+          return;
+        }
+        if (arg === 'auto') {
+          setModelPreference(undefined);
+          setMessages((prev) => [
+            ...prev,
+            { id: nextId(), role: 'assistant', content: 'Model: auto (routed per task)' },
+          ]);
+          setInput('');
+          return;
+        }
+        if (!allModels.includes(arg)) {
+          setMessages((prev) => [
+            ...prev,
+            { id: nextId(), role: 'assistant', content: `Unknown model "${arg}". Run /model with no args to see the list.` },
+          ]);
+          setInput('');
+          return;
+        }
+        setModelPreference(arg);
+        setMessages((prev) => [
+          ...prev,
+          { id: nextId(), role: 'assistant', content: `Model: ${arg} (applies to your next turn)` },
+        ]);
+        setInput('');
+        return;
+      }
+
+      // /login — browser OAuth, in-session
+      if (trimmed === '/login') {
+        setMessages((prev) => [
+          ...prev,
+          { id: nextId(), role: 'assistant', content: 'Opening browser to sign in… complete the flow in your browser, then return here.' },
+        ]);
+        setInput('');
+        try {
+          const { loginWithBrowser } = await import('../cli/commands/login-browser.js');
+          const result = await loginWithBrowser({ silent: true });
+          setMessages((prev) => [
+            ...prev,
+            { id: nextId(), role: 'assistant', content: `Signed in as ${result.email} (${result.plan} plan).` },
+          ]);
+          fetchQuota();
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          setMessages((prev) => [
+            ...prev,
+            { id: nextId(), role: 'assistant', content: `Sign-in failed: ${msg}` },
+          ]);
+        }
+        return;
+      }
+
+      // /logout — clear stored gateway token
+      if (trimmed === '/logout') {
+        try {
+          const { config } = await import('../utils/config.js');
+          config.del('gatewayToken');
+          config.del('email');
+          setMessages((prev) => [
+            ...prev,
+            { id: nextId(), role: 'assistant', content: 'Signed out. Run /login or `mint login` to sign back in.' },
+          ]);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          setMessages((prev) => [
+            ...prev,
+            { id: nextId(), role: 'assistant', content: `Logout failed: ${msg}` },
+          ]);
+        }
+        setInput('');
+        return;
+      }
+
+      // /usage — show quota + session cost
+      if (trimmed === '/usage') {
+        const used = quotaUsed ?? 0;
+        const limit = quotaLimit ?? 50;
+        const remaining = Math.max(0, limit - used);
+        const cost = panelState.totalCost.toFixed(4);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: nextId(),
+            role: 'assistant',
+            content: [
+              `Free quota: ${used}/${limit} used (${remaining} remaining this month)`,
+              `Session cost: $${cost}`,
+              '',
+              'See full breakdown: `mint usage` or `mint account`',
+            ].join('\n'),
+          },
         ]);
         setInput('');
         return;
