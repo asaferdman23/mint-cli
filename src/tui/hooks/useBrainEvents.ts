@@ -55,6 +55,15 @@ export interface RecentToolCall {
   durationMs?: number;
 }
 
+export interface CurrentActivity {
+  /** Human-readable summary of what the agent is doing right now. */
+  label: string;
+  /** Optional secondary detail (e.g. file path, command). */
+  detail?: string;
+  /** Last tool result to display under the activity (e.g. "\u2713 read 142 lines"). */
+  lastResult?: { ok: boolean; text: string };
+}
+
 export interface UseBrainEventsReturn {
   panelState: PanelState;
   pipelinePhases: PipelinePhaseData[];
@@ -66,6 +75,8 @@ export interface UseBrainEventsReturn {
   lastDiff: LastDiff | null;
   /** Rolling buffer of the most recent events (last 200), for /trace. */
   recentEvents: AgentEvent[];
+  /** What the agent is doing right now (drives the live activity panel). */
+  currentActivity: CurrentActivity | null;
   resolveApproval: (ok: boolean) => void;
   apply: (event: AgentEvent) => void;
   reset: () => void;
@@ -102,6 +113,7 @@ export function useBrainEvents(): UseBrainEventsReturn {
   const [recentToolCalls, setRecentToolCalls] = useState<RecentToolCall[]>([]);
   const [lastDiff, setLastDiff] = useState<LastDiff | null>(null);
   const [recentEvents, setRecentEvents] = useState<AgentEvent[]>([]);
+  const [currentActivity, setCurrentActivity] = useState<CurrentActivity | null>(null);
 
   // Map tool.call.id → { name, timestamp } so we can pair results correctly
   // even when tools run in parallel.
@@ -123,9 +135,14 @@ export function useBrainEvents(): UseBrainEventsReturn {
       case 'session.start':
         setStreamingText('');
         pendingToolCalls.current.clear();
+        setCurrentActivity({ label: 'Starting session\u2026' });
         break;
 
       case 'classify':
+        setCurrentActivity({
+          label: `Routed to ${event.model}`,
+          detail: `${event.kind} \u00b7 ${event.complexity} \u00b7 confidence ${event.confidence.toFixed(2)}`,
+        });
         setPipelinePhases((prev) => [
           ...prev,
           {
@@ -138,6 +155,10 @@ export function useBrainEvents(): UseBrainEventsReturn {
         break;
 
       case 'context.retrieved':
+        setCurrentActivity({
+          label: `Read ${event.files.length} file${event.files.length === 1 ? '' : 's'} for context`,
+          detail: `${event.tokensUsed} / ${event.tokenBudget} context tokens`,
+        });
         setPipelinePhases((prev) => [
           ...prev,
           {
@@ -151,6 +172,10 @@ export function useBrainEvents(): UseBrainEventsReturn {
       case 'phase': {
         const pipelineName = BRAIN_PHASE_TO_PIPELINE[event.name];
         if (event.status === 'start') {
+          setCurrentActivity((prev) => ({
+            label: `${capitalize(event.name)}\u2026`,
+            detail: prev?.detail,
+          }));
           setPipelinePhases((prev) => [
             ...prev,
             { name: pipelineName, status: 'active' as const },
@@ -176,6 +201,10 @@ export function useBrainEvents(): UseBrainEventsReturn {
           name: event.name,
           startedAt: event.ts,
         });
+        setCurrentActivity({
+          label: `${describeTool(event.name)}\u2026`,
+          detail: summarizeToolInput(event.input),
+        });
         setRecentToolCalls((prev) =>
           [
             ...prev,
@@ -197,7 +226,17 @@ export function useBrainEvents(): UseBrainEventsReturn {
       }
 
       case 'tool.result': {
+        const pending = pendingToolCalls.current.get(event.id);
         pendingToolCalls.current.delete(event.id);
+        const toolName = pending?.name ?? 'tool';
+        const resultText = event.ok
+          ? summarizeToolOutput(toolName, event.output)
+          : `failed: ${truncateText(event.output ?? 'no output', 60)}`;
+        setCurrentActivity((prev) => ({
+          label: prev?.label ?? 'Thinking\u2026',
+          detail: prev?.detail,
+          lastResult: { ok: event.ok, text: `${toolName}: ${resultText}` },
+        }));
         setRecentToolCalls((prev) =>
           prev.map((t) =>
             t.id === event.id
@@ -261,6 +300,7 @@ export function useBrainEvents(): UseBrainEventsReturn {
         break;
 
       case 'done':
+        setCurrentActivity(null);
         // Final state is the accumulated panel + phases + streamingText.
         // The caller gets the full result from the done event directly.
         break;
@@ -279,6 +319,7 @@ export function useBrainEvents(): UseBrainEventsReturn {
     setRecentToolCalls([]);
     setLastDiff(null);
     setRecentEvents([]);
+    setCurrentActivity(null);
     pendingToolCalls.current.clear();
   }, []);
 
@@ -290,6 +331,7 @@ export function useBrainEvents(): UseBrainEventsReturn {
     pendingApproval,
     lastDiff,
     recentEvents,
+    currentActivity,
     resolveApproval,
     apply,
     reset,
@@ -363,5 +405,57 @@ function markFileEdited(files: TrackedFile[], path: string): TrackedFile[] {
     return next;
   }
   return [...files, entry];
+}
+
+function capitalize(s: string): string {
+  return s.length ? s[0].toUpperCase() + s.slice(1) : s;
+}
+
+function truncateText(s: string, max: number): string {
+  const cleaned = s.replace(/\s+/g, ' ').trim();
+  return cleaned.length > max ? cleaned.slice(0, max - 1) + '\u2026' : cleaned;
+}
+
+/** Friendly verb for the live activity panel. */
+function describeTool(name: string): string {
+  const verbs: Record<string, string> = {
+    read_file: 'Reading',
+    write_file: 'Writing',
+    edit_file: 'Editing',
+    search_replace: 'Editing',
+    bash: 'Running command',
+    run_command: 'Running command',
+    grep: 'Searching',
+    glob: 'Listing files',
+    list_dir: 'Listing files',
+    git_diff: 'Reading git diff',
+    web_fetch: 'Fetching',
+    run_tests: 'Running tests',
+  };
+  return verbs[name] ?? `Calling ${name}`;
+}
+
+function summarizeToolInput(input: Record<string, unknown>): string {
+  const target = input.path ?? input.file ?? input.command ?? input.pattern ?? input.query ?? input.url;
+  if (typeof target === 'string') return truncateText(target, 80);
+  const keys = Object.keys(input);
+  if (keys.length === 0) return '';
+  return truncateText(JSON.stringify(input), 80);
+}
+
+function summarizeToolOutput(toolName: string, output?: string): string {
+  if (!output) return 'done';
+  if (toolName === 'read_file') {
+    const lines = output.split('\n').length;
+    return `read ${lines} line${lines === 1 ? '' : 's'}`;
+  }
+  if (toolName === 'grep' || toolName === 'glob') {
+    const matches = output.split('\n').filter((l) => l.trim()).length;
+    return `${matches} match${matches === 1 ? '' : 'es'}`;
+  }
+  if (toolName === 'write_file' || toolName === 'edit_file' || toolName === 'search_replace') {
+    return 'wrote file';
+  }
+  return truncateText(output, 60);
 }
 

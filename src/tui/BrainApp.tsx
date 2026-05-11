@@ -96,6 +96,7 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
     pendingApproval,
     lastDiff,
     recentEvents,
+    currentActivity,
     resolveApproval,
     apply,
     reset,
@@ -499,6 +500,16 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
 
           if (event.type === 'classify') {
             setCurrentModel(event.model);
+            // Surface routing reasoning so the user sees WHY this model was picked.
+            const reasoning = event.reasoning ? ` — ${event.reasoning}` : '';
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: nextId(),
+                role: 'assistant',
+                content: `→ Routed to **${event.model}** (${event.kind} · ${event.complexity}, ${event.confidence.toFixed(2)} conf, via ${event.source})${reasoning}`,
+              },
+            ]);
           }
           if (event.type === 'cost.delta' && !budgetWarnedRef.current) {
             // Cost-budget warning: read threshold lazily so changes via
@@ -581,7 +592,10 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const showWelcome = messages.length === 0 && !isBusy;
-  const inspectorHeight = isInspectorOpen && recentToolCalls.length > 0
+  // Auto-show the tool inspector while the agent is working — users shouldn't
+  // need to remember Tab to see what's happening. They can still Tab to close.
+  const showInspector = (isInspectorOpen || isBusy) && recentToolCalls.length > 0;
+  const inspectorHeight = showInspector
     ? Math.min(12, Math.max(6, Math.floor(termSize.rows * 0.32)))
     : 0;
   const showDiffPopup = pendingApproval?.reason === 'diff' && lastDiff !== null;
@@ -618,7 +632,7 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
         />
       )}
 
-      {isInspectorOpen && !showWelcome && (
+      {showInspector && !showWelcome && (
         <BrainToolInspector calls={recentToolCalls} maxHeight={inspectorHeight} />
       )}
 
@@ -660,6 +674,7 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
           onSubmit={handleSubmit}
           isBusy={isBusy}
           isRouting={false}
+          currentActivity={currentActivity}
         />
       </Box>
 

@@ -56,7 +56,7 @@ export function BrainToolInspector({ calls, maxHeight }: BrainToolInspectorProps
 function statusGlyph(call: RecentToolCall): string {
   if (call.ok === true) return '✓';
   if (call.ok === false) return '✗';
-  return '●';
+  return '⋯'; // still running
 }
 
 function statusColor(call: RecentToolCall): 'green' | 'red' | 'yellow' {

@@ -1,6 +1,6 @@
 {
   "name": "usemint-cli",
-  "version": "0.3.0-beta.2",
+  "version": "0.3.0-beta.3",
   "description": "Zero-setup AI coding CLI — type mint, start coding",
   "type": "module",
   "bin": {

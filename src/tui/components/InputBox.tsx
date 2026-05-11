@@ -5,6 +5,7 @@ import Spinner from 'ink-spinner';
 import { SlashAutocomplete, SLASH_COMMANDS } from './SlashAutocomplete.js';
 import type { ContextChip } from '../types.js';
 import { ContextChips } from './ContextChips.js';
+import type { CurrentActivity } from '../hooks/useBrainEvents.js';
 
 /** Threshold after which we start showing elapsed seconds in the spinner label.
  *  Under this, users don't need reassurance; over this, they're wondering if it's hung. */
@@ -17,6 +18,7 @@ interface InputBoxProps {
   isBusy: boolean;
   isRouting: boolean;
   contextChips?: ContextChip[] | null;
+  currentActivity?: CurrentActivity | null;
 }
 
 function estimateTokens(text: string): number {
@@ -30,6 +32,7 @@ export function InputBox({
   isBusy,
   isRouting,
   contextChips,
+  currentActivity,
 }: InputBoxProps): React.ReactElement {
   const tokenEst = estimateTokens(value);
   const [cursorOffset, setCursorOffset] = useState(0);
@@ -153,14 +156,27 @@ export function InputBox({
 
   if (isBusy) {
     const showElapsed = elapsedSec >= THINKING_ELAPSED_THRESHOLD_SEC;
+    const activityLabel = currentActivity?.label ?? 'Thinking…';
     return (
       <Box flexDirection="column">
-        <Box borderStyle="single" borderColor="cyan" paddingX={1} flexDirection="row" gap={1}>
-          <Text color="cyan"><Spinner type="dots" /></Text>
-          <Text dimColor>
-            Thinking…{showElapsed ? ` (${elapsedSec}s)` : ''}
-          </Text>
-          {showElapsed && <Text dimColor>   Ctrl+C to cancel</Text>}
+        <Box borderStyle="single" borderColor="cyan" paddingX={1} flexDirection="column">
+          <Box flexDirection="row" gap={1}>
+            <Text color="cyan"><Spinner type="dots" /></Text>
+            <Text bold>{activityLabel}</Text>
+            {showElapsed && <Text dimColor>({elapsedSec}s) · Ctrl+C to cancel</Text>}
+          </Box>
+          {currentActivity?.detail && (
+            <Box paddingLeft={2}>
+              <Text dimColor>↳ {currentActivity.detail}</Text>
+            </Box>
+          )}
+          {currentActivity?.lastResult && (
+            <Box paddingLeft={2}>
+              <Text color={currentActivity.lastResult.ok ? 'green' : 'red'}>
+                {currentActivity.lastResult.ok ? '✓' : '✗'} {currentActivity.lastResult.text}
+              </Text>
+            </Box>
+          )}
         </Box>
       </Box>
     );

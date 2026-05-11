@@ -2,6 +2,17 @@
 
 All notable changes to Mint CLI will be documented in this file.
 
+## [0.3.0-beta.3] - 2026-05-11
+
+### ✨ Live Activity UI
+
+The TUI now feels alive while the agent works — you always know what it is doing and why.
+
+- **Live activity panel** replaces the bland "Thinking\u2026" spinner. Shows the current verb ("Reading", "Editing", "Running command", "Routed to deepseek-v3\u2026"), the target (file path / command / search pattern), and the most recent tool result (✓ read 142 lines / ✗ command failed: …).
+- **Routing reasoning is now surfaced** in chat at the start of every turn (`→ Routed to deepseek-v3 (code · medium, 0.87 conf, via llm) — <reasoning>`). No more wondering why your task got a small model.
+- **Tool inspector auto-opens while the agent is working** — you no longer need to remember Tab to see what's happening. Tab still toggles it manually.
+- **Inspector status glyph** changes from ● to ⋯ for in-flight tools so you can see what's still running vs. done.
+
 ## [0.3.0-beta.2] - 2026-05-11
 
 ### ✨ New
