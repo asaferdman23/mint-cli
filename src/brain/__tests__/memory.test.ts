@@ -106,7 +106,7 @@ describe('OutcomesStore', () => {
       kind: 'debug',
       complexity: 'simple',
       filesTouched: ['src/auth/login.ts'],
-      model: 'deepseek-v3',
+      model: 'claude-sonnet-4',
       tokensIn: 1000,
       tokensOut: 200,
       costUsd: 0.0012,
@@ -140,7 +140,7 @@ describe('OutcomesStore', () => {
       kind: 'refactor',
       complexity: 'complex',
       filesTouched: [],
-      model: 'kimi-k2',
+      model: 'gemini-2-pro',
       tokensIn: 0,
       tokensOut: 0,
       costUsd: 0,
@@ -155,7 +155,7 @@ describe('OutcomesStore', () => {
       kind: 'edit_small',
       complexity: 'trivial',
       filesTouched: [],
-      model: 'deepseek-v3',
+      model: 'claude-sonnet-4',
       tokensIn: 0,
       tokensOut: 0,
       costUsd: 0,
@@ -187,7 +187,7 @@ describe('OutcomesStore', () => {
         kind: 'edit_small',
         complexity: 'simple',
         filesTouched: [],
-        model: 'deepseek-v3',
+        model: 'claude-sonnet-4',
         tokensIn: 0,
         tokensOut: 0,
         costUsd: 0,
@@ -258,7 +258,7 @@ describe('retrieve', () => {
   it('returns BM25 hits + graph expansion when embeddings are absent', async () => {
     const index = fixtureIndex();
     const bm25 = buildBM25Index(index);
-    const budget = new TokenBudget('deepseek-v3');
+    const budget = new TokenBudget('claude-sonnet-4');
 
     const result = await retrieve(
       { task: 'fix login password flow', budget, maxFiles: 5 },
@@ -279,7 +279,7 @@ describe('retrieve', () => {
   it('respects the file cap', async () => {
     const index = fixtureIndex();
     const bm25 = buildBM25Index(index);
-    const budget = new TokenBudget('deepseek-v3');
+    const budget = new TokenBudget('claude-sonnet-4');
 
     const result = await retrieve(
       { task: 'auth', budget, maxFiles: 2 },
@@ -298,7 +298,7 @@ describe('retrieve', () => {
       kind: 'debug',
       complexity: 'moderate',
       filesTouched: ['src/auth/login.ts'],
-      model: 'deepseek-v3',
+      model: 'claude-sonnet-4',
       tokensIn: 0,
       tokensOut: 0,
       costUsd: 0,
@@ -310,7 +310,7 @@ describe('retrieve', () => {
 
     const index = fixtureIndex();
     const bm25 = buildBM25Index(index);
-    const budget = new TokenBudget('deepseek-v3');
+    const budget = new TokenBudget('claude-sonnet-4');
 
     const result = await retrieve(
       { task: 'fix login password flow', budget },

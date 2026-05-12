@@ -22,9 +22,9 @@ const TASK_PATTERNS: Record<TaskType, RegExp[]> = {
   general: [/.*/],
 };
 
-// Model tiers for different scenarios
+// Model tiers for different scenarios (enterprise: US/EU only).
 const MODEL_TIERS = {
-  budget: ['deepseek-v3', 'deepseek-coder', 'qwen-coder-32b'] as ModelId[],
+  budget: ['mistral-small', 'gemini-2-flash', 'groq-llama-70b'] as ModelId[],
   balanced: ['gemini-2-pro', 'gpt-4o', 'claude-sonnet-4'] as ModelId[],
   premium: ['claude-opus-4'] as ModelId[],
 };

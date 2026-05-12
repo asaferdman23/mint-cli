@@ -5,10 +5,10 @@ export type ContextTier = 'apex' | 'smart' | 'fast' | 'ultra';
 
 /**
  * Model tier classification.
- * - APEX:  Claude Opus, GPT-4o, Gemini 1.5 Pro — full context, no compression
- * - SMART: Claude Sonnet, DeepSeek-V3, Grok-3, Gemini 2 Pro — light compression
- * - FAST:  Kimi K2, Grok-3-fast, Gemini Flash, Qwen-Coder, Groq 70B — heavy compression
- * - ULTRA: Groq 8B, Moonshot 8k — max compression, skeleton context only
+ * - APEX:  Claude Opus, GPT-4o, Gemini Pro — full context, no compression
+ * - SMART: Claude Sonnet, Grok-3, Gemini Flash — light compression
+ * - FAST:  Gemini 1.5 Flash, Groq 70B, Grok-3-fast — heavy compression
+ * - ULTRA: Groq 8B, mistral-small — max compression, skeleton context only
  */
 export const MODEL_TIERS: Record<ModelId, ContextTier> = {
   'claude-opus-4':        'apex',
@@ -16,18 +16,12 @@ export const MODEL_TIERS: Record<ModelId, ContextTier> = {
   'gemini-2-pro':         'apex',
   'gemini-1-5-pro':       'apex',
   'claude-sonnet-4':      'smart',
-  'deepseek-v3':          'smart',
   'grok-3':               'smart',
   'gemini-2-flash':       'smart',
-  'kimi-k2':              'fast',
   'grok-3-fast':          'fast',
   'grok-3-mini-fast':     'fast',
   'gemini-1-5-flash':     'fast',
-  'qwen-coder-32b':       'fast',
   'groq-llama-70b':       'fast',
-  'deepseek-coder':       'fast',
-  'moonshot-v1-32k':      'ultra',
-  'moonshot-v1-8k':       'ultra',
   'groq-llama-8b':        'ultra',
   'groq-gpt-oss-120b':   'fast',
   'groq-gpt-oss-20b':    'ultra',

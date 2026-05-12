@@ -14,16 +14,18 @@ const configSchema = z.object({
   orgId: z.string().optional(),
   
   // Preferences
-  defaultModel: z.enum(['auto', 'deepseek', 'sonnet', 'opus', 'gemini']).default('auto'),
+  defaultModel: z.enum(['auto', 'sonnet', 'opus', 'gemini']).default('auto'),
   autoContext: z.boolean().default(true),
   maxContextTokens: z.number().default(100000),
   
   // Provider keys (for BYOK mode)
   providers: z.object({
     anthropic: z.string().optional(),
-    deepseek: z.string().optional(),
-    openrouter: z.string().optional(),
+    openai: z.string().optional(),
     gemini: z.string().optional(),
+    grok: z.string().optional(),
+    groq: z.string().optional(),
+    mistral: z.string().optional(),
   }).default({}),
   
   // Backend
@@ -63,7 +65,7 @@ function createConf(): Conf<Config> {
       orgId: { type: 'string' },
     defaultModel: { 
       type: 'string', 
-      enum: ['auto', 'deepseek', 'sonnet', 'opus', 'gemini'],
+      enum: ['auto', 'sonnet', 'opus', 'gemini'],
       default: 'auto' 
     },
     autoContext: { type: 'boolean', default: true },
@@ -73,9 +75,11 @@ function createConf(): Conf<Config> {
       default: {},
       properties: {
         anthropic: { type: 'string' },
-        deepseek: { type: 'string' },
-        openrouter: { type: 'string' },
+        openai: { type: 'string' },
         gemini: { type: 'string' },
+        grok: { type: 'string' },
+        groq: { type: 'string' },
+        mistral: { type: 'string' },
       }
     },
       apiBaseUrl: { type: 'string', default: 'https://api.usemint.dev' },

@@ -36,11 +36,13 @@ console.log('\n=== axon v2 smoke tests ===\n');
 console.log('Phase 1: Provider files');
 check('src/providers/tiers.ts exists', fileExists('src/providers/tiers.ts'));
 check('src/providers/openai-compatible.ts exists', fileExists('src/providers/openai-compatible.ts'));
-check('src/providers/kimi.ts exists', fileExists('src/providers/kimi.ts'));
 check('src/providers/grok.ts exists', fileExists('src/providers/grok.ts'));
 check('src/providers/groq.ts exists', fileExists('src/providers/groq.ts'));
 check('src/providers/gemini.ts exists', fileExists('src/providers/gemini.ts'));
-check('src/providers/qwen.ts exists', fileExists('src/providers/qwen.ts'));
+// Enterprise compliance (2026-05-12): Chinese-origin providers removed.
+check('src/providers/deepseek.ts REMOVED', !fileExists('src/providers/deepseek.ts'));
+check('src/providers/kimi.ts REMOVED', !fileExists('src/providers/kimi.ts'));
+check('src/providers/qwen.ts REMOVED', !fileExists('src/providers/qwen.ts'));
 
 // ─── Phase 1: tiers.ts exports ────────────────────────────────────────────────
 console.log('\nPhase 1: tiers.ts exports');
@@ -67,9 +69,6 @@ try {
 // ─── Phase 1: New ModelIds in types.ts ────────────────────────────────────────
 console.log('\nPhase 1: New ModelIds in types.ts');
 const typesSource = (await import('node:fs')).readFileSync(join(root, 'src/providers/types.ts'), 'utf-8');
-check('types.ts: kimi-k2 ModelId', typesSource.includes("'kimi-k2'"));
-check('types.ts: moonshot-v1-8k ModelId', typesSource.includes("'moonshot-v1-8k'"));
-check('types.ts: moonshot-v1-32k ModelId', typesSource.includes("'moonshot-v1-32k'"));
 check('types.ts: grok-3 ModelId', typesSource.includes("'grok-3'"));
 check('types.ts: grok-3-fast ModelId', typesSource.includes("'grok-3-fast'"));
 check('types.ts: grok-3-mini-fast ModelId', typesSource.includes("'grok-3-mini-fast'"));
@@ -77,9 +76,17 @@ check('types.ts: gemini-1-5-flash ModelId', typesSource.includes("'gemini-1-5-fl
 check('types.ts: gemini-1-5-pro ModelId', typesSource.includes("'gemini-1-5-pro'"));
 check('types.ts: groq-llama-70b ModelId', typesSource.includes("'groq-llama-70b'"));
 check('types.ts: groq-llama-8b ModelId', typesSource.includes("'groq-llama-8b'"));
-check('types.ts: kimi ProviderId', typesSource.includes("'kimi'"));
 check('types.ts: grok ProviderId', typesSource.includes("'grok'"));
 check('types.ts: groq ProviderId', typesSource.includes("'groq'"));
+// Enterprise compliance (2026-05-12): Chinese-origin models MUST be absent
+check('types.ts: kimi-k2 REMOVED', !typesSource.includes("'kimi-k2'"));
+check('types.ts: deepseek-v3 REMOVED', !typesSource.includes("'deepseek-v3'"));
+check('types.ts: deepseek-coder REMOVED', !typesSource.includes("'deepseek-coder'"));
+check('types.ts: moonshot-v1-8k REMOVED', !typesSource.includes("'moonshot-v1-8k'"));
+check('types.ts: moonshot-v1-32k REMOVED', !typesSource.includes("'moonshot-v1-32k'"));
+check('types.ts: qwen-coder-32b REMOVED', !typesSource.includes("'qwen-coder-32b'"));
+check('types.ts: kimi ProviderId REMOVED', !typesSource.includes("'kimi'"));
+check('types.ts: deepseek ProviderId REMOVED', !typesSource.includes("'deepseek'"));
 
 // ─── Phase 2: Context files ────────────────────────────────────────────────────
 console.log('\nPhase 2: Context files');

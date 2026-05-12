@@ -28,10 +28,10 @@ export interface MintProjectConfig {
 
 const DEFAULT_CONFIG: MintProjectConfig = {
   model: {
-    default: 'deepseek-chat',
-    thinking: 'deepseek-reasoner',
-    provider: 'deepseek',
-    baseURL: 'https://api.deepseek.com',
+    default: 'claude-sonnet-4',
+    thinking: 'claude-opus-4',
+    provider: 'anthropic',
+    baseURL: 'https://api.anthropic.com',
   },
   context: {
     maxTokensPerTask: 15000,

@@ -1,64 +1,65 @@
 {
-  "version": 1,
+  "version": 2,
   "defaults": {
     "toolBudget": 20,
     "maxIterations": 30,
     "compactionTokens": 80000
   },
+  "_enterpriseNote": "v2 (2026-05-12): removed all Chinese-origin model providers (DeepSeek, Kimi/Moonshot, Qwen) for enterprise compliance. Default fleet is US/EU only: Anthropic, Google, xAI, OpenAI, Mistral (FR), Groq (US infra w/ Llama+gpt-oss).",
   "routes": {
     "question": {
       "model": "mistral-small",
-      "fallbacks": ["groq-llama-70b"],
+      "fallbacks": ["groq-llama-70b", "gemini-2-flash"],
       "toolBudget": 3,
       "maxIterations": 4,
       "needsPlan": false
     },
     "edit_small": {
-      "model": "deepseek-v3",
-      "fallbacks": ["kimi-k2", "groq-llama-70b"],
+      "model": "gemini-2-flash",
+      "fallbacks": ["claude-sonnet-4", "groq-llama-70b"],
       "toolBudget": 10,
       "maxIterations": 15,
       "needsPlan": false
     },
     "edit_multi": {
-      "model": "kimi-k2",
-      "fallbacks": ["deepseek-v3", "groq-llama-70b"],
+      "model": "claude-sonnet-4",
+      "fallbacks": ["gemini-2-pro", "groq-llama-70b"],
       "toolBudget": 20,
       "maxIterations": 25,
       "needsPlan": false
     },
     "refactor": {
-      "model": "kimi-k2",
-      "fallbacks": ["deepseek-v3"],
+      "model": "claude-sonnet-4",
+      "fallbacks": ["gemini-2-pro", "gpt-4o"],
       "toolBudget": 30,
       "maxIterations": 40,
       "needsPlan": true
     },
     "debug": {
       "model": "grok-4.1-fast",
-      "fallbacks": ["deepseek-v3", "kimi-k2"],
+      "fallbacks": ["claude-sonnet-4", "gemini-2-pro"],
       "toolBudget": 25,
       "maxIterations": 30,
       "needsPlan": false,
       "providerOptions": { "reasoning": { "enabled": true } }
     },
     "scaffold": {
-      "model": "deepseek-v3",
-      "fallbacks": ["kimi-k2"],
+      "model": "claude-sonnet-4",
+      "fallbacks": ["gemini-2-pro", "gpt-4o"],
       "toolBudget": 15,
       "maxIterations": 20,
       "needsPlan": true
     },
     "review": {
       "model": "mistral-small",
-      "fallbacks": ["deepseek-v3"],
+      "fallbacks": ["gemini-2-flash", "claude-sonnet-4"],
       "toolBudget": 5,
       "maxIterations": 6,
       "needsPlan": false
     },
     "explain": {
       "model": "mistral-small",
-      "fallbacks": ["groq-llama-70b"],
+      "fallbacks": ["groq-llama-70b", "gemini-2-flash"],
       "toolBudget": 0,
       "maxIterations": 2,
       "needsPlan": false
@@ -76,8 +77,8 @@
     }
   },
   "writeCode": {
-    "model": "deepseek-v3",
-    "fallbacks": ["kimi-k2"]
+    "model": "claude-sonnet-4",
+    "fallbacks": ["gemini-2-pro", "gpt-4o"]
   },
   "embedding": {
     "model": "embedding-small"

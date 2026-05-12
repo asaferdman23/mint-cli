@@ -84,7 +84,7 @@ describe('mint tune — ridge regression', () => {
         `h${i}`,
         'edit_small',
         r.complexity,
-        'deepseek-v3',
+        'claude-sonnet-4',
         r.iterations,
         r.success ? 1 : 0,
         JSON.stringify(r.classifierFeatures),

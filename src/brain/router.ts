@@ -179,10 +179,10 @@ export function resolveRoute(req: RouteRequest): RouteEntry {
   }
 
   // Sanity — if the resolved model isn't in the registry, fall back to the
-  // first fallback or deepseek-v3.
+  // first fallback or claude-sonnet-4.
   if (!MODELS[merged.model]) {
     const first = merged.fallbacks.find((m) => MODELS[m]) as ModelId | undefined;
-    merged.model = first ?? 'deepseek-v3';
+    merged.model = first ?? 'claude-sonnet-4';
   }
 
   return merged;
@@ -192,24 +192,24 @@ export function resolveRoute(req: RouteRequest): RouteEntry {
 // Inlined so the tsup bundle works without the JSON sidecar file.
 
 const EMBEDDED_DEFAULT: RoutingTable = {
-  version: 1,
+  version: 2,
   defaults: { toolBudget: 20, maxIterations: 30, compactionTokens: 80_000 },
   routes: {
-    question: { model: 'mistral-small', fallbacks: ['groq-llama-70b'], toolBudget: 3, maxIterations: 4, needsPlan: false },
-    edit_small: { model: 'deepseek-v3', fallbacks: ['kimi-k2', 'groq-llama-70b'], toolBudget: 10, maxIterations: 15, needsPlan: false },
-    edit_multi: { model: 'kimi-k2', fallbacks: ['deepseek-v3', 'groq-llama-70b'], toolBudget: 20, maxIterations: 25, needsPlan: false },
-    refactor: { model: 'kimi-k2', fallbacks: ['deepseek-v3'], toolBudget: 30, maxIterations: 40, needsPlan: true },
+    question: { model: 'mistral-small', fallbacks: ['groq-llama-70b', 'gemini-2-flash'], toolBudget: 3, maxIterations: 4, needsPlan: false },
+    edit_small: { model: 'gemini-2-flash', fallbacks: ['claude-sonnet-4', 'groq-llama-70b'], toolBudget: 10, maxIterations: 15, needsPlan: false },
+    edit_multi: { model: 'claude-sonnet-4', fallbacks: ['gemini-2-pro', 'groq-llama-70b'], toolBudget: 20, maxIterations: 25, needsPlan: false },
+    refactor: { model: 'claude-sonnet-4', fallbacks: ['gemini-2-pro', 'gpt-4o'], toolBudget: 30, maxIterations: 40, needsPlan: true },
     debug: {
       model: 'grok-4.1-fast',
-      fallbacks: ['deepseek-v3', 'kimi-k2'],
+      fallbacks: ['claude-sonnet-4', 'gemini-2-pro'],
       toolBudget: 25,
       maxIterations: 30,
       needsPlan: false,
       providerOptions: { reasoning: { enabled: true } },
     },
-    scaffold: { model: 'deepseek-v3', fallbacks: ['kimi-k2'], toolBudget: 15, maxIterations: 20, needsPlan: true },
-    review: { model: 'mistral-small', fallbacks: ['deepseek-v3'], toolBudget: 5, maxIterations: 6, needsPlan: false },
-    explain: { model: 'mistral-small', fallbacks: ['groq-llama-70b'], toolBudget: 0, maxIterations: 2, needsPlan: false },
+    scaffold: { model: 'claude-sonnet-4', fallbacks: ['gemini-2-pro', 'gpt-4o'], toolBudget: 15, maxIterations: 20, needsPlan: true },
+    review: { model: 'mistral-small', fallbacks: ['gemini-2-flash', 'claude-sonnet-4'], toolBudget: 5, maxIterations: 6, needsPlan: false },
+    explain: { model: 'mistral-small', fallbacks: ['groq-llama-70b', 'gemini-2-flash'], toolBudget: 0, maxIterations: 2, needsPlan: false },
   },
   complexityOverrides: {
     complex: { model: 'grok-4-beta', providerOptions: { reasoning: { enabled: true } } },
@@ -217,7 +217,7 @@ const EMBEDDED_DEFAULT: RoutingTable = {
     simple: {},
     trivial: { model: 'mistral-small' },
   },
-  writeCode: { model: 'deepseek-v3', fallbacks: ['kimi-k2'] },
+  writeCode: { model: 'claude-sonnet-4', fallbacks: ['gemini-2-pro', 'gpt-4o'] },
   embedding: { model: 'embedding-small' },
   classifier: {
     model: 'mistral-small',

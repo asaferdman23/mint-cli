@@ -54,7 +54,7 @@ function printNonInteractiveHint(): void {
   console.log(chalk.white('  Get started:'));
   console.log('    ' + chalk.cyan('mint signup') + chalk.dim('  — create a free account (50 requests/month)'));
   console.log('    ' + chalk.cyan('mint login') + chalk.dim('   — sign in to an existing account'));
-  console.log('    ' + chalk.cyan('mint config:set providers.deepseek <key>') + chalk.dim('  — bring your own keys'));
+  console.log('    ' + chalk.cyan('mint config:set providers.anthropic <key>') + chalk.dim('  — bring your own keys'));
   console.log('');
   console.log(chalk.dim('  Then run ') + chalk.cyan('mint "your task"') + chalk.dim(' or open the TUI with ') + chalk.cyan('mint') + chalk.dim('.\n'));
 }
@@ -128,7 +128,7 @@ async function showFirstRunWelcome(): Promise<void> {
         chalk.white('Bring your own API keys ') +
         chalk.dim('(free forever, BYOK):') +
         '\n\n' +
-        chalk.cyan('  mint config:set providers.deepseek <your-key>'),
+        chalk.cyan('  mint config:set providers.anthropic <your-key>'),
       { padding: 1, borderColor: 'cyan', borderStyle: 'round', width: 64 },
     ),
   );
@@ -175,19 +175,19 @@ async function showFirstRunWelcome(): Promise<void> {
             '\n\n' +
             chalk.dim('Get a key from any provider:') +
             '\n\n' +
-            chalk.cyan('  DeepSeek') +
-            chalk.dim('  https://platform.deepseek.com') +
-            chalk.dim('  (cheapest — recommended)') +
-            '\n' +
             chalk.cyan('  Anthropic') +
             chalk.dim(' https://console.anthropic.com') +
+            chalk.dim('  (Claude — recommended)') +
+            '\n' +
+            chalk.cyan('  Gemini') +
+            chalk.dim('    https://ai.google.dev') +
+            chalk.dim('  (free tier)') +
             '\n' +
             chalk.cyan('  OpenAI') +
             chalk.dim('    https://platform.openai.com') +
             '\n' +
-            chalk.cyan('  Gemini') +
-            chalk.dim('    https://ai.google.dev') +
-            chalk.dim('  (free tier)'),
+            chalk.cyan('  xAI Grok') +
+            chalk.dim('  https://x.ai/api'),
           { padding: 1, borderColor: 'yellow', borderStyle: 'round' },
         ),
       );
@@ -198,17 +198,17 @@ async function showFirstRunWelcome(): Promise<void> {
       const haveKeyNow = await promptYesNo('  Have a key ready now?', true);
       if (!haveKeyNow) {
         console.log(chalk.dim('\n  No problem. When you have one, run:'));
-        console.log(chalk.cyan('    mint config:set providers.deepseek <your-key>\n'));
+        console.log(chalk.cyan('    mint config:set providers.anthropic <your-key>\n'));
         return;
       }
 
       const provider = await promptChoice(
         '  Which provider is this key for?',
         [
-          { key: '1', label: 'DeepSeek (recommended)', cmd: 'deepseek' },
-          { key: '2', label: 'Anthropic (Claude)', cmd: 'anthropic' },
+          { key: '1', label: 'Anthropic (Claude, recommended)', cmd: 'anthropic' },
+          { key: '2', label: 'Google (Gemini)', cmd: 'gemini' },
           { key: '3', label: 'OpenAI', cmd: 'openai' },
-          { key: '4', label: 'Gemini', cmd: 'gemini' },
+          { key: '4', label: 'xAI (Grok)', cmd: 'grok' },
         ],
       );
 

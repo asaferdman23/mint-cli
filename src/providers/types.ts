@@ -1,15 +1,14 @@
+/**
+ * Enterprise model fleet (2026-05-12+):
+ * Removed DeepSeek, Kimi/Moonshot, Qwen for Chinese-origin compliance.
+ * Allowed providers are US/EU only.
+ */
 export type ModelId =
-  | 'deepseek-v3'
-  | 'deepseek-coder'
   | 'claude-sonnet-4'
   | 'claude-opus-4'
   | 'gemini-2-flash'
   | 'gemini-2-pro'
   | 'gpt-4o'
-  | 'qwen-coder-32b'
-  | 'kimi-k2'
-  | 'moonshot-v1-8k'
-  | 'moonshot-v1-32k'
   | 'grok-3'
   | 'grok-3-fast'
   | 'grok-3-mini-fast'
@@ -23,7 +22,7 @@ export type ModelId =
   | 'grok-4.1-fast'
   | 'mistral-small';
 
-export type ProviderId = 'anthropic' | 'deepseek' | 'openrouter' | 'gemini' | 'openai' | 'kimi' | 'grok' | 'groq' | 'mistral';
+export type ProviderId = 'anthropic' | 'gemini' | 'openai' | 'grok' | 'groq' | 'mistral';
 
 export interface ModelInfo {
   id: ModelId;
@@ -40,24 +39,6 @@ export interface ModelInfo {
 }
 
 export const MODELS: Record<ModelId, ModelInfo> = {
-  'deepseek-v3': {
-    id: 'deepseek-v3',
-    provider: 'deepseek',
-    name: 'DeepSeek V3',
-    inputPrice: 0.28,
-    outputPrice: 0.42,
-    contextWindow: 128000,
-    capabilities: { coding: 9, reasoning: 8, speed: 8 },
-  },
-  'deepseek-coder': {
-    id: 'deepseek-coder',
-    provider: 'deepseek',
-    name: 'DeepSeek Coder',
-    inputPrice: 0.14,
-    outputPrice: 0.28,
-    contextWindow: 128000,
-    capabilities: { coding: 9, reasoning: 7, speed: 9 },
-  },
   'claude-sonnet-4': {
     id: 'claude-sonnet-4',
     provider: 'anthropic',
@@ -102,42 +83,6 @@ export const MODELS: Record<ModelId, ModelInfo> = {
     outputPrice: 10.0,
     contextWindow: 128000,
     capabilities: { coding: 8, reasoning: 8, speed: 8 },
-  },
-  'qwen-coder-32b': {
-    id: 'qwen-coder-32b',
-    provider: 'openrouter',
-    name: 'Qwen 2.5 Coder 32B',
-    inputPrice: 0.40,
-    outputPrice: 1.20,
-    contextWindow: 128000,
-    capabilities: { coding: 8, reasoning: 7, speed: 8 },
-  },
-  'kimi-k2': {
-    id: 'kimi-k2',
-    provider: 'kimi',
-    name: 'Kimi K2',
-    inputPrice: 0.60,
-    outputPrice: 2.50,
-    contextWindow: 128000,
-    capabilities: { coding: 8, reasoning: 8, speed: 9 },
-  },
-  'moonshot-v1-8k': {
-    id: 'moonshot-v1-8k',
-    provider: 'kimi',
-    name: 'Moonshot v1 8k',
-    inputPrice: 0.12,
-    outputPrice: 0.12,
-    contextWindow: 8000,
-    capabilities: { coding: 7, reasoning: 7, speed: 10 },
-  },
-  'moonshot-v1-32k': {
-    id: 'moonshot-v1-32k',
-    provider: 'kimi',
-    name: 'Moonshot v1 32k',
-    inputPrice: 0.24,
-    outputPrice: 0.24,
-    contextWindow: 32000,
-    capabilities: { coding: 7, reasoning: 7, speed: 10 },
   },
   'grok-3': {
     id: 'grok-3',

@@ -1,58 +1,47 @@
 import { Provider, ModelId, MODELS, CompletionRequest, CompletionResponse, AgentStreamChunk } from './types.js';
 import { config } from '../utils/config.js';
 import { anthropicProvider } from './anthropic.js';
-import { deepseekProvider } from './deepseek.js';
-import { kimiProvider } from './kimi.js';
 import { grokProvider } from './grok.js';
 import { groqProvider } from './groq.js';
 import { mistralProvider } from './mistral.js';
-import { qwenProvider } from './qwen.js';
 import { geminiProvider } from './gemini.js';
 import { gatewayProvider } from './gateway.js';
 import { isRecording, isReplaying, recordStream, replayStream } from './record-replay.js';
 
 // Per-model fallback chain — used by completeWithFallback / streamAgent when
 // a provider returns a retryable error. Keep this in sync with MODELS.
+// Enterprise fleet: US/EU providers only (no DeepSeek/Kimi/Qwen).
 const FALLBACK_CHAIN: Partial<Record<ModelId, ModelId[]>> = {
-  'mistral-small': ['groq-llama-70b', 'deepseek-v3'],
-  'deepseek-v3': ['groq-llama-70b', 'mistral-small'],
-  'deepseek-coder': ['deepseek-v3', 'groq-llama-70b'],
-  'grok-4-beta': ['grok-4.1-fast', 'deepseek-v3'],
-  'grok-4.1-fast': ['deepseek-v3', 'groq-llama-70b'],
-  'grok-3': ['grok-4-beta', 'deepseek-v3'],
-  'grok-3-fast': ['grok-3', 'deepseek-v3'],
-  'grok-3-mini-fast': ['mistral-small', 'deepseek-v3'],
-  'groq-llama-70b': ['deepseek-v3', 'mistral-small'],
+  'mistral-small': ['groq-llama-70b', 'gemini-2-flash'],
+  'grok-4-beta': ['grok-4.1-fast', 'claude-sonnet-4'],
+  'grok-4.1-fast': ['claude-sonnet-4', 'gemini-2-pro'],
+  'grok-3': ['grok-4-beta', 'claude-sonnet-4'],
+  'grok-3-fast': ['grok-3', 'claude-sonnet-4'],
+  'grok-3-mini-fast': ['mistral-small', 'gemini-2-flash'],
+  'groq-llama-70b': ['gemini-2-flash', 'mistral-small'],
   'groq-llama-8b': ['mistral-small', 'groq-llama-70b'],
-  'groq-gpt-oss-120b': ['deepseek-v3', 'groq-llama-70b'],
-  'groq-gpt-oss-20b': ['mistral-small', 'deepseek-v3'],
-  'claude-sonnet-4': ['deepseek-v3', 'groq-llama-70b'],
-  'claude-opus-4': ['claude-sonnet-4', 'deepseek-v3'],
-  'gemini-2-flash': ['mistral-small', 'deepseek-v3'],
-  'gemini-2-pro': ['gemini-2-flash', 'deepseek-v3'],
-  'gemini-1-5-flash': ['mistral-small', 'deepseek-v3'],
-  'gemini-1-5-pro': ['gemini-2-pro', 'deepseek-v3'],
-  'gpt-4o': ['deepseek-v3', 'groq-llama-70b'],
-  'qwen-coder-32b': ['deepseek-v3', 'groq-llama-70b'],
-  'kimi-k2': ['deepseek-v3', 'groq-llama-70b'],
-  'moonshot-v1-8k': ['mistral-small', 'deepseek-v3'],
-  'moonshot-v1-32k': ['moonshot-v1-8k', 'deepseek-v3'],
+  'groq-gpt-oss-120b': ['gemini-2-pro', 'groq-llama-70b'],
+  'groq-gpt-oss-20b': ['mistral-small', 'gemini-2-flash'],
+  'claude-sonnet-4': ['gemini-2-pro', 'groq-llama-70b'],
+  'claude-opus-4': ['claude-sonnet-4', 'gemini-2-pro'],
+  'gemini-2-flash': ['mistral-small', 'groq-llama-70b'],
+  'gemini-2-pro': ['gemini-2-flash', 'claude-sonnet-4'],
+  'gemini-1-5-flash': ['mistral-small', 'gemini-2-flash'],
+  'gemini-1-5-pro': ['gemini-2-pro', 'claude-sonnet-4'],
+  'gpt-4o': ['claude-sonnet-4', 'gemini-2-pro'],
 };
 
 function getFallbacks(model: ModelId): ModelId[] {
-  return FALLBACK_CHAIN[model] ?? ['deepseek-v3', 'groq-llama-70b'];
+  return FALLBACK_CHAIN[model] ?? ['claude-sonnet-4', 'gemini-2-flash'];
 }
 
 // Registry of all providers — typed as Provider so the discriminated union of
 // provider instances doesn't force TS to narrow to one concrete class.
 const providers: Map<string, Provider> = new Map<string, Provider>([
   ['anthropic', anthropicProvider],
-  ['deepseek', deepseekProvider],
-  ['kimi', kimiProvider],
   ['grok', grokProvider],
   ['groq', groqProvider],
   ['mistral', mistralProvider],
-  ['openrouter', qwenProvider],
   ['gemini', geminiProvider],
 ]);
 

@@ -207,7 +207,7 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
           {
             id: nextId(),
             role: 'assistant',
-            content: `🚫 You've used all ${data.requests_limit} free requests.\n\nTo continue:\n  • Upgrade to Pro at https://usemint.dev/upgrade\n  • Add your own API keys: mint config:set providers.deepseek <key>`,
+            content: `🚫 You've used all ${data.requests_limit} free requests.\n\nTo continue:\n  • Upgrade to Pro at https://usemint.dev/upgrade\n  • Add your own API keys: mint config:set providers.anthropic <key>`,
           },
         ]);
       } else if (usagePercent >= 80 && usagePercent < 100 && shown === 'none') {
@@ -218,7 +218,7 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
           {
             id: nextId(),
             role: 'assistant',
-            content: `⚠️  You've used ${data.requests_used} of your ${data.requests_limit} free requests (${remaining} remaining).\n\nTo continue after your quota:\n  • Upgrade to Pro for unlimited requests\n  • Add your own API keys with: mint config:set providers.deepseek <key>`,
+            content: `⚠️  You've used ${data.requests_used} of your ${data.requests_limit} free requests (${remaining} remaining).\n\nTo continue after your quota:\n  • Upgrade to Pro for unlimited requests\n  • Add your own API keys with: mint config:set providers.anthropic <key>`,
           },
         ]);
       }

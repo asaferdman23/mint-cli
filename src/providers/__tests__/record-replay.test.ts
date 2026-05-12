@@ -65,7 +65,7 @@ describe('record-replay', () => {
 
   it('round-trips chunks via record → replay', async () => {
     const request: CompletionRequest = {
-      model: 'deepseek-v3',
+      model: 'claude-sonnet-4',
       messages: [{ role: 'user', content: 'hello' }],
       systemPrompt: 'you are mint',
     };
@@ -82,7 +82,7 @@ describe('record-replay', () => {
     expect(fixtures).toHaveLength(1);
 
     const meta = readFixtureMeta(fixtures[0]);
-    expect(meta?.model).toBe('deepseek-v3');
+    expect(meta?.model).toBe('claude-sonnet-4');
     expect(meta?.taskPreview).toContain('hello');
 
     process.env.MINT_REPLAY = join(workDir, 'test', 'fixtures', 'recordings');
@@ -93,7 +93,7 @@ describe('record-replay', () => {
   it('throws when replay fixture is missing', async () => {
     process.env.MINT_REPLAY = join(workDir, 'no-such-dir');
     const request: CompletionRequest = {
-      model: 'deepseek-v3',
+      model: 'claude-sonnet-4',
       messages: [{ role: 'user', content: 'no fixture' }],
     };
     await expect(collect(replayStream(request))).rejects.toThrow(/no fixture/i);
@@ -101,7 +101,7 @@ describe('record-replay', () => {
 
   it('hashes are deterministic for identical requests', async () => {
     const request: CompletionRequest = {
-      model: 'deepseek-v3',
+      model: 'claude-sonnet-4',
       messages: [{ role: 'user', content: 'same' }],
     };
     await collect(recordStream(request, synthStream([{ type: 'text', text: 'a' }])));
@@ -117,8 +117,8 @@ describe('record-replay', () => {
   });
 
   it('different models produce different fixture files', async () => {
-    const a: CompletionRequest = { model: 'deepseek-v3', messages: [{ role: 'user', content: 'x' }] };
-    const b: CompletionRequest = { model: 'kimi-k2', messages: [{ role: 'user', content: 'x' }] };
+    const a: CompletionRequest = { model: 'claude-sonnet-4', messages: [{ role: 'user', content: 'x' }] };
+    const b: CompletionRequest = { model: 'gemini-2-pro', messages: [{ role: 'user', content: 'x' }] };
 
     await collect(recordStream(a, synthStream([{ type: 'text', text: 'a' }])));
     await collect(recordStream(b, synthStream([{ type: 'text', text: 'b' }])));
@@ -129,7 +129,7 @@ describe('record-replay', () => {
   // Sanity check: existsSync isn't accidentally re-exported, just a guard.
   it('fixture files are created on the first chunk', async () => {
     const request: CompletionRequest = {
-      model: 'deepseek-v3',
+      model: 'claude-sonnet-4',
       messages: [{ role: 'user', content: 'sanity' }],
     };
     await collect(recordStream(request, synthStream([{ type: 'text', text: '·' }])));

@@ -48,9 +48,11 @@ export async function showConfig(): Promise<void> {
     ['', ''],
     [chalk.bold('Provider Keys (BYOK)'), ''],
     ['  anthropic', providers.anthropic ? chalk.green('Configured') : chalk.dim('Not set')],
-    ['  deepseek', providers.deepseek ? chalk.green('Configured') : chalk.dim('Not set')],
-    ['  openrouter', providers.openrouter ? chalk.green('Configured') : chalk.dim('Not set')],
+    ['  openai', providers.openai ? chalk.green('Configured') : chalk.dim('Not set')],
     ['  gemini', providers.gemini ? chalk.green('Configured') : chalk.dim('Not set')],
+    ['  grok', providers.grok ? chalk.green('Configured') : chalk.dim('Not set')],
+    ['  groq', providers.groq ? chalk.green('Configured') : chalk.dim('Not set')],
+    ['  mistral', providers.mistral ? chalk.green('Configured') : chalk.dim('Not set')],
   );
 
   console.log(table.toString());
@@ -71,27 +73,21 @@ const VALID_TOP_LEVEL_KEYS = new Set([
 
 const VALID_PROVIDERS = new Set([
   'anthropic',
-  'deepseek',
   'openai',
-  'openrouter',
   'gemini',
   'grok',
   'mistral',
   'groq',
-  'kimi',
 ]);
 
 /** Known prefixes for provider keys — we warn but don't block on mismatch. */
 const PROVIDER_KEY_PREFIXES: Record<string, string[]> = {
   anthropic: ['sk-ant-'],
   openai: ['sk-'],
-  openrouter: ['sk-or-'],
-  deepseek: ['sk-'],
   grok: ['xai-'],
   groq: ['gsk_'],
   gemini: ['AIza'],
   mistral: [],
-  kimi: ['sk-'],
 };
 
 /** Levenshtein-ish closest match for "did you mean ___?" hints. */
