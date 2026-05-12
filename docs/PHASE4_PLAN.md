@@ -37,6 +37,8 @@ Each milestone is independently shippable. **P1–P3 = the demo.** P4–P7 = dep
 
 ## P1 — Verify caching works end-to-end (~30 min)
 
+**Status: ✅ shape verified via unit test (2026-05-12)**. 4 new tests in `src/providers/__tests__/anthropic-caching.test.ts` assert cache markers + usage chunk + disable env var. Live-traffic confirmation still pending — see [KNOWN_ISSUES.md](./KNOWN_ISSUES.md).
+
 **Goal**: prove `cache_read_input_tokens > 0` on turn 2 of a real Anthropic session, captured in `usage.db` and surfaced in `mint cost-report`.
 
 ### Tasks

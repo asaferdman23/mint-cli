@@ -4,11 +4,25 @@ Issues we know about but haven't fixed yet. Transparency > mystery.
 
 ---
 
+## Verified — Anthropic prompt caching (0.3.0-beta.4)
+
+**Status**: shape verified via unit test (`src/providers/__tests__/anthropic-caching.test.ts`). Live-traffic confirmation still pending — requires running a real 2-turn Sonnet session and checking `mint cost-report` for non-zero `cacheReadTokens`.
+
+What the test guarantees:
+- `cache_control: { type: 'ephemeral' }` is attached to the system block.
+- The marker is attached to the LAST tool only (Anthropic caches the prefix up to the marker; a single trailing marker covers all tools).
+- The final `usage` chunk carries `cacheCreationInputTokens` + `cacheReadInputTokens` parsed from `stream.finalMessage()`.
+- `MINT_DISABLE_ANTHROPIC_CACHE=1` cleanly strips both markers.
+
+What still needs a real call:
+- That `messages.stream` accepts the `system: TextBlock[]` array shape at runtime (TypeScript only allows `string`; we cast via `as unknown as string`). The Anthropic API docs allow the array shape, but the SDK type definition lags.
+- That cache reads materialize within the documented ~5-minute TTL on actual Sonnet traffic.
+
 ## Active
 
 ### No active blockers
 
-_Last updated: 2026-05-09 (0.3.0-beta.1)_
+_Last updated: 2026-05-12 (0.3.0-beta.4)_
 
 We aren't aware of any user-blocking issues right now. If you hit one, please [open a GitHub issue](https://github.com/asaferdman23/mint-cli/issues) with:
 - What command you ran
