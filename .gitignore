@@ -21,3 +21,5 @@ docs/superpowers/
 # Reference / research code (not part of the product)
 claude-code-src/
 collection-claude-code-source-code-main/
+.git-commit-msg.tmp
+
