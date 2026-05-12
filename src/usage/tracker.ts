@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { UsageDb } from './db.js';
 import type { UsageRecord } from './db.js';
 import { OPUS_INPUT_PRICE_PER_M, OPUS_OUTPUT_PRICE_PER_M, SONNET_INPUT_PRICE_PER_M, SONNET_OUTPUT_PRICE_PER_M } from './pricing.js';
+import { uploadUsageEvent } from './gateway-sync.js';
 
 export function calculateOpusCost(inputTokens: number, outputTokens: number): number {
   return (inputTokens / 1_000_000) * OPUS_INPUT_PRICE_PER_M +
@@ -181,6 +182,23 @@ export function trackBrainRun(summary: BrainRunSummary): void {
       developer: resolveDeveloper(),
     };
     getDb().insert(record);
+    // Opt-in fire-and-forget: ship the row to the gateway for org-wide
+    // dashboards. No-op unless MINT_GATEWAY_SYNC=1 or config.usageGatewaySync.
+    uploadUsageEvent({
+      developer: record.developer ?? 'unknown',
+      sessionId: record.sessionId,
+      ts: record.timestamp,
+      model: record.model,
+      provider: record.provider,
+      taskPreview: record.taskPreview,
+      inputTokens: record.inputTokens,
+      outputTokens: record.outputTokens,
+      cacheReadTokens: record.cacheReadTokens,
+      cacheCreationTokens: record.cacheCreationTokens,
+      costUsd: record.cost,
+      opusBaselineUsd: record.opusCost,
+      durationMs: record.latencyMs,
+    });
   } catch {
     /* tracking failures never crash the main flow */
   }

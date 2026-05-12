@@ -98,7 +98,7 @@ Most likely causes, in order of probability:
 
 ## P3 — Gateway-side cache logging (~1 hr)
 
-**Status: ⚠️ deferred (2026-05-12)**. Investigation revealed the gateway has no Anthropic proxy — the CLI calls Anthropic directly with each developer's own API key. Cache stats live entirely in `~/.mint/usage.db` on the developer's machine, so "gateway-side" logging requires either (a) a usage-ingest endpoint where the CLI ships rows up, or (b) adding an Anthropic proxy. Both are larger decisions than the 1-hour estimate; revisit after the broader enterprise strategy is finalized.
+**Status: ✅ shipped beta.8 (2026-05-12)** — Option A (CLI ships rows up). The gateway now has a `usage_events` table plus `POST /v1/usage/ingest` and `GET /v1/usage/cache-summary?days=30` endpoints. The CLI fires a detached upload from `trackBrainRun` when opt-in (`MINT_GATEWAY_SYNC=1` or `usageGatewaySync: true` in config). Local sqlite remains the source of truth; the gateway view is purely additive for team dashboards.
 
 **Goal**: fleet-wide visibility without each dev running `mint cost-report`. The gateway already records per-session `(model, inputTokens, outputTokens, cost)`; extend it with cache columns so the team dashboard ([ENTERPRISE_STRATEGY.md §3](./ENTERPRISE_STRATEGY.md)) can show org-wide hit rate.
 

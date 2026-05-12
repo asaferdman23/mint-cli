@@ -2,6 +2,29 @@
 
 All notable changes to Mint CLI will be documented in this file.
 
+## [0.3.0-beta.8] - 2026-05-12
+
+### 📤 Gateway usage sync (P3, Option A)
+
+Opt-in fleet-wide visibility for teams running the Mint gateway. Each persisted usage row (model, tokens, cache stats, cost, developer, duration) is shipped via `POST /v1/usage/ingest` so org admins can view aggregated cache hit rate + spend without each developer manually exporting CSVs.
+
+**Opt-in (off by default — BYOK stays private):**
+- `MINT_GATEWAY_SYNC=1` env var, or
+- `usageGatewaySync: true` in `~/.mint/config.json`
+
+**Properties:**
+- Fire-and-forget — never blocks the next prompt (hard 3s abort timeout).
+- No-op without an auth token (`MINT_GATEWAY_TOKEN` / `MINT_API_TOKEN` / stored `gatewayToken`).
+- Failures swallowed silently — local `~/.mint/usage.db` row is always written first, the upload is purely additive.
+- Server-side `ON CONFLICT (id) DO NOTHING` makes re-shipping safe.
+
+**Gateway side (mint-gateway):**
+- New `usage_events` table with per-developer/per-model indexes.
+- `POST /v1/usage/ingest` — batch ingest (max 500 events/req), bound to authenticated `userId`.
+- `GET  /v1/usage/cache-summary?days=30` — totals + per-model + per-developer aggregates with cache hit rate.
+
+**Tests:** +3 (87 total). Verifies no-op when disabled, no-op when unauthed, correct payload shape when enabled.
+
 ## [0.3.0-beta.7] - 2026-05-12
 
 ### 🧠 Cache-aware compaction (P5)

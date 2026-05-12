@@ -29,6 +29,10 @@ const configSchema = z.object({
   // Backend
   apiBaseUrl: z.string().default('https://api.usemint.dev'),
 
+  /** Opt-in: upload each usage row to the gateway's /v1/usage/ingest for
+   *  org-wide cache/cost visibility. Defaults to false (BYOK-friendly). */
+  usageGatewaySync: z.boolean().optional(),
+
   // Brain runtime knobs
   brain: z
     .object({
@@ -75,6 +79,7 @@ function createConf(): Conf<Config> {
       }
     },
       apiBaseUrl: { type: 'string', default: 'https://api.usemint.dev' },
+      usageGatewaySync: { type: 'boolean' },
       brain: {
         type: 'object',
         default: { sessionBudgetUsd: 0.5 },
