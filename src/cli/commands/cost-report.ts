@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { createHash } from 'node:crypto';
 import { getUsageDb } from '../../usage/tracker.js';
 import {
   OPUS_INPUT_PRICE_PER_M,
@@ -12,6 +13,16 @@ export interface CostReportOptions {
   limit?: string;
   by?: string; // 'developer' | 'model' | 'day'
   developer?: string; // filter to one developer
+  /**
+   * Emit a tamper-evident CSV. Implies --export csv and adds a `row_hash`
+   * column where each row's hash is sha256(prev_hash || canonical_row).
+   * The first row's prev_hash is the literal string "GENESIS".
+   *
+   * To verify a chain: recompute each row's hash from the canonical row
+   * content + the previous row's hash and compare. Any mutation breaks
+   * the chain at that row and every subsequent one.
+   */
+  audit?: boolean;
 }
 
 interface RowDerived {
@@ -74,6 +85,11 @@ export async function runCostReport(opts: CostReportOptions): Promise<void> {
     rows = rows.filter((r) => (r.developer ?? 'unknown') === opts.developer);
   }
   rows = rows.slice(0, limit);
+
+  // --audit forces csv export and adds tamper-evident hash chain.
+  if (opts.audit) {
+    return emitAuditCsv(rows);
+  }
 
   // Grouped view (e.g. --by developer). Aggregates take priority over the
   // per-run table; --export still works for grouped output.
@@ -352,4 +368,119 @@ function renderGrouped(
   console.log('');
   console.log(chalk.bold(`  Total: ${chalk.bold(fmtUsd(totalCost))} · vs Opus baseline ${fmtUsd(totalOpus)} · saved ${chalk.green(fmtUsd(Math.max(0, totalOpus - totalCost)))}`));
   console.log('');
+}
+
+// ─── Audit-grade CSV with tamper-evident hash chain ─────────────────────────
+
+/**
+ * Columns of the audit CSV (order is part of the spec — auditors hash the
+ * canonical row, so changing order silently invalidates external verifiers).
+ */
+const AUDIT_COLUMNS = [
+  'timestamp_iso',
+  'developer',
+  'sessionId',
+  'model',
+  'provider',
+  'tier',
+  'task',
+  'inputTokens',
+  'outputTokens',
+  'cacheReadTokens',
+  'cacheCreationTokens',
+  'costUSD',
+  'opusBaselineUSD',
+  'savingsUSD',
+  'cacheHitPct',
+  'durationMs',
+  'routingReason',
+] as const;
+
+/** Convert one row to its canonical string form used in the hash. */
+function canonicalAuditRow(row: UsageRecord): string {
+  const d = derive(row);
+  const cells: Record<(typeof AUDIT_COLUMNS)[number], string> = {
+    timestamp_iso: new Date(row.timestamp).toISOString(),
+    developer: row.developer ?? 'unknown',
+    sessionId: row.sessionId,
+    model: row.model,
+    provider: row.provider,
+    tier: row.tier,
+    task: row.taskPreview,
+    inputTokens: String(row.inputTokens),
+    outputTokens: String(row.outputTokens),
+    cacheReadTokens: String(row.cacheReadTokens ?? 0),
+    cacheCreationTokens: String(row.cacheCreationTokens ?? 0),
+    costUSD: row.cost.toFixed(6),
+    opusBaselineUSD: row.opusCost.toFixed(6),
+    savingsUSD: row.savedAmount.toFixed(6),
+    cacheHitPct: d.cacheHitPct.toFixed(2),
+    durationMs: String(row.latencyMs),
+    routingReason: row.routingReason,
+  };
+  // Canonical form: TAB-separated key=value pairs in fixed column order. We
+  // don't use JSON because JSON has multiple valid encodings of the same
+  // object (key order, whitespace). TSV with a fixed column list is one form.
+  return AUDIT_COLUMNS.map((k) => `${k}=${cells[k]}`).join('\t');
+}
+
+/** Hash one row given the previous row's hash (or "GENESIS" for row 0). */
+export function auditRowHash(row: UsageRecord, prevHash: string): string {
+  const h = createHash('sha256');
+  h.update(prevHash);
+  h.update('\n');
+  h.update(canonicalAuditRow(row));
+  return h.digest('hex');
+}
+
+/** CSV-escape: wrap in double quotes, double any inner quotes. */
+function csvEscape(s: string): string {
+  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+function emitAuditCsv(rows: UsageRecord[]): void {
+  process.stdout.write([...AUDIT_COLUMNS, 'prev_hash', 'row_hash'].join(',') + '\n');
+  let prevHash = 'GENESIS';
+  for (const r of rows) {
+    const d = derive(r);
+    const ordered: string[] = [
+      new Date(r.timestamp).toISOString(),
+      r.developer ?? 'unknown',
+      r.sessionId,
+      r.model,
+      r.provider,
+      r.tier,
+      r.taskPreview,
+      String(r.inputTokens),
+      String(r.outputTokens),
+      String(r.cacheReadTokens ?? 0),
+      String(r.cacheCreationTokens ?? 0),
+      r.cost.toFixed(6),
+      r.opusCost.toFixed(6),
+      r.savedAmount.toFixed(6),
+      d.cacheHitPct.toFixed(2),
+      String(r.latencyMs),
+      r.routingReason,
+    ];
+    const rowHash = auditRowHash(r, prevHash);
+    process.stdout.write([...ordered.map(csvEscape), prevHash, rowHash].join(',') + '\n');
+    prevHash = rowHash;
+  }
+}
+
+/**
+ * Verify an audit chain in-process. Used by tests; can also be invoked from
+ * a verifier script. Returns true iff the rows form a valid chain starting
+ * from "GENESIS".
+ */
+export function verifyAuditChain(rows: UsageRecord[], hashes: string[]): boolean {
+  if (rows.length !== hashes.length) return false;
+  let prev = 'GENESIS';
+  for (let i = 0; i < rows.length; i++) {
+    const expected = auditRowHash(rows[i], prev);
+    if (expected !== hashes[i]) return false;
+    prev = hashes[i];
+  }
+  return true;
 }

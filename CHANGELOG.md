@@ -2,6 +2,23 @@
 
 All notable changes to Mint CLI will be documented in this file.
 
+## [0.3.0-beta.6] - 2026-05-12
+
+### 🔐 Audit-grade cost CSV (P4)
+
+The enterprise finance-and-compliance slice. `mint cost-report --audit` produces a tamper-evident CSV that auditors can verify externally:
+
+- **sha256 hash chain** — each row's `row_hash` = `sha256(prev_hash || canonical_row)`. The first row's `prev_hash` is the literal string `GENESIS`. Mutating any column on any row breaks the chain at that row and every subsequent one.
+- **Canonical row form** is reproducible across machines: TAB-separated `key=value` pairs in fixed column order (timestamp, developer, sessionId, model, provider, tier, task, tokens, costs, hit %, durationMs, routingReason). Avoids JSON's multiple-valid-encodings ambiguity.
+- **`verifyAuditChain(rows, hashes)`** helper exported from `cost-report.ts` for in-process verification or a standalone verifier script.
+- Columns: `timestamp_iso, developer, sessionId, model, provider, tier, task, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens, costUSD, opusBaselineUSD, savingsUSD, cacheHitPct, durationMs, routingReason, prev_hash, row_hash`.
+
+### Plan update
+
+- **P3 (gateway-side cache logging) deferred** — audit found the gateway has no Anthropic proxy; cache stats live entirely on the developer's machine. Revisit once the broader enterprise strategy decides between a usage-ingest endpoint and an Anthropic proxy.
+
+81/81 tests pass (+12 since beta.3). Build 469 KB.
+
 ## [0.3.0-beta.5] - 2026-05-12
 
 ### 👤 Per-developer cost attribution

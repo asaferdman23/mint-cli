@@ -244,6 +244,7 @@ program
   .option('--limit <n>', 'Max rows to show', '100')
   .option('--by <field>', 'Group by: developer | model | day')
   .option('--developer <id>', 'Filter to a single developer (email / username)')
+  .option('--audit', 'Emit tamper-evident audit CSV with sha256 hash chain')
   .option('--export <fmt>', 'Export format: csv | json')
   .action(async (opts) => {
     const { runCostReport } = await import('./commands/cost-report.js');

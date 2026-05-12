@@ -98,6 +98,8 @@ Most likely causes, in order of probability:
 
 ## P3 — Gateway-side cache logging (~1 hr)
 
+**Status: ⚠️ deferred (2026-05-12)**. Investigation revealed the gateway has no Anthropic proxy — the CLI calls Anthropic directly with each developer's own API key. Cache stats live entirely in `~/.mint/usage.db` on the developer's machine, so "gateway-side" logging requires either (a) a usage-ingest endpoint where the CLI ships rows up, or (b) adding an Anthropic proxy. Both are larger decisions than the 1-hour estimate; revisit after the broader enterprise strategy is finalized.
+
 **Goal**: fleet-wide visibility without each dev running `mint cost-report`. The gateway already records per-session `(model, inputTokens, outputTokens, cost)`; extend it with cache columns so the team dashboard ([ENTERPRISE_STRATEGY.md §3](./ENTERPRISE_STRATEGY.md)) can show org-wide hit rate.
 
 ### Tasks (in `mint-gateway` repo)
@@ -119,6 +121,8 @@ The web dashboard at `usemint.dev/team` consumes this endpoint — that's its ow
 ---
 
 ## P4 — Audit-grade export (~30 min)
+
+**Status: ✅ shipped in `0.3.0-beta.6` (2026-05-12)**. `mint cost-report --audit` emits a tamper-evident CSV with sha256 row-hash chain anchored to `"GENESIS"`. Canonical row format uses fixed column order in TAB-separated `k=v` form so hashes are reproducible across machines. 4 new tests in `src/cli/__tests__/cost-report-audit.test.ts` cover determinism, tamper detection, length-mismatch safety, and prev-hash sensitivity. Public verifier helper exported as `verifyAuditChain(rows, hashes)`.
 
 **Goal**: enterprises want receipts. Make `mint cost-report --export csv` actually finance-grade.
 
