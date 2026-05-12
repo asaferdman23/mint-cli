@@ -30,6 +30,7 @@
     },
     "refactor": {
       "model": "claude-sonnet-4",
+      "planModel": "claude-opus-4",
       "fallbacks": ["gemini-2-pro", "gpt-4o"],
       "toolBudget": 30,
       "maxIterations": 40,
@@ -45,6 +46,8 @@
     },
     "scaffold": {
       "model": "claude-sonnet-4",
+      "planModel": "grok-4-beta",
+      "planProviderOptions": { "reasoning": { "enabled": true } },
       "fallbacks": ["gemini-2-pro", "gpt-4o"],
       "toolBudget": 15,
       "maxIterations": 20,
@@ -68,6 +71,7 @@
   "complexityOverrides": {
     "complex": {
       "model": "grok-4-beta",
+      "planModel": "claude-opus-4",
       "providerOptions": { "reasoning": { "enabled": true } }
     },
     "moderate": {},

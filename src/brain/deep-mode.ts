@@ -78,14 +78,23 @@ export async function runDeepMode(
   const { session, task, route, contextFiles } = input;
 
   // ── Phase: plan ────────────────────────────────────────────────────────
+  // Use the route's dedicated planner (e.g. Opus / Grok-4-beta) when set,
+  // otherwise fall back to the executor model. A stronger reasoner here
+  // typically saves several wrong-path iterations later for a small fixed
+  // cost (plans are capped at 1024 output tokens).
   const planStart = Date.now();
   session.emit({ type: 'phase', name: 'plan', status: 'start' });
-  const planResult = await runPlanner(task, route.model, contextFiles, session.signal).catch(
-    (err) => {
-      session.emit({ type: 'warn', message: `planner failed: ${err.message ?? err}` });
-      return { steps: [], costUsd: 0 } as { steps: PlanStep[]; costUsd: number };
-    },
-  );
+  const plannerModel = route.planModel ?? route.model;
+  const planResult = await runPlanner(
+    task,
+    plannerModel,
+    contextFiles,
+    session.signal,
+    route.planProviderOptions,
+  ).catch((err) => {
+    session.emit({ type: 'warn', message: `planner failed: ${err.message ?? err}` });
+    return { steps: [], costUsd: 0 } as { steps: PlanStep[]; costUsd: number };
+  });
   session.emit({
     type: 'phase',
     name: 'plan',
@@ -164,6 +173,7 @@ async function runPlanner(
   model: ModelId,
   contextFiles: Array<{ path: string; summary?: string }>,
   signal: AbortSignal | undefined,
+  providerOptions?: Record<string, unknown>,
 ): Promise<{ steps: PlanStep[]; costUsd: number }> {
   const contextBlock = contextFiles
     .slice(0, 8)
@@ -179,6 +189,7 @@ async function runPlanner(
     maxTokens: 1024,
     temperature: 0,
     signal,
+    providerOptions,
   });
 
   const raw = response.content.match(/\{[\s\S]*\}/)?.[0];

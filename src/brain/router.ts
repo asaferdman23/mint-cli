@@ -16,12 +16,20 @@ import { MODELS } from '../providers/types.js';
 
 export interface RouteEntry {
   model: ModelId;
+  /** Optional dedicated planner model for `needsPlan` routes. Falls back to
+   *  `model` when unset. Using a stronger reasoner here (Opus / Grok-4-beta)
+   *  trades a tiny per-plan cost bump for fewer wrong-path iterations.
+   *  Plan calls are capped at 1024 output tokens — typically <$0.02 / run. */
+  planModel?: ModelId;
   fallbacks: ModelId[];
   toolBudget: number;
   maxIterations: number;
   needsPlan: boolean;
   compactionTokens: number;
   providerOptions?: Record<string, unknown>;
+  /** Provider options applied only to the planner call (e.g. enabling
+   *  Grok-4-beta's reasoning mode without forcing it on the executor). */
+  planProviderOptions?: Record<string, unknown>;
 }
 
 export interface ClassifierConfig {
@@ -158,13 +166,15 @@ export function resolveRoute(req: RouteRequest): RouteEntry {
   const complexityPatch = table.complexityOverrides[complexity] ?? {};
 
   const merged: RouteEntry = {
-    model: (kindRoute?.model ?? 'deepseek-v3') as ModelId,
+    model: (kindRoute?.model ?? 'claude-sonnet-4') as ModelId,
+    planModel: kindRoute?.planModel,
     fallbacks: kindRoute?.fallbacks ?? [],
     toolBudget: kindRoute?.toolBudget ?? table.defaults.toolBudget,
     maxIterations: kindRoute?.maxIterations ?? table.defaults.maxIterations,
     needsPlan: kindRoute?.needsPlan ?? false,
     compactionTokens: kindRoute?.compactionTokens ?? table.defaults.compactionTokens,
     providerOptions: kindRoute?.providerOptions,
+    planProviderOptions: kindRoute?.planProviderOptions,
     ...complexityPatch,
   };
 
@@ -198,7 +208,7 @@ const EMBEDDED_DEFAULT: RoutingTable = {
     question: { model: 'mistral-small', fallbacks: ['groq-llama-70b', 'gemini-2-flash'], toolBudget: 3, maxIterations: 4, needsPlan: false },
     edit_small: { model: 'gemini-2-flash', fallbacks: ['claude-sonnet-4', 'groq-llama-70b'], toolBudget: 10, maxIterations: 15, needsPlan: false },
     edit_multi: { model: 'claude-sonnet-4', fallbacks: ['gemini-2-pro', 'groq-llama-70b'], toolBudget: 20, maxIterations: 25, needsPlan: false },
-    refactor: { model: 'claude-sonnet-4', fallbacks: ['gemini-2-pro', 'gpt-4o'], toolBudget: 30, maxIterations: 40, needsPlan: true },
+    refactor: { model: 'claude-sonnet-4', planModel: 'claude-opus-4', fallbacks: ['gemini-2-pro', 'gpt-4o'], toolBudget: 30, maxIterations: 40, needsPlan: true },
     debug: {
       model: 'grok-4.1-fast',
       fallbacks: ['claude-sonnet-4', 'gemini-2-pro'],
@@ -207,12 +217,12 @@ const EMBEDDED_DEFAULT: RoutingTable = {
       needsPlan: false,
       providerOptions: { reasoning: { enabled: true } },
     },
-    scaffold: { model: 'claude-sonnet-4', fallbacks: ['gemini-2-pro', 'gpt-4o'], toolBudget: 15, maxIterations: 20, needsPlan: true },
+    scaffold: { model: 'claude-sonnet-4', planModel: 'grok-4-beta', planProviderOptions: { reasoning: { enabled: true } }, fallbacks: ['gemini-2-pro', 'gpt-4o'], toolBudget: 15, maxIterations: 20, needsPlan: true },
     review: { model: 'mistral-small', fallbacks: ['gemini-2-flash', 'claude-sonnet-4'], toolBudget: 5, maxIterations: 6, needsPlan: false },
     explain: { model: 'mistral-small', fallbacks: ['groq-llama-70b', 'gemini-2-flash'], toolBudget: 0, maxIterations: 2, needsPlan: false },
   },
   complexityOverrides: {
-    complex: { model: 'grok-4-beta', providerOptions: { reasoning: { enabled: true } } },
+    complex: { model: 'grok-4-beta', planModel: 'claude-opus-4', providerOptions: { reasoning: { enabled: true } } },
     moderate: {},
     simple: {},
     trivial: { model: 'mistral-small' },
