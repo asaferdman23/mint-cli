@@ -2,6 +2,18 @@
 
 All notable changes to Mint CLI will be documented in this file.
 
+## [0.3.0-beta.7] - 2026-05-12
+
+### 🧠 Cache-aware compaction (P5)
+
+Makes prompt caching survive long sessions. Audit found the existing `brain/compact.ts` already preserves system + tools (it only rewrites the messages array), so the primary cache breakpoint was never moving. The remaining win was getting Anthropic to also cache the historical context *after* compaction.
+
+- **Second cache breakpoint after the summary** — the synthesized compaction summary now carries `cacheBoundary: true`. The Anthropic provider translates that to a `cache_control: ephemeral` marker on the message's content block, establishing a second cache breakpoint. Post-compaction follow-ups bill the summary at cache-read rates (≈10% of fresh) instead of fresh on every turn.
+- **`Message` interface** gains optional `cacheBoundary?: boolean`. Other providers ignore it; only Anthropic acts on it today. The cache-disable env var strips it cleanly.
+- **Locked-in invariant** — new test simulates 30 turns of growing conversation and asserts `system` block + `tools` array are byte-identical across every turn. No future refactor can silently bust the primary cache breakpoint.
+
+84/84 tests pass (+15 since beta.3). Build 469 KB.
+
 ## [0.3.0-beta.6] - 2026-05-12
 
 ### 🔐 Audit-grade cost CSV (P4)

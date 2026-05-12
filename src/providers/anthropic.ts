@@ -146,6 +146,14 @@ export class AnthropicProvider implements Provider {
 
     const anthropicMessages: Anthropic.MessageParam[] = otherMessages.map(m => {
       if (m.role === 'user') {
+        // Honor cacheBoundary on user messages too — Anthropic doesn't
+        // restrict cache_control to a particular role.
+        if (m.cacheBoundary && !cachingDisabled()) {
+          return {
+            role: 'user' as const,
+            content: [{ type: 'text' as const, text: m.content, cache_control: CACHE_EPHEMERAL }],
+          } as Anthropic.MessageParam;
+        }
         return { role: 'user' as const, content: m.content };
       }
       const am = m as typeof m & { toolCalls?: Array<{ id: string; name: string; input: Record<string, unknown> }> };
@@ -174,6 +182,15 @@ export class AnthropicProvider implements Provider {
             content: r.content,
           })),
         };
+      }
+      // Plain assistant message (typically the compaction summary). Honor
+      // cacheBoundary so the historical context becomes a second cache
+      // breakpoint after the summary.
+      if (m.cacheBoundary && !cachingDisabled()) {
+        return {
+          role: 'assistant' as const,
+          content: [{ type: 'text' as const, text: m.content, cache_control: CACHE_EPHEMERAL }],
+        } as Anthropic.MessageParam;
       }
       return { role: 'assistant' as const, content: m.content };
     });

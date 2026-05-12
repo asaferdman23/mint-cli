@@ -252,6 +252,14 @@ export const MODELS: Record<ModelId, ModelInfo> = {
 export interface Message {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  /**
+   * Marks this message as a cache breakpoint for prompt-caching providers.
+   * Today only the compaction summary sets this (see brain/compact.ts).
+   * Anthropic translates it to a `cache_control: ephemeral` marker on the
+   * message's content block so the historical context cached after the
+   * summary survives across turns.
+   */
+  cacheBoundary?: boolean;
 }
 
 export interface ToolDefinition {

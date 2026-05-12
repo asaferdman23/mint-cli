@@ -141,7 +141,9 @@ The web dashboard at `usemint.dev/team` consumes this endpoint — that's its ow
 
 ## P5 — Cache-aware compaction (~2-3 hr)
 
-**Goal**: today `brain/compact.ts` rewrites the prompt when context gets long → invalidates the cached prefix → next turn pays fresh price for everything. Big cache wins evaporate exactly on long sessions, which is the case caching matters most.
+**Status: ✅ shipped in `0.3.0-beta.7` (2026-05-12)**. Audit found that the existing `brain/compact.ts` already preserves system + tools (only rewrites the messages array), so the primary cache breakpoint was never moving — just nobody had verified the invariant. Locked it in with a 30-turn unit test. The remaining win was a SECOND cache breakpoint after the compaction summary, via a new optional `Message.cacheBoundary` flag honored by the Anthropic provider. 3 new tests in `src/providers/__tests__/cache-aware-compaction.test.ts`.
+
+**Goal**: today `brain/compact.ts` rewrites the prompt when context gets long — audit whether it busts the cached prefix; if so, fix it.
 
 ### Tasks (`src/brain/compact.ts`)
 

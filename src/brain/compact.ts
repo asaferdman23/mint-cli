@@ -63,7 +63,11 @@ export async function maybeCompact(
     return buildFallbackSummary(middle);
   });
 
-  const summary: Message = { role: 'assistant', content: summaryText };
+  // Mark the summary as a cache breakpoint. Anthropic translates this to a
+  // second `cache_control: ephemeral` marker so the historical context
+  // (system + tools + summary) keeps being billed at cache-read rates
+  // across subsequent turns, not just system + tools.
+  const summary: Message = { role: 'assistant', content: summaryText, cacheBoundary: true };
   const nextMessages: Message[] = [first, summary, ...recent];
   const afterTokens = countTokensMany(nextMessages);
 
