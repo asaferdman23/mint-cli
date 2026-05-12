@@ -242,6 +242,8 @@ program
   .description('Per-session cost breakdown with cache hit rate + savings')
   .option('--since <days>', 'How many days back to include', '30')
   .option('--limit <n>', 'Max rows to show', '100')
+  .option('--by <field>', 'Group by: developer | model | day')
+  .option('--developer <id>', 'Filter to a single developer (email / username)')
   .option('--export <fmt>', 'Export format: csv | json')
   .action(async (opts) => {
     const { runCostReport } = await import('./commands/cost-report.js');

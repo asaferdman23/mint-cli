@@ -1,4 +1,5 @@
-import { homedir } from 'node:os';
+import { execSync } from 'node:child_process';
+import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { UsageDb } from './db.js';
 import type { UsageRecord } from './db.js';
@@ -12,6 +13,52 @@ export function calculateOpusCost(inputTokens: number, outputTokens: number): nu
 export function calculateSonnetCost(inputTokens: number, outputTokens: number): number {
   return (inputTokens / 1_000_000) * SONNET_INPUT_PRICE_PER_M +
          (outputTokens / 1_000_000) * SONNET_OUTPUT_PRICE_PER_M;
+}
+
+/**
+ * Resolve the developer identity for attribution. Order:
+ *   1. $MINT_DEVELOPER  (explicit override)
+ *   2. `git config user.email` (cached after first call)
+ *   3. os.userInfo().username
+ *   4. 'unknown'
+ */
+let _developerCache: string | null = null;
+export function resolveDeveloper(): string {
+  if (_developerCache) return _developerCache;
+  const envOverride = process.env.MINT_DEVELOPER?.trim();
+  if (envOverride) {
+    _developerCache = envOverride;
+    return _developerCache;
+  }
+  try {
+    const email = execSync('git config user.email', {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 500,
+    }).trim();
+    if (email) {
+      _developerCache = email;
+      return _developerCache;
+    }
+  } catch {
+    // git not installed or user.email not set
+  }
+  try {
+    const u = userInfo().username;
+    if (u) {
+      _developerCache = u;
+      return _developerCache;
+    }
+  } catch {
+    // fall through
+  }
+  _developerCache = 'unknown';
+  return _developerCache;
+}
+
+/** Test hook: reset the cache so the next call re-resolves. */
+export function _resetDeveloperCache(): void {
+  _developerCache = null;
 }
 
 export interface TrackInput {
@@ -58,6 +105,7 @@ export function createUsageTracker(sessionId: string, command: string) {
           taskPreview: input.taskPreview.slice(0, 80),
           latencyMs: input.latencyMs,
           costSonnet: input.costSonnet,
+          developer: resolveDeveloper(),
         };
         getDb().insert(record);
       } catch (e) {
@@ -130,6 +178,7 @@ export function trackBrainRun(summary: BrainRunSummary): void {
       costSonnet,
       cacheReadTokens: summary.cacheReadTokens,
       cacheCreationTokens: summary.cacheCreationTokens,
+      developer: resolveDeveloper(),
     };
     getDb().insert(record);
   } catch {

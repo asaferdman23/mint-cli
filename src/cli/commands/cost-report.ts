@@ -10,6 +10,8 @@ export interface CostReportOptions {
   since?: string; // days back
   export?: string; // 'csv' | 'json'
   limit?: string;
+  by?: string; // 'developer' | 'model' | 'day'
+  developer?: string; // filter to one developer
 }
 
 interface RowDerived {
@@ -67,12 +69,27 @@ export async function runCostReport(opts: CostReportOptions): Promise<void> {
 
   const db = getUsageDb();
   const all = db.getAll();
-  const rows = all.filter((r) => r.timestamp >= since).slice(0, limit);
+  let rows = all.filter((r) => r.timestamp >= since);
+  if (opts.developer) {
+    rows = rows.filter((r) => (r.developer ?? 'unknown') === opts.developer);
+  }
+  rows = rows.slice(0, limit);
+
+  // Grouped view (e.g. --by developer). Aggregates take priority over the
+  // per-run table; --export still works for grouped output.
+  if (opts.by) {
+    const validGroups = new Set(['developer', 'model', 'day']);
+    if (!validGroups.has(opts.by)) {
+      throw new Error(`--by must be one of: ${[...validGroups].join(', ')}`);
+    }
+    return renderGrouped(rows, opts.by as 'developer' | 'model' | 'day', { days, exportFmt: opts.export });
+  }
 
   if (opts.export === 'csv') {
     const headers = [
       'timestamp',
       'sessionId',
+      'developer',
       'model',
       'task',
       'inputTokens',
@@ -90,6 +107,7 @@ export async function runCostReport(opts: CostReportOptions): Promise<void> {
       const cells = [
         new Date(r.timestamp).toISOString(),
         r.sessionId,
+        r.developer ?? 'unknown',
         r.model,
         JSON.stringify(r.taskPreview),
         r.inputTokens,
@@ -199,4 +217,139 @@ export async function runCostReport(opts: CostReportOptions): Promise<void> {
   console.log(`    Opus, no-cache:    ${fmtUsd(opusNoCache)}    (cache + routing saved ${chalk.green(fmtUsd(Math.max(0, opusNoCache - totalCost)))} total)`);
   console.log('');
   console.log(chalk.dim('  Use --export csv or --export json for machine-readable output.'));
+}
+
+// ─── Grouped views ──────────────────────────────────────────────────────────
+
+interface GroupAgg {
+  key: string;
+  runs: number;
+  cost: number;
+  opusCost: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+}
+
+function groupKey(row: UsageRecord, by: 'developer' | 'model' | 'day'): string {
+  if (by === 'developer') return row.developer ?? 'unknown';
+  if (by === 'model') return row.model;
+  // by === 'day'
+  return new Date(row.timestamp).toISOString().slice(0, 10);
+}
+
+function renderGrouped(
+  rows: UsageRecord[],
+  by: 'developer' | 'model' | 'day',
+  ctx: { days: number; exportFmt?: string },
+): void {
+  const map = new Map<string, GroupAgg>();
+  for (const r of rows) {
+    const key = groupKey(r, by);
+    const cur = map.get(key) ?? {
+      key,
+      runs: 0,
+      cost: 0,
+      opusCost: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    };
+    cur.runs += 1;
+    cur.cost += r.cost;
+    cur.opusCost += r.opusCost;
+    cur.inputTokens += r.inputTokens;
+    cur.outputTokens += r.outputTokens;
+    cur.cacheReadTokens += r.cacheReadTokens ?? 0;
+    cur.cacheCreationTokens += r.cacheCreationTokens ?? 0;
+    map.set(key, cur);
+  }
+
+  const groups = [...map.values()].sort((a, b) => b.cost - a.cost);
+
+  if (ctx.exportFmt === 'csv') {
+    process.stdout.write(`${by},runs,inputTokens,outputTokens,cacheReadTokens,cacheCreationTokens,cost,opusCost,savings,cacheHitPct\n`);
+    for (const g of groups) {
+      const inputEq = g.inputTokens + g.cacheReadTokens + g.cacheCreationTokens;
+      const hit = inputEq > 0 ? (g.cacheReadTokens / inputEq) * 100 : 0;
+      const savings = Math.max(0, g.opusCost - g.cost);
+      process.stdout.write(
+        [
+          JSON.stringify(g.key),
+          g.runs,
+          g.inputTokens,
+          g.outputTokens,
+          g.cacheReadTokens,
+          g.cacheCreationTokens,
+          g.cost.toFixed(6),
+          g.opusCost.toFixed(6),
+          savings.toFixed(6),
+          hit.toFixed(2),
+        ].join(',') + '\n',
+      );
+    }
+    return;
+  }
+
+  if (ctx.exportFmt === 'json') {
+    process.stdout.write(JSON.stringify(groups, null, 2) + '\n');
+    return;
+  }
+
+  const label = by === 'developer' ? 'Developer' : by === 'model' ? 'Model' : 'Day';
+  console.log('');
+  console.log(chalk.bold.cyan(`  Cost Report — by ${by}, last ${ctx.days} days  `));
+  console.log(chalk.dim(`  ${groups.length} ${by}(s) · sorted by spend desc`));
+  console.log('');
+
+  console.log(
+    '  ' +
+      chalk.bold(truncate(label, 30)) + ' ' +
+      chalk.bold(truncate('Runs', 6)) + ' ' +
+      chalk.bold(truncate('In', 8)) + ' ' +
+      chalk.bold(truncate('Out', 8)) + ' ' +
+      chalk.bold(truncate('Cache R/W', 16)) + ' ' +
+      chalk.bold(truncate('Hit%', 6)) + ' ' +
+      chalk.bold(truncate('Cost', 10)) + ' ' +
+      chalk.bold(truncate('Saved', 10)),
+  );
+  console.log('  ' + chalk.dim('─'.repeat(100)));
+
+  let totalCost = 0;
+  let totalOpus = 0;
+  for (const g of groups) {
+    totalCost += g.cost;
+    totalOpus += g.opusCost;
+    const inputEq = g.inputTokens + g.cacheReadTokens + g.cacheCreationTokens;
+    const hit = inputEq > 0 ? (g.cacheReadTokens / inputEq) * 100 : 0;
+    const hitStr = hit > 0 ? `${hit.toFixed(0)}%` : '-';
+    const hitColored = hit >= 50 ? chalk.green(truncate(hitStr, 6))
+      : hit >= 20 ? chalk.yellow(truncate(hitStr, 6))
+      : chalk.dim(truncate(hitStr, 6));
+    const savings = Math.max(0, g.opusCost - g.cost);
+    const savingsStr = savings > 0 ? chalk.green(truncate(fmtUsd(savings), 10)) : truncate('-', 10);
+
+    console.log(
+      '  ' +
+        truncate(g.key, 30) + ' ' +
+        truncate(String(g.runs), 6) + ' ' +
+        truncate(fmtTokens(g.inputTokens), 8) + ' ' +
+        truncate(fmtTokens(g.outputTokens), 8) + ' ' +
+        truncate(`${fmtTokens(g.cacheReadTokens)}/${fmtTokens(g.cacheCreationTokens)}`, 16) + ' ' +
+        hitColored + ' ' +
+        truncate(fmtUsd(g.cost), 10) + ' ' +
+        savingsStr,
+    );
+  }
+
+  if (groups.length === 0) {
+    console.log(chalk.dim('  No data in this window.'));
+    return;
+  }
+
+  console.log('');
+  console.log(chalk.bold(`  Total: ${chalk.bold(fmtUsd(totalCost))} · vs Opus baseline ${fmtUsd(totalOpus)} · saved ${chalk.green(fmtUsd(Math.max(0, totalOpus - totalCost)))}`));
+  console.log('');
 }

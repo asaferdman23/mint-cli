@@ -6,6 +6,7 @@ export default defineConfig({
       'src/brain/__tests__/**/*.test.ts',
       'src/providers/__tests__/**/*.test.ts',
       'src/cli/__tests__/**/*.test.ts',
+      'src/usage/__tests__/**/*.test.ts',
     ],
     testTimeout: 10_000,
     clearMocks: true,

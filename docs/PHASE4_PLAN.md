@@ -65,6 +65,8 @@ Most likely causes, in order of probability:
 
 ## P2 — Per-developer attribution (~1.5 hr)
 
+**Status: ✅ shipped in `0.3.0-beta.5` (2026-05-12)**. `developer` column added via idempotent ALTER TABLE; `resolveDeveloper()` checks `$MINT_DEVELOPER` → git → OS; `mint cost-report --by developer|model|day` aggregates correctly; CSV/JSON export carries the column. 4 new tests in `src/usage/__tests__/developer-attribution.test.ts`.
+
 **Goal**: the client's #1 ask — "track per-developer AI spend." Today `usage.db` is per-machine and has no developer field.
 
 ### Tasks

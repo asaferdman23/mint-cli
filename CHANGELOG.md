@@ -2,6 +2,22 @@
 
 All notable changes to Mint CLI will be documented in this file.
 
+## [0.3.0-beta.5] - 2026-05-12
+
+### 👤 Per-developer cost attribution
+
+The second slice of the enterprise cost wedge. `mint cost-report` now answers “who spent what on AI this month?” — the #1 ask from the first enterprise client.
+
+- **Developer identity** auto-resolved from `$MINT_DEVELOPER` → `git config user.email` → OS username → `unknown`. Cached per-process so we don't shell out repeatedly.
+- **`usage.db` schema** gains a `developer` column (idempotent `ALTER TABLE`) plus `idx_usage_developer_ts` index. Old installs upgrade transparently.
+- **`mint cost-report --by developer`** — grouped table sorted by spend, showing runs / tokens / cache R-W / hit % / cost / savings per developer.
+- **`--by model`** and **`--by day`** — same grouping for cost-by-model and cost-over-time views.
+- **`--developer <id>`** — scope the per-session table to a single developer.
+- CSV export now includes a `developer` column; the grouped views also export to CSV / JSON.
+- **Verified prompt-cache markers via unit test** (`anthropic-caching.test.ts`, 4 assertions). System block + last tool carry `cache_control: ephemeral`; usage chunk carries cache token counts; `MINT_DISABLE_ANTHROPIC_CACHE=1` strips both.
+
+77/77 tests pass (+8 since beta.3). Build 466 KB.
+
 ## [0.3.0-beta.4] - 2026-05-12
 
 ### 💰 Anthropic prompt caching + per-session cost reporting

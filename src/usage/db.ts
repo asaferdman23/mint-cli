@@ -23,6 +23,8 @@ export interface UsageRecord {
   /** Anthropic prompt-cache stats (0 for non-Anthropic providers). */
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
+  /** Developer identity for per-dev attribution (defaults to 'unknown'). */
+  developer?: string;
 }
 
 export interface UsageSummary {
@@ -87,6 +89,17 @@ export class UsageDb {
         // Column already exists.
       }
     }
+    // Per-developer attribution column (added in 0.3.0-beta.5).
+    try {
+      this.db.exec(`ALTER TABLE usage ADD COLUMN developer TEXT NOT NULL DEFAULT 'unknown'`);
+    } catch {
+      // Column already exists.
+    }
+    try {
+      this.db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_developer_ts ON usage(developer, timestamp)`);
+    } catch {
+      // Index already exists.
+    }
   }
 
   insert(record: Omit<UsageRecord, 'id'>): void {
@@ -95,17 +108,18 @@ export class UsageDb {
         (timestamp, sessionId, command, model, provider, tier,
          inputTokens, outputTokens, cost, opusCost, savedAmount,
          routingReason, taskPreview, latencyMs, costSonnet,
-         cacheReadTokens, cacheCreationTokens)
+         cacheReadTokens, cacheCreationTokens, developer)
       VALUES
         (@timestamp, @sessionId, @command, @model, @provider, @tier,
          @inputTokens, @outputTokens, @cost, @opusCost, @savedAmount,
          @routingReason, @taskPreview, @latencyMs, @costSonnet,
-         @cacheReadTokens, @cacheCreationTokens)
+         @cacheReadTokens, @cacheCreationTokens, @developer)
     `);
     stmt.run({
       ...record,
       cacheReadTokens: record.cacheReadTokens ?? 0,
       cacheCreationTokens: record.cacheCreationTokens ?? 0,
+      developer: record.developer ?? 'unknown',
     });
   }
 
