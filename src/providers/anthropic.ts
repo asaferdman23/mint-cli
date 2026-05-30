@@ -16,12 +16,43 @@ const MODEL_MAP: Partial<Record<ModelId, string>> = {
  * We mark the LAST tool only — the SDK caches "everything up to and
  * including" the marker, so a single trailing marker covers the full tools
  * array without bloating the request.
+ *
+ * PR8: when `MINT_ANTHROPIC_CACHE_1H=1` (or config `anthropic.cache1h` is
+ * true), we opt into the `extended-cache-ttl-2025-04-11` beta by sending the
+ * `anthropic-beta` header and setting `ttl: "1h"` on every cache_control
+ * block. The 1-hour beta is useful for paused sessions: 5-min TTL races a
+ * lunch break and the user pays the full cache-write cost on resume.
+ * Pricing: 1h writes ~2× the 5-min write cost, reads remain ~10% of fresh
+ * tokens. See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
+ * for current numbers.
  */
 const CACHE_EPHEMERAL = { type: 'ephemeral' as const };
+const CACHE_EPHEMERAL_1H = { type: 'ephemeral' as const, ttl: '1h' as const };
+const EXTENDED_CACHE_TTL_BETA = 'extended-cache-ttl-2025-04-11';
 
-/** True if the env var explicitly disables prompt caching (escape hatch). */
+/** True if the env var explicitly disables prompt caching (escape hatch).
+ *  This wins over the 1h opt-in below — disable beats enable. */
 function cachingDisabled(): boolean {
   return process.env.MINT_DISABLE_ANTHROPIC_CACHE === '1';
+}
+
+/** True if the 1-hour extended cache TTL beta should be requested. Honors
+ *  the env flag first, then the persistent config key for parity with how
+ *  other Mint feature flags work. Ignored when caching is disabled. */
+function cache1hEnabled(): boolean {
+  if (cachingDisabled()) return false;
+  if (process.env.MINT_ANTHROPIC_CACHE_1H === '1') return true;
+  try {
+    return config.get('anthropic')?.cache1h === true;
+  } catch {
+    return false;
+  }
+}
+
+/** The cache_control object emitted on every block, parameterized by the
+ *  current 1h opt-in state. */
+function cacheMarker(): typeof CACHE_EPHEMERAL | typeof CACHE_EPHEMERAL_1H {
+  return cache1hEnabled() ? CACHE_EPHEMERAL_1H : CACHE_EPHEMERAL;
 }
 
 export class AnthropicProvider implements Provider {
@@ -56,9 +87,11 @@ export class AnthropicProvider implements Provider {
     const otherMessages = request.messages.filter(m => m.role !== 'system');
 
     // Wrap system as a cacheable block when present. Anthropic bills the
-    // marked prefix at ~10% on subsequent calls within ~5 minutes.
+    // marked prefix at ~10% on subsequent calls within ~5 minutes (or 1h
+    // when the extended-cache-ttl-2025-04-11 beta is opted in).
+    const marker = cacheMarker();
     const systemParam = systemMessage?.content && !cachingDisabled()
-      ? [{ type: 'text' as const, text: systemMessage.content, cache_control: CACHE_EPHEMERAL }]
+      ? [{ type: 'text' as const, text: systemMessage.content, cache_control: marker }]
       : systemMessage?.content;
 
     const response = await client.messages.create({
@@ -69,7 +102,7 @@ export class AnthropicProvider implements Provider {
         role: m.role as 'user' | 'assistant',
         content: m.content,
       })),
-    });
+    }, cache1hEnabled() ? { headers: { 'anthropic-beta': EXTENDED_CACHE_TTL_BETA } } : undefined);
 
     const latency = Date.now() - startTime;
     const inputTokens = response.usage.input_tokens;
@@ -144,14 +177,34 @@ export class AnthropicProvider implements Provider {
       request.messages.find(m => m.role === 'system')?.content;
     const otherMessages = request.messages.filter(m => m.role !== 'system');
 
+    // Cache-budget math. Anthropic allows max 4 `cache_control: ephemeral`
+    // breakpoints per request. Allocation when systemTiers is in play:
+    //   1× base (always present)         + 1× project (if AGENT.md or MINT.md exists)
+    // + 1× dynamic (if retrieved files or deep-plan)
+    // + 1× tools (last tool, always when tools present)
+    // = up to 4 breakpoints, exactly at the SDK ceiling.
+    //
+    // If a compaction `cacheBoundary` ALSO fires on a message AND all three
+    // system tiers are populated, we would land at 5 → over the limit. The
+    // system tiers are the more stable signal (project + base survive every
+    // turn; the compaction summary only helps until the next compaction), so
+    // we drop the message-level cache_control in that case.
+    const tiers = request.systemTiers;
+    const tierCount = tiers
+      ? 1 + (tiers.project ? 1 : 0) + (tiers.dynamic ? 1 : 0)
+      : 0;
+    const suppressMessageCacheBoundary = !cachingDisabled() && tierCount >= 3;
+    const marker = cacheMarker();
+
     const anthropicMessages: Anthropic.MessageParam[] = otherMessages.map(m => {
       if (m.role === 'user') {
         // Honor cacheBoundary on user messages too — Anthropic doesn't
-        // restrict cache_control to a particular role.
-        if (m.cacheBoundary && !cachingDisabled()) {
+        // restrict cache_control to a particular role. Suppressed when the
+        // system-tier budget already consumes 3 breakpoints (see comment above).
+        if (m.cacheBoundary && !cachingDisabled() && !suppressMessageCacheBoundary) {
           return {
             role: 'user' as const,
-            content: [{ type: 'text' as const, text: m.content, cache_control: CACHE_EPHEMERAL }],
+            content: [{ type: 'text' as const, text: m.content, cache_control: marker }],
           } as Anthropic.MessageParam;
         }
         return { role: 'user' as const, content: m.content };
@@ -185,11 +238,12 @@ export class AnthropicProvider implements Provider {
       }
       // Plain assistant message (typically the compaction summary). Honor
       // cacheBoundary so the historical context becomes a second cache
-      // breakpoint after the summary.
-      if (m.cacheBoundary && !cachingDisabled()) {
+      // breakpoint after the summary — unless we'd blow the 4-breakpoint
+      // budget (see suppressMessageCacheBoundary above).
+      if (m.cacheBoundary && !cachingDisabled() && !suppressMessageCacheBoundary) {
         return {
           role: 'assistant' as const,
-          content: [{ type: 'text' as const, text: m.content, cache_control: CACHE_EPHEMERAL }],
+          content: [{ type: 'text' as const, text: m.content, cache_control: marker }],
         } as Anthropic.MessageParam;
       }
       return { role: 'assistant' as const, content: m.content };
@@ -204,23 +258,50 @@ export class AnthropicProvider implements Provider {
       // Tag the LAST tool so Anthropic caches the entire tools array prefix.
       // Tool schemas are static across a session so this is pure savings.
       if (i === arr.length - 1 && !cachingDisabled()) {
-        (tool as unknown as { cache_control?: typeof CACHE_EPHEMERAL }).cache_control = CACHE_EPHEMERAL;
+        (tool as unknown as { cache_control?: typeof marker }).cache_control = marker;
       }
       return tool;
     });
 
-    // System prompt as cacheable block (see complete()).
-    const systemParam = systemPrompt && !cachingDisabled()
-      ? [{ type: 'text' as const, text: systemPrompt, cache_control: CACHE_EPHEMERAL }]
-      : systemPrompt;
+    // System prompt as cacheable block(s). When `systemTiers` is supplied we
+    // emit one text block per non-null tier, each with its own cache_control
+    // marker — yielding up to 3 system breakpoints (base + project + dynamic)
+    // ordered from most-stable to most-dynamic so prefix caching survives
+    // turn-to-turn churn in the dynamic block.
+    let systemParam: unknown;
+    if (cachingDisabled()) {
+      // Escape hatch: send as plain string with no markers anywhere.
+      systemParam = tiers
+        ? [tiers.base, tiers.project, tiers.dynamic].filter((s): s is string => !!s).join('\n\n')
+        : systemPrompt;
+    } else if (tiers) {
+      const blocks: Array<{ type: 'text'; text: string; cache_control: typeof marker }> = [
+        { type: 'text', text: tiers.base, cache_control: marker },
+      ];
+      if (tiers.project) {
+        blocks.push({ type: 'text', text: tiers.project, cache_control: marker });
+      }
+      if (tiers.dynamic) {
+        blocks.push({ type: 'text', text: tiers.dynamic, cache_control: marker });
+      }
+      systemParam = blocks;
+    } else if (systemPrompt) {
+      systemParam = [{ type: 'text' as const, text: systemPrompt, cache_control: marker }];
+    } else {
+      systemParam = undefined;
+    }
 
+    const useCache1h = cache1hEnabled();
     const stream = client.messages.stream({
       model: modelString,
       max_tokens: request.maxTokens ?? 8192,
       system: systemParam as unknown as string,
       messages: anthropicMessages,
       tools,
-    }, { signal: request.signal });
+    }, {
+      signal: request.signal,
+      ...(useCache1h ? { headers: { 'anthropic-beta': EXTENDED_CACHE_TTL_BETA } } : {}),
+    });
 
     for await (const event of stream) {
       if (event.type === 'content_block_delta') {

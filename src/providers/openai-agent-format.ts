@@ -11,7 +11,13 @@ type AgentMessage = {
 export function getCombinedSystemPrompt(request: CompletionRequest): string | undefined {
   const parts: string[] = [];
 
-  if (request.systemPrompt?.trim()) {
+  // Prefer structured tiers when available — providers without cache support
+  // get the same prompt text, just flattened with no breakpoint metadata.
+  if (request.systemTiers) {
+    const { base, project, dynamic } = request.systemTiers;
+    const flat = [base, project, dynamic].filter((s): s is string => !!s && !!s.trim()).join('\n\n');
+    if (flat) parts.push(flat);
+  } else if (request.systemPrompt?.trim()) {
     parts.push(request.systemPrompt.trim());
   }
 

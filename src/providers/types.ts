@@ -243,8 +243,25 @@ export interface CompletionRequest {
   sessionId?: string;
   tools?: ToolDefinition[];
   systemPrompt?: string;
+  /**
+   * Structured system prompt tiers. When provided, providers that support
+   * prompt caching (Anthropic) place a `cache_control: ephemeral` breakpoint
+   * after each non-null tier (base → project → dynamic). Providers without
+   * cache support flatten to a single system string.
+   *
+   * Fallback: when `systemTiers` is absent, providers use `systemPrompt`.
+   */
+  systemTiers?: SystemTiers;
   /** Provider-specific options (e.g. Grok reasoning toggle, Mistral reasoning_effort). */
   providerOptions?: Record<string, unknown>;
+}
+
+/** Mirror of `PromptTiers` in `src/brain/prompt-tiers.ts`. Duplicated here to
+ *  keep the providers layer free of brain imports. */
+export interface SystemTiers {
+  base: string;
+  project: string | null;
+  dynamic: string | null;
 }
 
 export interface CompletionResponse {

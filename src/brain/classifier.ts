@@ -63,6 +63,10 @@ export interface ClassifyFeatures {
   projectFileCount?: number;
   /** Primary language of the project, if known. */
   language?: string;
+  /** Top languages by project footprint, if known. */
+  topLanguages?: string[];
+  /** Framework or platform hints detected from project files. */
+  frameworks?: string[];
   /** BM25 top file paths — informs complexity (more matches → broader scope). */
   topFiles?: string[];
   /** Recent user turns (last 2) — gives context for chat follow-ups. */
@@ -96,16 +100,40 @@ const QUESTION_PREFIXES = /^(help|what|why|how|where|when|who|tell me|show me)\b
 const EDIT_VERBS = /\b(add|change|fix|update|refactor|create|remove|delete|rename|implement|write|make|build|modify|edit|set|apply)\b/i;
 // An explicit explain verb anywhere wins over a question prefix, as long as
 // there's no edit verb in the task.
-const EXPLAIN_VERB = /\b(explain|describe|summari[sz]e|walk me through)\b/i;
+const EXPLAIN_VERB = /\b(explain|describe|summari[sz]e|teach|walk me through)\b/i;
+const PRODUCT_PLANNING_REQUEST = /\b(plan|design|architect|brainstorm|scope)\b[\s\S]{0,80}\b(app|application|product|feature|mvp|project|website|site|tool)\b/i;
+const ACTION_INTENT_VERBS = /\b(add|change|fix|update|refactor|create|remove|delete|rename|implement|write|make|build|modify|edit|set|apply|plan|design|architect|brainstorm|scope|review|audit|check|debug|diagnose|run|scaffold|bootstrap|migrate|restructure|rewrite|overhaul|consolidate|split|extract)\b/i;
+const DEEP_QUESTION_HINTS = /\b(should|best|better|improve|recommend|recommendation|trade-?off|architecture|architectural|strategy|approach|design|plan|complex|reliable|reliability|accurate|accuracy|why did|how would|how should|what can)\b/i;
+const CONTEXTUAL_FOLLOWUP_HINTS = /\b(it|that|this|these|those|there|same|previous|above|option|second|first|one|do that|go deeper|continue)\b/i;
+
+export interface PreclassifyOptions {
+  hasRecentContext?: boolean;
+}
 
 /** Cheap pattern match for obvious questions and explain requests. */
-export function preclassify(task: string): ClassifyDecision | null {
+export function preclassify(task: string, options: PreclassifyOptions = {}): ClassifyDecision | null {
   const trimmed = task.trim();
   if (!trimmed) return null;
 
   const isQuestion = QUESTION_PREFIXES.test(trimmed) || trimmed.endsWith('?');
   const isExplain = EXPLAIN_VERB.test(trimmed);
   const hasEditVerb = EDIT_VERBS.test(trimmed);
+  const hasActionIntent = ACTION_INTENT_VERBS.test(trimmed) || PRODUCT_PLANNING_REQUEST.test(trimmed);
+  const hasDeepQuestionHint = DEEP_QUESTION_HINTS.test(trimmed);
+  const isContextualFollowup = options.hasRecentContext === true && CONTEXTUAL_FOLLOWUP_HINTS.test(trimmed);
+
+  if (PRODUCT_PLANNING_REQUEST.test(trimmed) && !hasEditVerb) {
+    return {
+      kind: 'scaffold',
+      complexity: 'moderate',
+      estFilesTouched: 4,
+      needsPlan: true,
+      needsApproval: 'none',
+      suggestedModelKey: 'scaffold',
+      reasoning: 'product/app planning request',
+      confidence: 0.85,
+    };
+  }
 
   if (isExplain && !hasEditVerb) {
     return {
@@ -120,7 +148,7 @@ export function preclassify(task: string): ClassifyDecision | null {
     };
   }
 
-  if (isQuestion && !hasEditVerb) {
+  if (isQuestion && !hasActionIntent && !hasDeepQuestionHint && !isContextualFollowup) {
     return {
       kind: 'question',
       complexity: 'trivial',
@@ -147,6 +175,9 @@ const REFACTOR_VERBS = /\b(refactor|rename|extract|inline|reorganize|consolidate
 const REVIEW_VERBS = /\b(review|audit|check|look at|sanity check)\b/i;
 
 function detectKind(task: string): TaskKind {
+  const isQuestion = QUESTION_PREFIXES.test(task) || task.trim().endsWith('?');
+  const hasActionIntent = ACTION_INTENT_VERBS.test(task) || PRODUCT_PLANNING_REQUEST.test(task);
+
   // Refactor verbs are strongly indicative — check before multi-file hints so
   // "refactor across the codebase" stays refactor (not edit_multi).
   if (REFACTOR_VERBS.test(task)) return 'refactor';
@@ -160,6 +191,7 @@ function detectKind(task: string): TaskKind {
   if (SCAFFOLD_VERBS.test(task) && /^\s*(create|scaffold|bootstrap)\b/i.test(task)) return 'scaffold';
   if (EDIT_VERBS.test(task)) return 'edit_small';
   if (EXPLAIN_VERB.test(task)) return 'explain';
+  if (isQuestion && !hasActionIntent) return 'question';
   return 'edit_small';
 }
 
@@ -172,6 +204,9 @@ function scoreComplexity(features: ClassifyFeatures, weights: Record<string, num
     (weights.verbComplex ?? 0) * vec.verbComplex +
     (weights.hasMultipleFiles ?? 0) * vec.hasMultipleFiles +
     (weights.mentionsTest ?? 0) * vec.mentionsTest +
+    (weights.deepQuestion ?? 0) * vec.deepQuestion +
+    (weights.topFileMention ?? 0) * vec.topFileMention +
+    (weights.contextualFollowup ?? 0) * vec.contextualFollowup +
     (weights.pastSuccess ?? 0) * vec.pastSuccess;
 
   // Squash to 0..1 via sigmoid so individual weights don't dominate.
@@ -187,6 +222,7 @@ export function extractClassifierFeatures(features: ClassifyFeatures): Record<st
   const task = features.task.toLowerCase();
   const words = task.split(/\s+/).filter(Boolean).length;
   const fileCount = features.projectFileCount ?? 0;
+  const hasRecentContext = (features.recentUserTurns?.length ?? 0) > 0;
   const pastSuccessRate = features.pastOutcomes?.length
     ? features.pastOutcomes.filter((o) => o.success).length / features.pastOutcomes.length
     : 0.5;
@@ -196,6 +232,9 @@ export function extractClassifierFeatures(features: ClassifyFeatures): Record<st
     verbComplex: COMPLEX_VERBS.test(task) ? 1 : 0,
     hasMultipleFiles: MULTI_FILE_HINTS.test(task) ? 1 : 0,
     mentionsTest: TEST_MENTION.test(task) ? 1 : 0,
+    deepQuestion: DEEP_QUESTION_HINTS.test(task) ? 1 : 0,
+    topFileMention: mentionsTopFile(task, features.topFiles) ? 1 : 0,
+    contextualFollowup: hasRecentContext && CONTEXTUAL_FOLLOWUP_HINTS.test(task) ? 1 : 0,
     pastSuccess: pastSuccessRate,
   };
 }
@@ -211,8 +250,19 @@ function complexityIsHarderThan(a: Complexity, b: Complexity): boolean {
   return COMPLEXITIES.indexOf(a) > COMPLEXITIES.indexOf(b);
 }
 
+function mentionsTopFile(task: string, topFiles?: string[]): boolean {
+  if (!topFiles?.length) return false;
+  const normalized = task.toLowerCase();
+  return topFiles.some((file) => {
+    const lower = file.toLowerCase();
+    const basename = lower.split('/').pop() ?? lower;
+    const stem = basename.replace(/\.[^.]+$/, '');
+    return normalized.includes(lower) || normalized.includes(basename) || (stem.length >= 3 && normalized.includes(stem));
+  });
+}
+
 export function fallbackClassify(features: ClassifyFeatures, config: ClassifierConfig): ClassifyDecision {
-  const kind = detectKind(features.task);
+  let kind = detectKind(features.task);
   let complexity = bucketComplexity(scoreComplexity(features, config.weights));
 
   // If a near-identical past task was complex, bump this one up to at least moderate.
@@ -221,6 +271,20 @@ export function fallbackClassify(features: ClassifyFeatures, config: ClassifierC
   );
   if (priorComplex && !complexityIsHarderThan(complexity, 'simple')) {
     complexity = priorComplex.complexity;
+  }
+
+  const priorSuccessfulSmallEdit = features.pastOutcomes?.find((o) =>
+    o.success && o.kind === 'edit_small' && !complexityIsHarderThan(o.complexity, 'simple'),
+  );
+  if (
+    priorSuccessfulSmallEdit &&
+    kind !== 'debug' &&
+    kind !== 'refactor' &&
+    kind !== 'scaffold' &&
+    !COMPLEX_VERBS.test(features.task)
+  ) {
+    kind = 'edit_small';
+    if (complexityIsHarderThan(complexity, 'simple')) complexity = 'simple';
   }
 
   const estFilesTouched =
@@ -278,6 +342,8 @@ function loadClassifierPrompt(): string {
 function formatFeatures(features: ClassifyFeatures): string {
   const lines: string[] = [`TASK: ${features.task}`];
   if (features.language) lines.push(`LANGUAGE: ${features.language}`);
+  if (features.topLanguages?.length) lines.push(`TOP_LANGUAGES: ${features.topLanguages.slice(0, 5).join(', ')}`);
+  if (features.frameworks?.length) lines.push(`FRAMEWORKS: ${features.frameworks.slice(0, 6).join(', ')}`);
   if (features.projectFileCount !== undefined) lines.push(`PROJECT_FILE_COUNT: ${features.projectFileCount}`);
   if (features.topFiles?.length) {
     lines.push(`BM25_TOP_FILES:\n${features.topFiles.slice(0, 5).map((f) => `  - ${f}`).join('\n')}`);
@@ -368,7 +434,7 @@ export async function classify(
   features: ClassifyFeatures,
   options: ClassifyOptions,
 ): Promise<ClassifyResult> {
-  const pre = preclassify(features.task);
+  const pre = preclassify(features.task, { hasRecentContext: (features.recentUserTurns?.length ?? 0) > 0 });
   if (pre) return { ...pre, source: 'precheck' };
 
   if (options.skipLlm) {

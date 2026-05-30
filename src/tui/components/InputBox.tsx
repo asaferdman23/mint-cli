@@ -19,6 +19,16 @@ interface InputBoxProps {
   isRouting: boolean;
   contextChips?: ContextChip[] | null;
   currentActivity?: CurrentActivity | null;
+  inspectorHint?: string;
+  /** Recall an older history entry. Returns the value, or null for no-op. */
+  onHistoryPrev?: (currentValue: string) => string | null;
+  /** Recall a newer history entry. Returns the value (possibly '') or null. */
+  onHistoryNext?: () => string | null;
+  /** Signal that the user typed/edited — leave history-recall mode. */
+  onHistoryExit?: () => void;
+  /** When true, suspend the input's keyboard handler so an overlay (e.g. the
+   *  approval dialog) can claim y/n/a/Enter/Esc without conflict. */
+  isPaused?: boolean;
 }
 
 function estimateTokens(text: string): number {
@@ -33,6 +43,11 @@ export function InputBox({
   isRouting,
   contextChips,
   currentActivity,
+  inspectorHint,
+  onHistoryPrev,
+  onHistoryNext,
+  onHistoryExit,
+  isPaused = false,
 }: InputBoxProps): React.ReactElement {
   const tokenEst = estimateTokens(value);
   const [cursorOffset, setCursorOffset] = useState(0);
@@ -84,6 +99,7 @@ export function InputBox({
         const newText = value.slice(0, cursorOffset - 1) + value.slice(cursorOffset);
         onChange(newText);
         setCursorOffset(cursorOffset - 1);
+        onHistoryExit?.();
         return;
       }
 
@@ -97,11 +113,33 @@ export function InputBox({
       }
 
       if (key.upArrow) {
-        if (hasAutocomplete) setAutocompleteIndex((p) => Math.max(0, p - 1));
+        if (hasAutocomplete) {
+          setAutocompleteIndex((p) => Math.max(0, p - 1));
+          return;
+        }
+        // History recall — only when the input is empty so cursor-up inside
+        // a partially-typed prompt is preserved for future multiline edit.
+        if (value.length === 0 && onHistoryPrev) {
+          const recalled = onHistoryPrev(value);
+          if (recalled !== null) {
+            onChange(recalled);
+            setCursorOffset(recalled.length);
+          }
+        }
         return;
       }
       if (key.downArrow) {
-        if (hasAutocomplete) setAutocompleteIndex((p) => Math.min(autocompleteMatches.length - 1, p + 1));
+        if (hasAutocomplete) {
+          setAutocompleteIndex((p) => Math.min(autocompleteMatches.length - 1, p + 1));
+          return;
+        }
+        if (onHistoryNext) {
+          const recalled = onHistoryNext();
+          if (recalled !== null) {
+            onChange(recalled);
+            setCursorOffset(recalled.length);
+          }
+        }
         return;
       }
 
@@ -129,9 +167,10 @@ export function InputBox({
         const newText = value.slice(0, cursorOffset) + input + value.slice(cursorOffset);
         onChange(newText);
         setCursorOffset(cursorOffset + input.length);
+        onHistoryExit?.();
       }
     },
-    { isActive: !isBusy && !isRouting },
+    { isActive: !isRouting && !isPaused },
   );
 
   // Sync cursor when value is cleared externally (after submit)
@@ -146,37 +185,9 @@ export function InputBox({
   if (isRouting) {
     return (
       <Box flexDirection="column">
-        <Box borderStyle="single" borderColor="yellow" paddingX={1} flexDirection="row" gap={1}>
+        <Box borderStyle="round" borderColor="yellow" paddingX={1} flexDirection="row" gap={1}>
           <Text color="yellow"><Spinner type="dots" /></Text>
           <Text dimColor>Routing to best model…</Text>
-        </Box>
-      </Box>
-    );
-  }
-
-  if (isBusy) {
-    const showElapsed = elapsedSec >= THINKING_ELAPSED_THRESHOLD_SEC;
-    const activityLabel = currentActivity?.label ?? 'Thinking…';
-    return (
-      <Box flexDirection="column">
-        <Box borderStyle="single" borderColor="cyan" paddingX={1} flexDirection="column">
-          <Box flexDirection="row" gap={1}>
-            <Text color="cyan"><Spinner type="dots" /></Text>
-            <Text bold>{activityLabel}</Text>
-            {showElapsed && <Text dimColor>({elapsedSec}s) · Ctrl+C to cancel</Text>}
-          </Box>
-          {currentActivity?.detail && (
-            <Box paddingLeft={2}>
-              <Text dimColor>↳ {currentActivity.detail}</Text>
-            </Box>
-          )}
-          {currentActivity?.lastResult && (
-            <Box paddingLeft={2}>
-              <Text color={currentActivity.lastResult.ok ? 'green' : 'red'}>
-                {currentActivity.lastResult.ok ? '✓' : '✗'} {currentActivity.lastResult.text}
-              </Text>
-            </Box>
-          )}
         </Box>
       </Box>
     );
@@ -186,9 +197,23 @@ export function InputBox({
   const before = value.slice(0, cursorOffset);
   const at = value[cursorOffset] ?? ' ';
   const after = value.slice(cursorOffset + 1);
+  const showElapsed = elapsedSec >= THINKING_ELAPSED_THRESHOLD_SEC;
+  const activityLabel = currentActivity?.label ?? 'Thinking…';
+  const placeholder = isBusy
+    ? 'Type to queue your next prompt…'
+    : 'Ask anything… or try "add a pricing section"';
 
   return (
     <Box flexDirection="column">
+      {isBusy && (
+        <Box paddingX={1} flexDirection="row" gap={1}>
+          <Text color="cyan"><Spinner type="dots" /></Text>
+          <Text bold>{activityLabel}</Text>
+          {inspectorHint && <Text dimColor>({inspectorHint})</Text>}
+          {showElapsed && <Text dimColor>({elapsedSec}s) · Esc to stop · Ctrl+C to exit</Text>}
+        </Box>
+      )}
+
       {contextChips && contextChips.length > 0 && (
         <ContextChips chips={contextChips} />
       )}
@@ -201,10 +226,10 @@ export function InputBox({
         />
       )}
 
-      <Box borderStyle="single" borderColor="cyan" paddingX={1} flexDirection="row">
+      <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="row">
         <Box flexGrow={1}>
           {value.length === 0 ? (
-            <Text dimColor>Ask anything… or try "add a pricing section"<Text inverse> </Text></Text>
+            <Text dimColor>{placeholder}<Text inverse> </Text></Text>
           ) : (
             <Text>
               {before}

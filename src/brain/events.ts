@@ -67,7 +67,7 @@ export interface BrainResult {
   success: boolean;
 }
 
-export type ApprovalReason = 'tool' | 'diff' | 'iteration';
+export type ApprovalReason = 'tool' | 'diff' | 'iteration' | 'spend_limit';
 
 export type AgentEvent =
   | { type: 'session.start'; sessionId: string; mode: Mode; task: string; cwd: string; ts: number }
@@ -77,6 +77,7 @@ export type AgentEvent =
       kind: TaskKind;
       complexity: Complexity;
       model: ModelId;
+      planModel?: ModelId;
       estFilesTouched: number;
       needsPlan: boolean;
       needsApproval: 'none' | 'per_diff' | 'per_tool';
@@ -164,6 +165,16 @@ export type AgentEvent =
       /** When set on a `build` phase, identifies which deep-mode subtask this
        *  belongs to. Lets `mint trace` render plan→build hierarchy. */
       stepId?: string;
+      ts: number;
+    }
+  | {
+      type: 'loop.detected';
+      sessionId: string;
+      /** The tool that was being repeated. */
+      tool: string;
+      /** How many identical consecutive calls were observed. */
+      count: number;
+      iteration: number;
       ts: number;
     }
   | { type: 'warn'; sessionId: string; message: string; ts: number }

@@ -224,7 +224,7 @@ export async function* streamAgent(request: CompletionRequest): AsyncIterable<Ag
 
   throw new Error(
     'No provider with a direct API key supports agent mode. ' +
-    'Add a key with: mint config:set providers.deepseek <key>'
+    'Add a key with: mint config:set providers.gemini <key>'
   );
 }
 

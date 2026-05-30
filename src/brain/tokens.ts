@@ -3,7 +3,7 @@
  *
  * Replaces char/4 heuristic scattered across the codebase. Every model that
  * isn't a raw OpenAI model uses cl100k_base as a fast, deterministic proxy —
- * it over-estimates DeepSeek/Grok/Gemini by ~5% which is fine for budgeting.
+ * it over-estimates Grok/Gemini by ~5% which is fine for budgeting.
  *
  * Encoders are cached at module scope; first call pays ~80ms cold-start.
  */

@@ -107,12 +107,43 @@ function closestMatch(input: string, candidates: string[]): string | null {
   return best?.key ?? null;
 }
 
+/** Dot-path keys handled by setPath() instead of the typed top-level set(). */
+const DOT_PATH_KEYS = new Set([
+  'anthropic.cache1h',
+  'memory.extract.enabled',
+  'memory.extract.kinds',
+  'memory.retrieval.k',
+  'memory.retrieval.halfLifeDays',
+]);
+
 export async function setConfig(key: string, value: string): Promise<void> {
+  // ── Dot-path nested keys (PR8: memory + anthropic.cache1h) ───────────────
+  if (DOT_PATH_KEYS.has(key)) {
+    let coerced: unknown = value;
+    if (value === 'true' || value === 'false') {
+      coerced = value === 'true';
+    } else if (key === 'memory.extract.kinds') {
+      coerced = value
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+    } else if (!isNaN(Number(value)) && value.trim() !== '') {
+      coerced = Number(value);
+    }
+    try {
+      config.setPath(key, coerced);
+      console.log(chalk.green(`  ✓ Set ${key} = ${value}`));
+    } catch (err) {
+      console.log(chalk.red(`  Could not save: ${(err as Error).message}`));
+    }
+    return;
+  }
+
   // ── Provider keys ────────────────────────────────────────────────────────
   if (key.startsWith('providers.')) {
     const provider = key.split('.')[1];
     if (!provider) {
-      console.log(chalk.red('  Missing provider name. Example: ') + chalk.cyan('mint config:set providers.deepseek <key>'));
+      console.log(chalk.red('  Missing provider name. Example: ') + chalk.cyan('mint config:set providers.gemini <key>'));
       return;
     }
     if (!VALID_PROVIDERS.has(provider)) {

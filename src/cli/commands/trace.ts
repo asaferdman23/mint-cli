@@ -71,7 +71,10 @@ export function runTraceList(limit = 20): void {
 
 // ─── Replay ─────────────────────────────────────────────────────────────────
 
-export function runTraceReplay(sessionIdPrefix: string): void {
+export async function runTraceReplay(
+  sessionIdPrefix: string,
+  options: { withMemory?: boolean } = {},
+): Promise<void> {
   const dir = traceDir();
   const match = findSession(dir, sessionIdPrefix);
   if (!match) {
@@ -85,7 +88,159 @@ export function runTraceReplay(sessionIdPrefix: string): void {
   console.log(chalk.cyan(`  Session ${chalk.bold(basename(match))}`));
   console.log('');
   for (const event of events) printEvent(event);
+
+  if (options.withMemory) {
+    await renderMemorySection(events);
+  }
   console.log('');
+}
+
+interface RetrievedMemoryEntry {
+  id: number;
+  kind: string;
+  text: string;
+  score: number;
+  components: { bm25?: number; recency: number; confidence?: number };
+}
+
+interface RetrievalLogEntry {
+  ts: number;
+  task?: string;
+  memories: RetrievedMemoryEntry[];
+}
+
+/** Pluck `memory.retrieved` events out of the raw JSONL stream. These are
+ *  written by `loop.ts` via `session.trace.write({ type: 'memory.retrieved' …})`
+ *  and intentionally NOT modelled by `AgentEvent` — so we read the raw lines. */
+function loadRetrievalLog(tracePath: string): RetrievalLogEntry[] {
+  let raw: string;
+  try {
+    raw = readFileSync(tracePath, 'utf-8');
+  } catch {
+    return [];
+  }
+  const entries: RetrievalLogEntry[] = [];
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const obj = JSON.parse(line) as {
+        type?: string;
+        ts?: number;
+        task?: string;
+        memories?: RetrievedMemoryEntry[];
+      };
+      if (obj && obj.type === 'memory.retrieved' && Array.isArray(obj.memories)) {
+        entries.push({
+          ts: typeof obj.ts === 'number' ? obj.ts : 0,
+          task: obj.task,
+          memories: obj.memories,
+        });
+      }
+    } catch {
+      /* skip malformed */
+    }
+  }
+  return entries;
+}
+
+/** Render a "Memories" footer.
+ *  PR7 — if the trace contains `memory.retrieved` events, render a per-turn
+ *  retrieval log with fused scores. Falls back to the PR6 behaviour (dump of
+ *  the live stores) when no retrieval events are present. */
+async function renderMemorySection(events: AgentEvent[]): Promise<void> {
+  let cwd: string | undefined;
+  let tracePath: string | undefined;
+  for (const e of events) {
+    if (e.type === 'session.start') {
+      cwd = e.cwd;
+      tracePath = join(traceDir(), `${e.sessionId}.jsonl`);
+      break;
+    }
+  }
+
+  const retrievals = tracePath ? loadRetrievalLog(tracePath) : [];
+
+  console.log('');
+  console.log(chalk.cyan('  Memories'));
+  console.log('');
+
+  if (retrievals.length > 0) {
+    console.log(
+      chalk.dim(
+        `  ═══ Memory retrieval log (${retrievals.length} retrieval${retrievals.length === 1 ? '' : 's'} this session) ═══`,
+      ),
+    );
+    console.log('');
+    let n = 1;
+    for (const ret of retrievals) {
+      const time = new Date(ret.ts).toISOString().slice(11, 19);
+      const taskLabel = ret.task ? ` ${chalk.dim(`(task: "${truncate(ret.task, 60)}")`)}` : '';
+      console.log(`  ${chalk.bold(`Retrieval ${n}`)} ${chalk.dim('@')} ${chalk.dim(time)}${taskLabel}`);
+      if (ret.memories.length === 0) {
+        console.log(chalk.dim('    (no memories)'));
+      } else {
+        for (const m of ret.memories.slice(0, 10)) {
+          const kindCol = chalk.dim(m.kind.padEnd(13));
+          const scoreCol = chalk.dim(m.score.toFixed(3));
+          console.log(`    ${kindCol}${scoreCol}  ${truncate(m.text, 80)}`);
+        }
+      }
+      console.log('');
+      n += 1;
+    }
+  } else {
+    console.log(chalk.dim('  (retrieval log not present — showing stores as of replay)'));
+    console.log('');
+  }
+
+  // L3 project store — only inspected when we know the cwd from the trace.
+  if (cwd) {
+    try {
+      const { openMemoryStore } = await import('../../brain/memory/store.js');
+      const store = openMemoryStore(cwd);
+      const rows = await store.query({ k: 20 });
+      store.close();
+      console.log(chalk.dim(`  project (${cwd}/.mint/memory.sqlite)`));
+      if (rows.length === 0) {
+        console.log(chalk.dim('    (empty)'));
+      } else {
+        for (const r of rows.slice(0, 20)) {
+          console.log(
+            `    ${chalk.dim(r.kind + ':')} ${chalk.bold(String(r.id))} ` +
+              chalk.dim(`conf=${r.confidence.toFixed(2)}`) +
+              `  ${truncate(r.text, 80)}`,
+          );
+        }
+      }
+    } catch (err) {
+      console.log(chalk.dim(`  project: (unavailable — ${err instanceof Error ? err.message : 'error'})`));
+    }
+  } else {
+    console.log(chalk.dim('  project: (cwd not recorded in trace)'));
+  }
+
+  // L4 user store — global.
+  console.log('');
+  try {
+    const { openUserMemoryStore } = await import('../../brain/memory/store.js');
+    const store = openUserMemoryStore();
+    const rows = await store.query({ kinds: ['preference'], k: 20 });
+    store.close();
+    console.log(chalk.dim(`  user (~/.mint/memory.sqlite)`));
+    if (rows.length === 0) {
+      console.log(chalk.dim('    (empty)'));
+    } else {
+      for (const r of rows.slice(0, 20)) {
+        console.log(
+          `    ${chalk.dim(r.kind + ':')} ${chalk.bold(String(r.id))} ` +
+            chalk.dim(`conf=${r.confidence.toFixed(2)}`) +
+            `  ${truncate(r.text, 80)}`,
+        );
+      }
+    }
+  } catch (err) {
+    console.log(chalk.dim(`  user: (unavailable — ${err instanceof Error ? err.message : 'error'})`));
+  }
 }
 
 // ─── Tail ───────────────────────────────────────────────────────────────────
@@ -359,6 +514,12 @@ function printEvent(event: AgentEvent): void {
       break;
     case 'text.delta':
       // Skip streaming text — too noisy in the transcript view.
+      break;
+    case 'loop.detected':
+      console.log(
+        `${prefix}  ${chalk.red('↻')} loop ${chalk.bold(event.tool)} ` +
+          chalk.dim(`repeated ${event.count}× — halted`),
+      );
       break;
     case 'warn':
       console.log(`${prefix}  ${chalk.yellow('!')} warn ${event.message}`);

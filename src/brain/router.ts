@@ -198,15 +198,43 @@ export function resolveRoute(req: RouteRequest): RouteEntry {
   return merged;
 }
 
+// ─── Sticky-route eligibility ──────────────────────────────────────────────
+
+/**
+ * Determines whether a `priorModel` is interchangeable with the freshly
+ * resolved `route` — used by the sticky-model selection logic in loop.ts to
+ * avoid jarring provider swaps when the classifier wobbles on complexity.
+ *
+ * Eligibility:
+ *   - prior is the same as the freshly resolved route.model (no-op stickiness), OR
+ *   - prior is listed in route.fallbacks (router considers them interchangeable
+ *     for this kind), AND
+ *   - prior is currently available (present in the MODELS registry — provider
+ *     keys / gateway availability are checked downstream at stream time).
+ *
+ * If prior is not eligible (provider disabled mid-session, removed from
+ * registry, or not in the route's fallback list), the caller should fall
+ * through to the freshly-resolved route.model — don't fight unavailability
+ * with stickiness.
+ */
+export function isStickyEligible(prior: ModelId, route: RouteEntry): boolean {
+  if (!MODELS[prior]) return false;
+  if (prior === route.model) return true;
+  return route.fallbacks.includes(prior);
+}
+
 // ─── Embedded default ──────────────────────────────────────────────────────
 // Inlined so the tsup bundle works without the JSON sidecar file.
 
+// v3 (2026-05-24): frontier-by-default for real code work. See routing.default.json
+// `_routingThesis` for the rationale — caching + precise retrieval makes Sonnet
+// cost-competitive with cheap-model use while one-shotting more tasks.
 const EMBEDDED_DEFAULT: RoutingTable = {
-  version: 2,
+  version: 3,
   defaults: { toolBudget: 20, maxIterations: 30, compactionTokens: 80_000 },
   routes: {
-    question: { model: 'mistral-small', fallbacks: ['groq-llama-70b', 'gemini-2-flash'], toolBudget: 3, maxIterations: 4, needsPlan: false },
-    edit_small: { model: 'gemini-2-flash', fallbacks: ['claude-sonnet-4', 'groq-llama-70b'], toolBudget: 10, maxIterations: 15, needsPlan: false },
+    question: { model: 'gemini-2-flash', fallbacks: ['mistral-small', 'claude-sonnet-4'], toolBudget: 3, maxIterations: 4, needsPlan: false },
+    edit_small: { model: 'claude-sonnet-4', fallbacks: ['gemini-2-pro', 'gpt-4o'], toolBudget: 10, maxIterations: 15, needsPlan: false },
     edit_multi: { model: 'claude-sonnet-4', fallbacks: ['gemini-2-pro', 'groq-llama-70b'], toolBudget: 20, maxIterations: 25, needsPlan: false },
     refactor: { model: 'claude-sonnet-4', planModel: 'claude-opus-4', fallbacks: ['gemini-2-pro', 'gpt-4o'], toolBudget: 30, maxIterations: 40, needsPlan: true },
     debug: {
@@ -219,7 +247,7 @@ const EMBEDDED_DEFAULT: RoutingTable = {
     },
     scaffold: { model: 'claude-sonnet-4', planModel: 'grok-4-beta', planProviderOptions: { reasoning: { enabled: true } }, fallbacks: ['gemini-2-pro', 'gpt-4o'], toolBudget: 15, maxIterations: 20, needsPlan: true },
     review: { model: 'mistral-small', fallbacks: ['gemini-2-flash', 'claude-sonnet-4'], toolBudget: 5, maxIterations: 6, needsPlan: false },
-    explain: { model: 'mistral-small', fallbacks: ['groq-llama-70b', 'gemini-2-flash'], toolBudget: 0, maxIterations: 2, needsPlan: false },
+    explain: { model: 'gemini-2-flash', fallbacks: ['claude-sonnet-4', 'groq-llama-70b'], toolBudget: 0, maxIterations: 2, needsPlan: false },
   },
   complexityOverrides: {
     complex: { model: 'grok-4-beta', planModel: 'claude-opus-4', providerOptions: { reasoning: { enabled: true } } },
@@ -239,6 +267,9 @@ const EMBEDDED_DEFAULT: RoutingTable = {
       pastSuccess: -0.25,
       hasMultipleFiles: 0.2,
       mentionsTest: 0.1,
+      deepQuestion: 0.15,
+      topFileMention: 0.2,
+      contextualFollowup: 0.1,
     },
   },
 };

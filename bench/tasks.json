@@ -1,0 +1,81 @@
+{
+  "_meta": {
+    "description": "Mint benchmark tasks — fixed set used by `mint bench` to produce comparable cost/quality reports across runs and versions. These target the mint-cli repo itself so anyone can reproduce.",
+    "version": 1,
+    "createdAt": "2026-05-30"
+  },
+  "tasks": [
+    {
+      "id": "q-loop",
+      "kind": "question",
+      "task": "What does src/brain/loop.ts do? Be specific about the iteration loop structure and where the spend cap fires.",
+      "expectModel": "gemini-2-flash",
+      "expectComplexity": "simple",
+      "rubric": "should mention runInner, the for-loop, the spendCap check at iteration start, and the cost.delta emission"
+    },
+    {
+      "id": "q-routing",
+      "kind": "question",
+      "task": "Which model does mint route an `edit_small` task to by default in v3?",
+      "expectModel": "gemini-2-flash",
+      "expectComplexity": "trivial",
+      "rubric": "should say claude-sonnet-4 (post-v3 flip). bonus: mention the v2 default was gemini-2-flash"
+    },
+    {
+      "id": "ex-tune",
+      "kind": "explain",
+      "task": "Explain how mint tune learns from outcomes.sqlite — what does the regression actually fit?",
+      "expectModel": "gemini-2-flash",
+      "rubric": "must mention ridge regression, classifier features, target derived from inverting sigmoid(4r), and routing.json output"
+    },
+    {
+      "id": "tr-typo",
+      "kind": "edit_small",
+      "task": "Find any obvious typo or grammar issue in README.md and fix it. If you don't find any, say so explicitly.",
+      "expectComplexity": "trivial",
+      "rubric": "good = found+fixed a real one OR honestly reported none; bad = invented a fix or claimed false positives"
+    },
+    {
+      "id": "se-flag",
+      "kind": "edit_small",
+      "task": "Add a --json flag to `mint audit` that emits the per-model aggregate as a single JSON object to stdout instead of the formatted table.",
+      "expectModel": "claude-sonnet-4",
+      "rubric": "must wire commander option, branch in runAudit, emit valid JSON, not break existing table output"
+    },
+    {
+      "id": "se-test",
+      "kind": "edit_small",
+      "task": "Add a unit test for src/brain/session.ts proving recordCost() correctly accumulates cache_read_input_tokens across multiple calls.",
+      "expectModel": "claude-sonnet-4",
+      "rubric": "test must compile, pass, and actually verify the cache field accumulation"
+    },
+    {
+      "id": "me-rename",
+      "kind": "edit_multi",
+      "task": "Rename Session.recordToolCall to Session.incrementToolCallCount everywhere in the codebase — code, tests, types. Update all call sites.",
+      "expectModel": "claude-sonnet-4",
+      "rubric": "all call sites updated, typecheck passes, tests pass"
+    },
+    {
+      "id": "rf-extract",
+      "kind": "refactor",
+      "task": "Extract the spend-cap-check and runaway-loop-detect blocks from src/brain/loop.ts into a separate src/brain/safety.ts module. Loop should import and call them.",
+      "expectNeedsPlan": true,
+      "rubric": "module separation clean, behavior unchanged, tests still pass, no circular imports"
+    },
+    {
+      "id": "db-find",
+      "kind": "debug",
+      "task": "There may or may not be a bug in src/brain/loop.ts where the spend cap is bypassed if the user is in plan mode. Investigate and report what you found. Do not edit unless you find a real bug.",
+      "expectModel": "grok-4.1-fast",
+      "rubric": "must investigate (read the file), reach a justified conclusion. Bad if it invents a bug or makes unfounded edits."
+    },
+    {
+      "id": "re-review",
+      "kind": "review",
+      "task": "Review src/cli/commands/audit.ts for any obvious bugs, dead code, or missing edge cases. Output a short list.",
+      "expectModel": "mistral-small",
+      "rubric": "should at least notice: empty traces dir handling, NaN-safe division, ANSI in JSON, etc."
+    }
+  ]
+}

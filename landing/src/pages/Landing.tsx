@@ -4,12 +4,12 @@ import { Link } from 'react-router-dom'
 const TERMINAL_LINES = [
   { type: 'input', text: '$ mint "Add dark mode toggle to the settings page"' },
   { type: 'info', text: '' },
-  { type: 'phase', text: '[scout]    scanning 47 files... matched 6 relevant' },
-  { type: 'phase', text: '[architect] planning change across 3 files' },
-  { type: 'phase', text: '[builder]  generating diffs... DeepSeek V3 ($0.27/1M)' },
-  { type: 'phase', text: '[reviewer] checking quality... Groq 70B ($0.59/1M)' },
+  { type: 'phase', text: '[scout]   scanning 47 files... matched 6 relevant' },
+  { type: 'phase', text: '[plan]    routing: Gemini Flash to plan, Sonnet to execute' },
+  { type: 'phase', text: '[build]   generating diffs across 3 files' },
+  { type: 'phase', text: '[review]  checking quality... within $2.00 spend cap' },
   { type: 'info', text: '' },
-  { type: 'success', text: 'Done — 3 files changed, $0.003 total, 94% saved vs Sonnet' },
+  { type: 'success', text: 'Done — 3 files changed, $0.003 total, 98% saved vs Opus' },
 ]
 
 const FEATURES = [
@@ -19,8 +19,8 @@ const FEATURES = [
         <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
       </svg>
     ),
-    title: 'Scout \u2192 Architect \u2192 Builder \u2192 Reviewer',
-    desc: 'Multi-agent pipeline classifies the task, narrows the file set, plans the change, generates diffs, and reviews the result.',
+    title: 'Cheap \u2014 and it can\u2019t surprise you',
+    desc: 'Smart routing sends simple work to cheap models; most tasks cost under $0.01. A hard spend cap and runaway-loop detection mean a task can never quietly run up a bill.',
   },
   {
     icon: (
@@ -28,8 +28,8 @@ const FEATURES = [
         <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
       </svg>
     ),
-    title: 'Project Index + MINT.md',
-    desc: 'mint init builds a project index, dependency graph, and rules file so tasks start with grounded context.',
+    title: 'It learns your repo',
+    desc: 'mint tune analyzes your recorded outcomes and tunes routing per repo \u2014 which tasks a cheap model nails, which need the strong one. Mint gets cheaper the more you use it.',
   },
   {
     icon: (
@@ -39,8 +39,8 @@ const FEATURES = [
         <line x1="12" y1="17" x2="12" y2="21" />
       </svg>
     ),
-    title: 'Tool-Use Agent',
-    desc: 'mint agent can read, grep, edit, write, list directories, and run bash with approval modes.',
+    title: 'Nothing hidden',
+    desc: 'mint trace replays every session \u2014 classification, retrieved files, every tool call, every cost delta. No silent degradation, no black box. If a task did something surprising, you can see exactly why.',
   },
   {
     icon: (
@@ -51,8 +51,8 @@ const FEATURES = [
         <line x1="8" y1="23" x2="16" y2="23" />
       </svg>
     ),
-    title: 'Cost Tracking + Gateway',
-    desc: 'Tracks spend and savings per request. BYOK providers run directly; the Mint gateway is the shared fallback.',
+    title: 'Your keys, US/EU fleet',
+    desc: 'BYOK with real API keys \u2014 no subsidized backdoor for a provider to revoke. Runs a US/EU-only model fleet (Anthropic, Google, OpenAI, xAI, Mistral, Groq) for enterprise compliance.',
   },
 ]
 
@@ -80,6 +80,45 @@ const STEPS = [
   },
 ]
 
+const COMPARISON = [
+  {
+    label: 'Pricing',
+    mint: 'BYOK — pay provider tokens only (most tasks < $0.01)',
+    claude: '$100/mo Max tier (left the $20 Pro plan)',
+    byok: 'BYOK — pay provider tokens only',
+  },
+  {
+    label: 'Free tier',
+    mint: '50 requests/mo, no card',
+    claude: 'None for Claude Code',
+    byok: 'None',
+  },
+  {
+    label: 'Hard spend cap',
+    mint: 'Yes — halts and asks at your ceiling',
+    claude: 'No — usage-metered',
+    byok: 'No',
+  },
+  {
+    label: 'Learned per-repo routing',
+    mint: 'Yes — mint tune',
+    claude: 'No',
+    byok: 'No',
+  },
+  {
+    label: 'Full session replay',
+    mint: 'Yes — mint trace',
+    claude: 'Limited',
+    byok: 'No',
+  },
+  {
+    label: 'Reads your CLAUDE.md',
+    mint: 'Yes — zero-migration switch',
+    claude: 'Native',
+    byok: 'Varies',
+  },
+]
+
 export function Landing() {
   const [email, setEmail] = useState('')
   const [submitted, setSubmitted] = useState(false)
@@ -96,7 +135,7 @@ export function Landing() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
       })
-    } catch { /* fire and forget */ }
+    } catch (error) { console.error('Error submitting form:', error); setSubmitted(false); }
     setSubmitted(true)
     setLoading(false)
   }
@@ -119,6 +158,9 @@ export function Landing() {
           </a>
           <a href="#features" className="text-sm text-txt-muted hover:text-txt-bright transition-colors cursor-pointer">
             Features
+          </a>
+          <a href="#claude-code" className="text-sm text-txt-muted hover:text-txt-bright transition-colors cursor-pointer">
+            vs Claude Code
           </a>
           <a
             href="https://github.com/asaferdman23/mint-cli"
@@ -177,9 +219,10 @@ export function Landing() {
                 <span className="text-cyan">In parallel.</span>
               </h1>
               <p className="text-txt-muted text-lg font-light max-w-[520px] mb-8 leading-relaxed">
-                Mint is an agentic coding CLI. Have a conversation, and Mint dispatches parallel workers,
-                subagents, and a Scout &rarr; Architect &rarr; Builder &rarr; Reviewer pipeline &mdash; all
-                with cost-aware model routing.
+                Mint is an agentic coding CLI that routes each task to the cheapest capable
+                model &mdash; most tasks cost under $0.01. A hard spend cap means it can never
+                surprise you with a bill, and <code className="font-mono text-cyan text-base">mint trace</code> replays
+                every decision it made.
               </p>
               <div className="flex flex-wrap gap-3 mb-8">
                 <a
@@ -198,16 +241,16 @@ export function Landing() {
               </div>
               <div className="flex gap-8">
                 <div>
-                  <div className="font-display text-2xl font-bold text-cyan">4</div>
-                  <div className="font-mono text-[0.65rem] tracking-wider uppercase text-txt-muted">pipeline phases</div>
+                  <div className="font-display text-2xl font-bold text-cyan">&lt;$0.01</div>
+                  <div className="font-mono text-[0.65rem] tracking-wider uppercase text-txt-muted">most tasks</div>
                 </div>
                 <div>
-                  <div className="font-display text-2xl font-bold text-orange">7</div>
-                  <div className="font-mono text-[0.65rem] tracking-wider uppercase text-txt-muted">built-in code tools</div>
+                  <div className="font-display text-2xl font-bold text-orange">50</div>
+                  <div className="font-mono text-[0.65rem] tracking-wider uppercase text-txt-muted">free requests</div>
                 </div>
                 <div>
-                  <div className="font-display text-2xl font-bold text-txt-bright">init</div>
-                  <div className="font-mono text-[0.65rem] tracking-wider uppercase text-txt-muted">index + rules</div>
+                  <div className="font-display text-2xl font-bold text-txt-bright">BYOK</div>
+                  <div className="font-mono text-[0.65rem] tracking-wider uppercase text-txt-muted">your keys, your fleet</div>
                 </div>
               </div>
             </div>
@@ -286,6 +329,57 @@ export function Landing() {
                 <p className="text-sm text-txt-muted leading-relaxed">{f.desc}</p>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Coming from Claude Code */}
+      <section id="claude-code" className="py-24 relative">
+        <div className="max-w-[1160px] mx-auto px-6">
+          <p className="font-mono text-[0.7rem] tracking-[0.2em] uppercase text-cyan mb-3">
+            <span className="text-txt-muted">// </span>coming from claude code?
+          </p>
+          <h2 className="font-display text-3xl md:text-4xl font-bold text-txt-bright mb-4">
+            Claude Code left the $20 plan.
+            <br />
+            <span className="text-cyan">Mint didn’t.</span>
+          </h2>
+          <p className="text-txt-muted font-light leading-relaxed max-w-[620px] mb-10">
+            Claude Code is moving to a $100/mo Max tier. Mint is BYOK — you pay only
+            provider tokens (most tasks under $0.01), with a hard spend cap so nothing
+            runs away. Mint reads your existing <code className="font-mono text-cyan text-sm">CLAUDE.md</code>,
+            so switching costs you two commands.
+          </p>
+
+          <div className="overflow-x-auto rounded-lg border border-border-dim">
+            <table className="w-full text-sm border-collapse">
+              <thead>
+                <tr className="bg-surface-2">
+                  <th className="text-left font-mono text-[0.7rem] uppercase tracking-wider text-txt-muted px-4 py-3"> </th>
+                  <th className="text-left font-display font-semibold text-cyan px-4 py-3">Mint</th>
+                  <th className="text-left font-display font-semibold text-txt-bright px-4 py-3">Claude Code (Max)</th>
+                  <th className="text-left font-display font-semibold text-txt-bright px-4 py-3">Aider / Cline</th>
+                </tr>
+              </thead>
+              <tbody className="text-txt-muted">
+                {COMPARISON.map((row, i) => (
+                  <tr key={i} className="border-t border-border-dim">
+                    <td className="px-4 py-3 font-medium text-txt">{row.label}</td>
+                    <td className="px-4 py-3 text-txt-bright">{row.mint}</td>
+                    <td className="px-4 py-3">{row.claude}</td>
+                    <td className="px-4 py-3">{row.byok}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="mt-8 p-6 rounded-lg border border-cyan/25 bg-cyan/5">
+            <h3 className="font-display text-base font-semibold text-txt-bright mb-3">Switch in two commands</h3>
+            <pre className="font-mono text-[0.8rem] text-cyan leading-relaxed overflow-x-auto">
+{`npm i -g usemint-cli
+mint init   # reads your existing CLAUDE.md`}
+            </pre>
           </div>
         </div>
       </section>

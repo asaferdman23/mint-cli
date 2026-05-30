@@ -11,10 +11,13 @@ interface StatusBarProps {
   savingsPct?: number;
   agentMode?: string;
   inspectorHint?: string;
-  deepseekModel?: string;
   contextTokens?: number;
   quotaUsed?: number;
   quotaLimit?: number;
+  termCols?: number;
+  /** Anthropic prompt-cache hit ratio in [0,1]. Undefined when no cache-aware
+   *  turns have happened yet. Rendered only when showExtras (≥110 cols). */
+  cacheHitRatio?: number;
 }
 
 function formatTokens(tokens: number): string {
@@ -27,6 +30,12 @@ function formatCost(cost: number): string {
   if (cost === 0) return '$0';
   if (cost < 0.01) return `${(cost * 100).toFixed(3)}¢`;
   return `$${cost.toFixed(4)}`;
+}
+
+function cacheRatioColor(ratio: number): 'green' | 'yellow' | 'cyan' {
+  if (ratio >= 0.75) return 'green';
+  if (ratio < 0.5) return 'yellow';
+  return 'cyan';
 }
 
 function modeColor(mode: string): string {
@@ -46,13 +55,19 @@ export function StatusBar({
   savingsPct,
   agentMode = 'auto',
   inspectorHint,
-  deepseekModel,
   contextTokens,
   quotaUsed,
   quotaLimit,
+  termCols,
+  cacheHitRatio,
 }: StatusBarProps): React.ReactElement {
-  const model = deepseekModel ?? currentModel ?? 'auto';
-  const isThinking = deepseekModel === 'deepseek-reasoner';
+  const model = currentModel ?? 'auto';
+  // Surface reasoning-enabled models in the status bar.
+  const isThinking = typeof currentModel === 'string' && (
+    currentModel === 'claude-opus-4' ||
+    currentModel === 'grok-4-beta' ||
+    currentModel === 'grok-4.1-fast'
+  );
 
   // Calculate quota status
   const showQuota = quotaUsed != null && quotaLimit != null;
@@ -70,7 +85,7 @@ export function StatusBar({
   //   4. session cost   (hide < 70 cols)
   //   5. tokens         (hide < 90 cols)
   //   6. month cost / savings / context / inspector hint / version (hide < 110 cols)
-  const cols = process.stdout.columns ?? 80;
+  const cols = termCols ?? process.stdout.columns ?? 80;
   const showDetails = cols >= 70;
   const showTokens = cols >= 90;
   const showExtras = cols >= 110;
@@ -89,6 +104,12 @@ export function StatusBar({
           <>
             <Text dimColor> │ </Text>
             <Text dimColor>session {formatCost(sessionCost)}</Text>
+          </>
+        )}
+        {showExtras && cacheHitRatio != null && (
+          <>
+            <Text dimColor> │ </Text>
+            <Text color={cacheRatioColor(cacheHitRatio)}>cache: {Math.round(cacheHitRatio * 100)}%</Text>
           </>
         )}
         {showExtras && monthlyCost != null && monthlyCost > 0 && (

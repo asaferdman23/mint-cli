@@ -42,6 +42,16 @@ export class Session {
   private _cacheCreationTokens = 0;
   private _toolCalls = 0;
   private _iterations = 0;
+  /** Consecutive rejection counter — incremented on approval rejection,
+   *  reset on any approval or non-rejection tool result. Used to abort
+   *  the turn when the user is clearly trying to redirect the agent. */
+  private _consecutiveRejections = 0;
+  /** Rolling window of recent tool-call signatures (name + stable-hashed
+   *  input), newest last. Powers runaway-loop detection. */
+  private _toolSignatures: string[] = [];
+  /** Set once the user has explicitly approved continuing past the spend
+   *  cap — prevents nagging on every subsequent iteration. */
+  private _spendCapApproved = false;
 
   constructor(options: SessionOptions) {
     this.id = options.sessionId ?? generateSessionId();
@@ -91,6 +101,19 @@ export class Session {
     this._filesTouched.add(path);
   }
 
+  /** @returns the new consecutive rejection count after incrementing. */
+  incrementRejection(): number {
+    return ++this._consecutiveRejections;
+  }
+
+  resetRejections(): void {
+    this._consecutiveRejections = 0;
+  }
+
+  get consecutiveRejections(): number {
+    return this._consecutiveRejections;
+  }
+
   recordCost(
     inputTokens: number,
     outputTokens: number,
@@ -108,6 +131,35 @@ export class Session {
     this._toolCalls += 1;
   }
 
+  /** Record a tool-call signature for runaway-loop detection. The signature
+   *  is the tool name plus a stable serialization of its input, so two calls
+   *  with the same input (regardless of key order) hash equal. */
+  recordToolSignature(name: string, input: Record<string, unknown>): void {
+    this._toolSignatures.push(`${name}::${stableStringify(input)}`);
+    // Bound the window — only the recent tail matters for repeat detection.
+    if (this._toolSignatures.length > 24) this._toolSignatures.shift();
+  }
+
+  /** Detect a runaway loop: returns the repeated tool and run length when the
+   *  most recent `threshold`+ tool calls are byte-identical, else null. */
+  detectRepeatPattern(threshold: number): { tool: string; count: number } | null {
+    const sigs = this._toolSignatures;
+    if (sigs.length < threshold) return null;
+    const last = sigs[sigs.length - 1];
+    let count = 0;
+    for (let i = sigs.length - 1; i >= 0 && sigs[i] === last; i--) count++;
+    if (count < threshold) return null;
+    return { tool: last.slice(0, last.indexOf('::')), count };
+  }
+
+  get spendCapApproved(): boolean {
+    return this._spendCapApproved;
+  }
+
+  approveSpendCap(): void {
+    this._spendCapApproved = true;
+  }
+
   recordIteration(): void {
     this._iterations += 1;
   }
@@ -123,4 +175,15 @@ export class Session {
 
 function noopSink(_event: AgentEvent): void {
   /* no-op */
+}
+
+/** Deterministic JSON serialization — keys sorted recursively so logically
+ *  equal inputs always produce the same string. */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const keys = Object.keys(value as Record<string, unknown>).sort();
+  return `{${keys
+    .map((k) => `${JSON.stringify(k)}:${stableStringify((value as Record<string, unknown>)[k])}`)
+    .join(',')}}`;
 }

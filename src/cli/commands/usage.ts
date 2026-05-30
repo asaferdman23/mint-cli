@@ -43,7 +43,7 @@ export async function showUsage(options: UsageOptions): Promise<void> {
       totalCost: 12.50,
       totalSaved: 45.30,
       byModel: [
-        { model: 'deepseek-v3', tokens: 800000, cost: 0.22, requests: 45 },
+        { model: 'gemini-2-flash', tokens: 800000, cost: 0.22, requests: 45 },
         { model: 'claude-sonnet-4', tokens: 350000, cost: 8.75, requests: 12 },
         { model: 'claude-opus-4', tokens: 100000, cost: 3.50, requests: 3 },
       ],

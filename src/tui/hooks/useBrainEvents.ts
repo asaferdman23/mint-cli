@@ -33,6 +33,15 @@ export interface PanelState {
   totalCost: number;
   totalTokens: number;
   iterationCount: number;
+  /** Cumulative cache-read input tokens (Anthropic prompt-cache hits). */
+  cacheReadTokens: number;
+  /** Cumulative cache-creation input tokens (first-write cache cost). */
+  cacheCreationTokens: number;
+  /** Cumulative input tokens that bypassed the cache (fresh reads). */
+  uncachedInputTokens: number;
+  /** Cache hit ratio in [0,1] — cacheRead / (cacheRead + cacheCreation + uncachedInput).
+   *  Undefined while no cache-aware turns have run yet. */
+  cacheHitRatio?: number;
 }
 
 // Brain's "scout|plan|build|review" → the legacy Pipeline's "SCOUT|ARCHITECT|BUILDER|REVIEWER"
@@ -64,6 +73,12 @@ export interface CurrentActivity {
   lastResult?: { ok: boolean; text: string };
 }
 
+export interface NoticeMessage {
+  id: string;
+  kind: 'warn' | 'error';
+  text: string;
+}
+
 export interface UseBrainEventsReturn {
   panelState: PanelState;
   pipelinePhases: PipelinePhaseData[];
@@ -77,6 +92,10 @@ export interface UseBrainEventsReturn {
   recentEvents: AgentEvent[];
   /** What the agent is doing right now (drives the live activity panel). */
   currentActivity: CurrentActivity | null;
+  /** Synthetic warn/error notices emitted as their own rows. BrainApp drains
+   *  these into the chat transcript so the assistant body stays clean. */
+  notices: NoticeMessage[];
+  consumeNotices: () => NoticeMessage[];
   resolveApproval: (ok: boolean) => void;
   apply: (event: AgentEvent) => void;
   reset: () => void;
@@ -94,7 +113,7 @@ export interface LastDiff {
 }
 
 export interface PendingApproval {
-  reason: 'tool' | 'diff' | 'iteration';
+  reason: 'tool' | 'diff' | 'iteration' | 'spend_limit';
   payload: Record<string, unknown>;
   resolve: (ok: boolean) => void;
 }
@@ -114,10 +133,12 @@ export function useBrainEvents(): UseBrainEventsReturn {
   const [lastDiff, setLastDiff] = useState<LastDiff | null>(null);
   const [recentEvents, setRecentEvents] = useState<AgentEvent[]>([]);
   const [currentActivity, setCurrentActivity] = useState<CurrentActivity | null>(null);
+  const [notices, setNotices] = useState<NoticeMessage[]>([]);
 
   // Map tool.call.id → { name, timestamp } so we can pair results correctly
   // even when tools run in parallel.
-  const pendingToolCalls = useRef<Map<string, { name: string; startedAt: number }>>(new Map());
+  const pendingToolCalls = useRef<Map<string, { name: string; input: Record<string, unknown>; startedAt: number }>>(new Map());
+  const noticeIdRef = useRef(0);
 
   const resolveApproval = useCallback((ok: boolean) => {
     setPendingApproval((cur) => {
@@ -140,7 +161,9 @@ export function useBrainEvents(): UseBrainEventsReturn {
 
       case 'classify':
         setCurrentActivity({
-          label: `Routed to ${event.model}`,
+          label: event.planModel
+            ? `Planner ${event.planModel} → executor ${event.model}`
+            : `Routed to ${event.model}`,
           detail: `${event.kind} \u00b7 ${event.complexity} \u00b7 confidence ${event.confidence.toFixed(2)}`,
         });
         setPipelinePhases((prev) => [
@@ -199,11 +222,12 @@ export function useBrainEvents(): UseBrainEventsReturn {
       case 'tool.call': {
         pendingToolCalls.current.set(event.id, {
           name: event.name,
+          input: event.input,
           startedAt: event.ts,
         });
+        const activeTools = Array.from(pendingToolCalls.current.values());
         setCurrentActivity({
-          label: `${describeTool(event.name)}\u2026`,
-          detail: summarizeToolInput(event.input),
+          label: summarizeActiveTools(activeTools),
         });
         setRecentToolCalls((prev) =>
           [
@@ -261,11 +285,28 @@ export function useBrainEvents(): UseBrainEventsReturn {
         break;
 
       case 'cost.delta':
-        setPanelState((prev) => ({
-          ...prev,
-          totalCost: prev.totalCost + event.usd,
-          totalTokens: prev.totalTokens + event.inputTokens + event.outputTokens,
-        }));
+        setPanelState((prev) => {
+          const cacheRead = event.cacheReadInputTokens ?? 0;
+          const cacheCreation = event.cacheCreationInputTokens ?? 0;
+          // event.inputTokens is the total billed input (including cached
+          // tokens on Anthropic); subtract cache reads + writes to isolate
+          // the cold/uncached portion. Floor at 0 for safety.
+          const uncached = Math.max(0, event.inputTokens - cacheRead - cacheCreation);
+          const nextCacheRead = prev.cacheReadTokens + cacheRead;
+          const nextCacheCreation = prev.cacheCreationTokens + cacheCreation;
+          const nextUncached = prev.uncachedInputTokens + uncached;
+          const denom = nextCacheRead + nextCacheCreation + nextUncached;
+          const ratio = denom > 0 ? nextCacheRead / denom : undefined;
+          return {
+            ...prev,
+            totalCost: prev.totalCost + event.usd,
+            totalTokens: prev.totalTokens + event.inputTokens + event.outputTokens,
+            cacheReadTokens: nextCacheRead,
+            cacheCreationTokens: nextCacheCreation,
+            uncachedInputTokens: nextUncached,
+            cacheHitRatio: ratio,
+          };
+        });
         break;
 
       case 'compact':
@@ -290,18 +331,25 @@ export function useBrainEvents(): UseBrainEventsReturn {
         break;
 
       case 'warn':
-        // Could surface in a notification channel — for now, piggyback on
-        // the streaming text so the user sees it inline.
-        setStreamingText((prev) => `${prev}\n[warn] ${event.message}`);
+        setNotices((prev) => [
+          ...prev,
+          { id: `notice-${++noticeIdRef.current}`, kind: 'warn', text: event.message },
+        ]);
         break;
 
       case 'error':
-        setStreamingText((prev) => `${prev}\n[error] ${event.error}`);
+        setNotices((prev) => [
+          ...prev,
+          { id: `notice-${++noticeIdRef.current}`, kind: 'error', text: event.error },
+        ]);
         break;
 
       case 'done':
         setCurrentActivity(null);
-        // Final state is the accumulated panel + phases + streamingText.
+        // Clear per-turn streamingText so pre-`session.start` frames of the
+        // next turn don't render stale partial text from the previous turn.
+        setStreamingText('');
+        // Final state is the accumulated panel + phases.
         // The caller gets the full result from the done event directly.
         break;
 
@@ -320,7 +368,17 @@ export function useBrainEvents(): UseBrainEventsReturn {
     setLastDiff(null);
     setRecentEvents([]);
     setCurrentActivity(null);
+    setNotices([]);
     pendingToolCalls.current.clear();
+  }, []);
+
+  const consumeNotices = useCallback((): NoticeMessage[] => {
+    let drained: NoticeMessage[] = [];
+    setNotices((cur) => {
+      drained = cur;
+      return [];
+    });
+    return drained;
   }, []);
 
   return {
@@ -332,6 +390,8 @@ export function useBrainEvents(): UseBrainEventsReturn {
     lastDiff,
     recentEvents,
     currentActivity,
+    notices,
+    consumeNotices,
     resolveApproval,
     apply,
     reset,
@@ -347,6 +407,10 @@ function emptyPanel(): PanelState {
     totalCost: 0,
     totalTokens: 0,
     iterationCount: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    uncachedInputTokens: 0,
+    cacheHitRatio: undefined,
   };
 }
 
@@ -432,7 +496,61 @@ function describeTool(name: string): string {
     web_fetch: 'Fetching',
     run_tests: 'Running tests',
   };
-  return verbs[name] ?? `Calling ${name}`;
+  if (verbs[name]) return verbs[name];
+  // Unknown tool — humanize "foo_bar" to "Using foo bar" instead of "Calling foo_bar".
+  const human = name.split(/[_\-.]+/).filter(Boolean).join(' ').toLowerCase();
+  return `Using ${human}`;
+}
+
+function summarizeActiveTools(calls: Array<{ name: string; input: Record<string, unknown> }>): string {
+  if (calls.length === 0) return 'Thinking...';
+
+  const buckets = new Map<string, { verb: string; noun: string; count: number }>();
+  for (const call of calls) {
+    const bucket = classifyToolActivity(call.name, call.input);
+    const key = `${bucket.verb}:${bucket.noun}`;
+    const existing = buckets.get(key);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      buckets.set(key, { ...bucket, count: 1 });
+    }
+  }
+
+  const phrases = Array.from(buckets.values()).map((bucket, index) => {
+    const verb = index === 0 ? capitalize(bucket.verb) : bucket.verb;
+    const noun = bucket.count === 1 ? bucket.noun : pluralize(bucket.noun);
+    return `${verb} ${bucket.count} ${noun}`;
+  });
+  return `${phrases.join(', ')}...`;
+}
+
+function classifyToolActivity(name: string, input: Record<string, unknown>): { verb: string; noun: string } {
+  if (name === 'read_file') return { verb: 'reading', noun: 'file' };
+  if (name === 'write_file') return { verb: 'writing', noun: 'file' };
+  if (name === 'edit_file' || name === 'search_replace') return { verb: 'editing', noun: 'file' };
+  if (name === 'list_dir' || name === 'glob') return { verb: 'listing', noun: 'directory' };
+  if (name === 'grep') return { verb: 'searching', noun: 'pattern' };
+  if (name === 'run_tests') return { verb: 'running', noun: 'test' };
+  if (name === 'git_diff') return { verb: 'reading', noun: 'diff' };
+  if (name === 'web_fetch') return { verb: 'fetching', noun: 'page' };
+
+  if (name === 'bash' || name === 'run_command') {
+    const command = String(input.command ?? '').trim().toLowerCase();
+    if (/^(cat|sed|head|tail|nl)\b/.test(command)) return { verb: 'reading', noun: 'file' };
+    if (/^(ls|find|rg --files)\b/.test(command)) return { verb: 'listing', noun: 'directory' };
+    if (/\b(test|vitest|jest|mocha|playwright)\b/.test(command)) return { verb: 'running', noun: 'test' };
+    if (/^git\s+(diff|show|status|log)\b/.test(command)) return { verb: 'reading', noun: 'git state' };
+    return { verb: 'running', noun: 'command' };
+  }
+
+  return { verb: describeTool(name).replace(/\u2026$/, '').toLowerCase(), noun: 'tool' };
+}
+
+function pluralize(noun: string): string {
+  if (noun === 'directory') return 'directories';
+  if (noun === 'git state') return 'git states';
+  return `${noun}s`;
 }
 
 function summarizeToolInput(input: Record<string, unknown>): string {
@@ -458,4 +576,3 @@ function summarizeToolOutput(toolName: string, output?: string): string {
   }
   return truncateText(output, 60);
 }
-

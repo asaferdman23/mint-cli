@@ -95,7 +95,7 @@ function buildGatewayError(kind: 'chat' | 'agent', status: number, body: string)
           `You've used all your free requests.\n\n` +
           `To continue:\n` +
           `  • Upgrade to Pro: https://usemint.dev/upgrade\n` +
-          `  • Add your own API keys: mint config:set providers.deepseek <key>\n` +
+          `  • Add your own API keys: mint config:set providers.gemini <key>\n` +
           `  • Check quota: mint quota`
         )
       }

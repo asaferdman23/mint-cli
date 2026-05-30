@@ -46,15 +46,34 @@ mint trace --tail      # follow the most recent live session
 
 This is the same observability surface the team uses to debug brain runs — there is no hidden state. If a task did something surprising, `mint trace` shows you why: classification, retrieved files, every tool call, every cost delta.
 
+## Safety
+
+Mint can't surprise you with a bill or spin forever:
+
+- **Hard spend cap** — when a session's cost reaches `brain.spendCap` (default **$2**),
+  Mint stops and asks before continuing. Set your own ceiling:
+  ```bash
+  mint config:set brain.spendCap 0.50
+  ```
+- **Runaway-loop detection** — if the model repeats an identical tool call, Mint halts
+  instead of burning tokens in a loop.
+- **Approval gates** — every file write, shell command, and network call is reviewable
+  before it runs (unless you opt into `/auto`).
+
 ## How It Works
 
 Mint's **brain** analyzes your task and intelligently routes between models:
 
-- **Simple edits** → DeepSeek V3 ($0.14/M tokens)
-- **Complex reasoning** → DeepSeek R1 or Claude (when needed)
+- **Simple edits & questions** → Gemini Flash / Mistral Small (cents-per-million-token tier)
+- **Multi-file work & refactors** → Claude Sonnet, planned by Claude Opus when needed
+- **Debugging** → Grok fast models
 - **Context retrieval** → Hybrid search (BM25 + embeddings)
 
-You review changes before they're applied. Every cost is tracked and compared to Claude Opus.
+Mint runs a **US/EU-only model fleet** (Anthropic, Google, OpenAI, xAI, Mistral, Groq) —
+no Chinese-origin providers, for enterprise compliance.
+
+You review changes before they're applied. Every cost is tracked, and a hard
+[spend cap](#safety) means a task can never silently run up a bill.
 
 ```
 $ mint "add a pricing section with 3 tiers"
@@ -113,6 +132,8 @@ mint trace                # Browse recent tasks
 mint resume <session>     # Re-open a past session and keep going
 mint tune                 # Suggest routing/classifier weights from your
                           # recorded outcomes (dry-run; --apply to write)
+mint audit                # Measure cache hit rate + input tokens/turn
+                          # across recent traces — proves the cost story
 ```
 
 ### In the TUI
@@ -144,9 +165,10 @@ Two options:
 
 **2. Bring Your Own Keys** (free forever)
 ```bash
-mint config:set providers.deepseek <your-key>
+mint config:set providers.gemini <your-key>
 ```
-- Use your own API keys from DeepSeek, Anthropic, OpenAI, etc.
+- Use your own API keys from Google, Anthropic, OpenAI, xAI, Mistral, or Groq
+- Real API keys — no subsidized backdoor for a provider to revoke
 - Pay only your provider's costs (typically $0.001-0.01 per task)
 - No Mint subscription needed
 
@@ -176,14 +198,15 @@ mint login    # Sign in
 Add your own API keys for unlimited usage:
 
 ```bash
-# Most cost-effective
-mint config:set providers.deepseek <key>    # $0.14/M tokens
+# Most cost-effective for everyday tasks
+mint config:set providers.gemini <key>      # Gemini Flash/Pro
+mint config:set providers.mistral <key>     # Mistral Small (EU)
+mint config:set providers.groq <key>        # Fast Llama / gpt-oss inference
 
-# Other supported providers
-mint config:set providers.anthropic <key>   # Claude models
-mint config:set providers.openai <key>      # GPT models  
-mint config:set providers.gemini <key>      # Gemini models
-mint config:set providers.groq <key>        # Fast inference
+# Heavier reasoning
+mint config:set providers.anthropic <key>   # Claude Sonnet / Opus
+mint config:set providers.openai <key>      # GPT models
+mint config:set providers.grok <key>        # xAI Grok
 ```
 
 Check configuration:
@@ -225,10 +248,10 @@ A: Every new signup gets 50 requests per month through Mint Gateway. No credit c
 A: Two options: (1) Upgrade to Pro for unlimited gateway access, or (2) Add your own provider API keys - completely free forever.
 
 **Q: Is my code sent to Mint servers?**  
-A: When using Mint Gateway, code is sent to our servers then forwarded to the AI provider (DeepSeek, Anthropic, etc.). We don't store your code. With BYOK, your code goes directly to your chosen provider.
+A: When using Mint Gateway, code is sent to our servers then forwarded to the AI provider (Google, Anthropic, etc.). We don't store your code. With BYOK, your code goes directly to your chosen provider.
 
 **Q: Which model should I use?**  
-A: The brain auto-selects. For most tasks, it uses DeepSeek V3 ($0.14/M). For complex reasoning, it may use DeepSeek R1 or Claude. You can override with `--model`.
+A: The brain auto-selects. Simple tasks go to Gemini Flash or Mistral Small; multi-file work and refactors go to Claude Sonnet (planned by Claude Opus when needed); debugging uses Grok. You can override with `--model`.
 
 **Q: Can I self-host?**  
 A: Yes! With BYOK mode, Mint runs entirely locally. The gateway is only needed for the free tier.

@@ -3,7 +3,7 @@
  *
  * The brain loop's main model can call this as a tool when a sizeable edit is
  * needed, keeping orchestration on a cheap/fast model while the heavy lifting
- * goes to a coder model (DeepSeek V3 by default; see routing.writeCode).
+ * goes to a coder model (see routing.writeCode in routing.default.json).
  *
  * Returns a unified diff text. The loop/approval layer decides whether to
  * apply it.

@@ -51,15 +51,16 @@ export function WelcomeScreen(): React.ReactElement {
         </Box>
       </Box>
 
-      {/* Shortcuts */}
+      {/* Shortcuts — Tab hint intentionally omitted here: BrainApp's useInput
+          is gated on messages.length > 0, so Tab would be a no-op on the
+          welcome screen. Once the session has activity, StatusBar's
+          inspectorHint slot surfaces the Tab/Ctrl+O affordance. */}
       <Box marginTop={1} flexDirection="column" alignItems="center">
         <Text dimColor>
           <Text color="yellow">/help</Text>
           {' help  '}
           <Text color="yellow">/auto</Text>
           {' skip approvals  '}
-          <Text color="yellow">Tab</Text>
-          {' tools  '}
           <Text color="yellow">Ctrl+C</Text>
           {' exit'}
         </Text>

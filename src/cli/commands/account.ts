@@ -14,7 +14,7 @@ export async function showAccount(): Promise<void> {
         chalk.cyan('  mint signup') + chalk.dim(' - Get 50 free requests\n') +
         chalk.cyan('  mint login') + chalk.dim('  - Sign in to existing account\n\n') +
         chalk.dim('Or use your own API keys:\n\n') +
-        chalk.cyan('  mint config:set providers.deepseek <key>'),
+        chalk.cyan('  mint config:set providers.gemini <key>'),
         { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
       )
     );
@@ -114,7 +114,7 @@ export async function showAccount(): Promise<void> {
   } else {
     console.log(chalk.dim('  No custom API keys configured\n'));
     console.log(chalk.dim('  To add your own keys:\n'));
-    console.log(chalk.cyan('  mint config:set providers.deepseek <your-key>\n'));
+    console.log(chalk.cyan('  mint config:set providers.gemini <your-key>\n'));
   }
 
   console.log('');

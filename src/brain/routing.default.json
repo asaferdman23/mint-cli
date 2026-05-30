@@ -1,22 +1,23 @@
 {
-  "version": 2,
+  "version": 3,
   "defaults": {
     "toolBudget": 20,
     "maxIterations": 30,
     "compactionTokens": 80000
   },
   "_enterpriseNote": "v2 (2026-05-12): removed all Chinese-origin model providers (DeepSeek, Kimi/Moonshot, Qwen) for enterprise compliance. Default fleet is US/EU only: Anthropic, Google, xAI, OpenAI, Mistral (FR), Groq (US infra w/ Llama+gpt-oss).",
+  "_routingThesis": "v3 (2026-05-24): frontier-by-default for real code work. Cheap models reserved for (a) pure reads / questions, (b) the classifier, (c) the review pass, and (d) the 'trivial' complexity bucket. The cost story rests on prompt caching + precise context retrieval making Sonnet cost-competitive with naive cheap-model use, while delivering one-shot success and the auditable quality Claude Code's quality crisis exposed.",
   "routes": {
     "question": {
-      "model": "mistral-small",
-      "fallbacks": ["groq-llama-70b", "gemini-2-flash"],
+      "model": "gemini-2-flash",
+      "fallbacks": ["mistral-small", "claude-sonnet-4"],
       "toolBudget": 3,
       "maxIterations": 4,
       "needsPlan": false
     },
     "edit_small": {
-      "model": "gemini-2-flash",
-      "fallbacks": ["claude-sonnet-4", "groq-llama-70b"],
+      "model": "claude-sonnet-4",
+      "fallbacks": ["gemini-2-pro", "gpt-4o"],
       "toolBudget": 10,
       "maxIterations": 15,
       "needsPlan": false
@@ -61,8 +62,8 @@
       "needsPlan": false
     },
     "explain": {
-      "model": "mistral-small",
-      "fallbacks": ["groq-llama-70b", "gemini-2-flash"],
+      "model": "gemini-2-flash",
+      "fallbacks": ["claude-sonnet-4", "groq-llama-70b"],
       "toolBudget": 0,
       "maxIterations": 2,
       "needsPlan": false
@@ -96,7 +97,10 @@
       "verbComplex": 0.25,
       "pastSuccess": -0.25,
       "hasMultipleFiles": 0.2,
-      "mentionsTest": 0.1
+      "mentionsTest": 0.1,
+      "deepQuestion": 0.15,
+      "topFileMention": 0.2,
+      "contextualFollowup": 0.1
     }
   }
 }

@@ -68,16 +68,21 @@ export async function runToolCalls(
         },
       });
       if (!approved) {
-        // Emit a clear warning with counts so the user sees what was skipped.
-        // Files recorded BEFORE this rejection remain in filesTouched — those
-        // changes were already applied; only this batch of destructive calls is
-        // being skipped.
+        const n = session.incrementRejection();
+        // After 2 consecutive rejections, hard-stop the turn — the agent is
+        // clearly off-track and the user wants to redirect. The loop checks
+        // for this counter and aborts with a clean "tell me what you want"
+        // message instead of letting the model try yet another tool.
         session.emit({
           type: 'warn',
-          message: `Iteration ${options.iteration} rejected — skipped ${destructive.length} destructive tool call${destructive.length === 1 ? '' : 's'} (${destructive.map((c) => c.name).join(', ')}).`,
+          message:
+            n >= 2
+              ? `Iteration ${options.iteration} rejected (${n} in a row) — stopping. Tell me what you'd like instead.`
+              : `Iteration ${options.iteration} rejected — skipped ${destructive.length} destructive tool call${destructive.length === 1 ? '' : 's'} (${destructive.map((c) => c.name).join(', ')}).`,
         });
         return calls.map((c) => toRejected(c, 'iteration rejected'));
       }
+      session.resetRejections();
     }
   }
 
@@ -164,12 +169,18 @@ async function runSingle(
       },
     });
     if (!approved) {
+      const n = session.incrementRejection();
+      const tail =
+        n >= 2
+          ? ` — user has rejected ${n} times in a row. Do NOT try another tool. Stop and ask the user what they want instead.`
+          : '';
       return finish(session, call, startedAt, {
         ok: false,
-        output: `[rejected] ${call.name} denied by user`,
+        output: `[rejected] ${call.name} denied by user${tail}`,
         rejected: true,
       });
     }
+    session.resetRejections();
   }
 
   // ── Execute ──────────────────────────────────────────────────────────────

@@ -1,5 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
+// Isolate from the developer's real ~/.config/mint-cli/config.json — otherwise
+// getAuthHeader()'s fallback to the stored gatewayToken makes the "no auth"
+// case fetch on a logged-in machine. The mock makes config a clean slate so
+// these tests exercise only the env-var path.
+vi.mock('../../utils/config.js', () => ({
+  config: {
+    get: () => undefined,
+    getGatewayUrl: () => 'https://api.usemint.dev',
+  },
+}));
+
 const ORIGINAL_FETCH = globalThis.fetch;
 const ORIGINAL_ENV = { ...process.env };
 

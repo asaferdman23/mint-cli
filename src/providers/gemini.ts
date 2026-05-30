@@ -97,11 +97,18 @@ export class GeminiProvider implements Provider {
       })),
     }] : undefined;
 
+    // Flatten systemTiers when provided — Gemini has no cache_control concept.
+    const systemInstruction = request.systemTiers
+      ? [request.systemTiers.base, request.systemTiers.project, request.systemTiers.dynamic]
+          .filter((s): s is string => !!s)
+          .join('\n\n')
+      : request.systemPrompt;
+
     const model = this.getSDK().getGenerativeModel({
       model: modelString,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       tools: tools as any,
-      systemInstruction: request.systemPrompt,
+      systemInstruction,
     });
 
     const history = request.messages

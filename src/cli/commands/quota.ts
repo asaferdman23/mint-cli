@@ -21,7 +21,7 @@ export async function showQuota(): Promise<void> {
         chalk.dim('Sign up for a free account to get 50 free requests:\n\n') +
         chalk.cyan('  mint signup\n\n') +
         chalk.dim('Or bring your own API keys:\n\n') +
-        chalk.cyan('  mint config:set providers.deepseek <your-key>'),
+        chalk.cyan('  mint config:set providers.gemini <your-key>'),
         { padding: 1, borderColor: 'yellow', borderStyle: 'round' }
       )
     );
@@ -131,7 +131,7 @@ function displayQuota(data: QuotaData): void {
         console.log(chalk.dim(`     ${upgrade_url}\n`));
       }
       console.log(chalk.cyan('  2. Add your own API keys (free forever)'));
-      console.log(chalk.dim('     mint config:set providers.deepseek <your-key>\n'));
+      console.log(chalk.dim('     mint config:set providers.gemini <your-key>\n'));
     } else {
       console.log(chalk.yellow('  💡 Running low on free requests?\n'));
       console.log(chalk.dim('  Options:\n'));
@@ -140,7 +140,7 @@ function displayQuota(data: QuotaData): void {
         console.log(chalk.dim(`    ${upgrade_url}\n`));
       }
       console.log(chalk.cyan('  • Add your own API keys (always free)'));
-      console.log(chalk.dim('    mint config:set providers.deepseek <your-key>\n'));
+      console.log(chalk.dim('    mint config:set providers.gemini <your-key>\n'));
     }
   }
 

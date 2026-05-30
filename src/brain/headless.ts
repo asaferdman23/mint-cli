@@ -20,7 +20,12 @@ export interface HeadlessOptions {
   /** Called for every event. Useful for CLI progress output. */
   onEvent?: (event: AgentEvent) => void;
   /** Approval strategy — default auto-approves everything (treat like `auto` mode). */
-  approve?: (reason: 'tool' | 'diff' | 'iteration', payload: Record<string, unknown>) => boolean;
+  approve?: (
+    reason: 'tool' | 'diff' | 'iteration' | 'spend_limit',
+    payload: Record<string, unknown>,
+  ) => boolean;
+  /** Per-run spend cap (USD). Overrides brain.spendCap config. */
+  spendCap?: number;
 }
 
 export interface HeadlessResult {
@@ -47,6 +52,7 @@ export async function runHeadless(options: HeadlessOptions): Promise<HeadlessRes
       sessionId: options.sessionId,
       model: options.model,
       reasoning: options.reasoning,
+      spendCap: options.spendCap,
     })) {
       events.push(event);
       options.onEvent?.(event);

@@ -41,8 +41,71 @@ const configSchema = z.object({
       /** Per-session cost budget (USD). When the running cost exceeds this,
        *  the TUI shows a warning. 0 disables the warning. */
       sessionBudgetUsd: z.number().default(0.5),
+      /** Hard per-session spend ceiling (USD). When the running cost reaches
+       *  this, the loop halts and asks for explicit approval before continuing.
+       *  Unlike sessionBudgetUsd (a passive warning), this enforces. 0 = off.
+       *  Defaults to $2 — far above a normal task (<$0.01) but a real ceiling
+       *  against runaway loops, so Mint can never silently surprise you. */
+      spendCap: z.number().default(2),
+      /** When true, the loop halts if it detects the model repeating the same
+       *  tool call with identical input — a runaway-loop guard. */
+      runawayLoopDetection: z.boolean().default(true),
+      /** Number of identical consecutive tool calls that trips the runaway
+       *  loop detector. */
+      loopDetectionThreshold: z.number().default(3),
     })
-    .default({ sessionBudgetUsd: 0.5 }),
+    .default({
+      sessionBudgetUsd: 0.5,
+      spendCap: 2,
+      runawayLoopDetection: true,
+      loopDetectionThreshold: 3,
+    }),
+
+  /** Anthropic-specific opt-ins. */
+  anthropic: z
+    .object({
+      /** Opt into the `extended-cache-ttl-2025-04-11` beta — sets a 1-hour
+       *  TTL on every emitted `cache_control` block instead of the default
+       *  5-minute. Pricing: 1h writes are ~2× the 5-min write cost, reads
+       *  remain ~10% of fresh tokens. Worth it when sessions pause for
+       *  >5 min and the user resumes (e.g. lunch break, context switch).
+       *  Verify current pricing at
+       *  https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching.
+       *  Env override: MINT_ANTHROPIC_CACHE_1H=1. */
+      cache1h: z.boolean().default(false),
+    })
+    .default({ cache1h: false }),
+
+  /** Memory subsystem knobs (PR8). All values have sane defaults so users
+   *  who never touch config keep the behavior shipped in PR4–PR7. */
+  memory: z
+    .object({
+      extract: z
+        .object({
+          /** Master kill switch for the per-turn extractor LLM call.
+           *  When false, zero extractor calls fire and zero SQLite writes
+           *  result from automatic extraction (manual /remember still works). */
+          enabled: z.boolean().default(true),
+          /** Whitelist of memory kinds the extractor is allowed to emit.
+           *  Decisions and open_questions are opt-in (noisier, lower hit rate). */
+          kinds: z
+            .array(z.enum(['preference', 'fact', 'decision', 'episode', 'open_question']))
+            .default(['preference', 'fact', 'episode']),
+        })
+        .default({ enabled: true, kinds: ['preference', 'fact', 'episode'] }),
+      retrieval: z
+        .object({
+          /** Top-K memories injected into the dynamic prompt tier per turn. */
+          k: z.number().default(10),
+          /** Recency-decay half-life for the hybrid scorer. */
+          halfLifeDays: z.number().default(14),
+        })
+        .default({ k: 10, halfLifeDays: 14 }),
+    })
+    .default({
+      extract: { enabled: true, kinds: ['preference', 'fact', 'episode'] },
+      retrieval: { k: 10, halfLifeDays: 14 },
+    }),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -91,6 +154,38 @@ function createConf(): Conf<Config> {
           sessionBudgetUsd: { type: 'number', default: 0.5 },
         },
       },
+      anthropic: {
+        type: 'object',
+        default: { cache1h: false },
+        properties: {
+          cache1h: { type: 'boolean', default: false },
+        },
+      },
+      memory: {
+        type: 'object',
+        default: {
+          extract: { enabled: true, kinds: ['preference', 'fact', 'episode'] },
+          retrieval: { k: 10, halfLifeDays: 14 },
+        },
+        properties: {
+          extract: {
+            type: 'object',
+            default: { enabled: true, kinds: ['preference', 'fact', 'episode'] },
+            properties: {
+              enabled: { type: 'boolean', default: true },
+              kinds: { type: 'array', default: ['preference', 'fact', 'episode'] },
+            },
+          },
+          retrieval: {
+            type: 'object',
+            default: { k: 10, halfLifeDays: 14 },
+            properties: {
+              k: { type: 'number', default: 10 },
+              halfLifeDays: { type: 'number', default: 14 },
+            },
+          },
+        },
+      },
     },
   } as const;
 
@@ -134,6 +229,19 @@ export function set<K extends keyof Config>(key: K, value: Config[K]): void {
   conf.set(key, value);
 }
 
+/** Dot-path getter for nested keys (e.g. `memory.extract.enabled`).
+ *  Conf's underlying dot-prop honors the path; we widen the return type because
+ *  the top-level `Config` schema isn't statically indexable by string-path. */
+export function getPath<T = unknown>(path: string): T | undefined {
+  // `conf.get` accepts dot-paths despite the typed signature.
+  return (conf as unknown as { get: (k: string) => T | undefined }).get(path);
+}
+
+/** Dot-path setter for nested keys. */
+export function setPath(path: string, value: unknown): void {
+  (conf as unknown as { set: (k: string, v: unknown) => void }).set(path, value);
+}
+
 export function del<K extends keyof Config>(key: K): void {
   conf.delete(key);
 }
@@ -170,4 +278,6 @@ export const config = {
   isAuthenticated,
   getConfigPath,
   getGatewayUrl,
+  getPath,
+  setPath,
 };

@@ -4,9 +4,12 @@ export default defineConfig({
   test: {
     include: [
       'src/brain/__tests__/**/*.test.ts',
+      'src/brain/memory/__tests__/**/*.test.ts',
       'src/providers/__tests__/**/*.test.ts',
       'src/cli/__tests__/**/*.test.ts',
+      'src/cli/commands/__tests__/**/*.test.ts',
       'src/usage/__tests__/**/*.test.ts',
+      'src/tui/**/__tests__/**/*.test.ts',
     ],
     testTimeout: 10_000,
     clearMocks: true,

@@ -60,10 +60,11 @@ export interface DeepModeResult {
 
 /**
  * Should the loop fall into deep mode for this classification?
- * Matches the plan's trigger: complex + >=4 files expected.
+ * Honors explicit route/classifier planning requests, and keeps the original
+ * complexity fallback for broad tasks.
  */
 export function shouldUseDeepMode(decision: ClassifyResult): boolean {
-  return decision.complexity === 'complex' && decision.estFilesTouched >= 4;
+  return decision.needsPlan || (decision.complexity === 'complex' && decision.estFilesTouched >= 4);
 }
 
 /**

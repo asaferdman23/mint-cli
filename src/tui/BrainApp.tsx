@@ -14,9 +14,21 @@ import { InputBox } from './components/InputBox.js';
 import { StatusBar } from './components/StatusBar.js';
 import { WelcomeScreen } from './components/WelcomeScreen.js';
 import { BrainToolInspector } from './components/BrainToolInspector.js';
+import { QueuedPrompts } from './components/QueuedPrompts.js';
+import { ApprovalDialog } from './components/ApprovalDialog.js';
+import { CostBanner } from './components/CostBanner.js';
+import { ErrorToast } from './components/ErrorToast.js';
+import { DiffView, type DiffHunk } from './components/DiffView.js';
+import { SLASH_COMMANDS } from './components/SlashAutocomplete.js';
 import { useBrainEvents } from './hooks/useBrainEvents.js';
+import { useInputHistory } from './hooks/useInputHistory.js';
+import { useApprovalFlow } from './hooks/useApprovalFlow.js';
+import { useQuotaWarnings } from './hooks/useQuotaWarnings.js';
+import { useSlashCommands } from './hooks/useSlashCommands.js';
+import { useSessionMemory } from './hooks/useSessionMemory.js';
 import { runBrain, type AgentEvent, type Mode } from '../brain/index.js';
 import type { ModelId } from '../providers/types.js';
+import type { TaskKind } from '../brain/events.js';
 
 initChalkLevel();
 
@@ -76,17 +88,34 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
   const [mode, setMode] = useState<Mode>(initialMode ?? 'diff');
   const [modelPreference, setModelPreference] = useState<string | undefined>(initialModelPref);
   const [currentModel, setCurrentModel] = useState<ModelId | null>(null);
+  // Sticky-route memory: the (kind, model) chosen for the most recent turn.
+  // Passed into the next `runBrain` so the loop can reuse the same model
+  // when the classifier picks the same kind — avoids jarring provider swaps
+  // when complexity wobbles (trivial ↔ simple). Reset on /clear.
+  const [lastTurnRoute, setLastTurnRoute] = useState<{ kind: TaskKind; model: ModelId } | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [isInspectorOpen, setIsInspectorOpen] = useState(false);
+  // Inspector visibility is a three-state to prevent mid-turn layout shift:
+  //   'collapsed' — single-row "Trace (Tab to expand)" strip, always reserved
+  //   'open'      — full ~12-row inspector with plan + events
+  //   'hidden'    — no row at all (only used pre-session, when nothing to show)
+  // We always reserve at least the 1-row strip from session start, so when
+  // events start flowing the message area never shrinks.
+  const [inspectorView, setInspectorView] = useState<'collapsed' | 'open'>('collapsed');
   const [scrollOffset, setScrollOffset] = useState(0);
-  const [quotaUsed, setQuotaUsed] = useState<number | undefined>(undefined);
-  const [quotaLimit, setQuotaLimit] = useState<number | undefined>(undefined);
+  // FIFO queue of prompts the user typed while a turn was in flight.
+  // The dequeue effect (below) shifts the head when isBusy flips false.
+  const [queue, setQueue] = useState<string[]>([]);
+  // Transient cost-budget banner. When non-null, BrainApp reserves a row
+  // budget above the input (similar to ApprovalDialog) and renders <CostBanner>.
+  // Cleared on next handleSubmit or on Esc inside the banner — never sticks
+  // into the chat transcript (Batch G #16).
+  const [costBannerMessage, setCostBannerMessage] = useState<string | null>(null);
+  // Transient red error toast. Driven by `error` notices from the brain
+  // (rate limits, gateway failures). Cleared on Esc or next submit.
+  const [errorToastMessage, setErrorToastMessage] = useState<string | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
   const assistantMsgIdRef = useRef<string>('');
-  // Track which quota thresholds we've warned about so we don't spam the chat
-  // with the same message after every task.
-  const quotaWarningShownRef = useRef<'none' | 'approaching' | 'exceeded'>('none');
 
   const {
     panelState,
@@ -97,10 +126,134 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
     lastDiff,
     recentEvents,
     currentActivity,
+    notices,
+    consumeNotices,
     resolveApproval,
     apply,
     reset,
   } = useBrainEvents();
+
+  const history = useInputHistory();
+  const session = useSessionMemory();
+  // L3 project memories — loaded once on session start from
+  // <cwd>/.mint/memory.sqlite. We pass these into runBrain() so the dynamic
+  // tier of the system prompt gets a <project_memory> block. Memories are
+  // appended to during the session (fire-and-forget in loop.ts) but we don't
+  // reload them mid-session — the next mint launch picks them up.
+  const [projectMemories, setProjectMemories] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { openMemoryStore } = await import('../brain/memory/store.js');
+        const store = openMemoryStore(process.cwd());
+        const rows = await store.query({ k: 10 });
+        // Silent nightly-style eviction (PR6): drop low-confidence stale
+        // entries (`confidence < 0.3 AND lastSeen < now-30d`). Fire-and-forget
+        // shape, but we await it before close() to avoid use-after-close.
+        // Never surfaced to the user; failures are swallowed.
+        try {
+          await store.evict();
+        } catch {
+          /* eviction is best-effort */
+        }
+        store.close();
+        if (!cancelled) setProjectMemories(rows.map((r) => r.text));
+      } catch {
+        /* best-effort — no memories on error */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // L4 user preferences — loaded once from ~/.mint/memory.sqlite. Passed into
+  // every runBrain call as userPreferences; surfaces as a <user_preferences>
+  // block at the top of the project tier. Same fire-and-forget shape as the
+  // L3 project loader above so the native sqlite binding stays off the render
+  // path.
+  const [userPreferences, setUserPreferences] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { openUserMemoryStore } = await import('../brain/memory/store.js');
+        const store = openUserMemoryStore();
+        const rows = await store.query({ kinds: ['preference'], k: 10 });
+        try {
+          await store.evict();
+        } catch {
+          /* eviction is best-effort */
+        }
+        store.close();
+        if (!cancelled) setUserPreferences(rows.map((r) => r.text));
+      } catch {
+        /* best-effort — no prefs on error */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Drain warn/error notices from the brain event stream into the chat
+  // transcript as styled rows (kind: 'warn' | 'error'). Keeps the assistant
+  // body clean while still surfacing the warning to the user.
+  // One-time hint: if this repo has accumulated enough recorded outcomes and
+  // routing has never been tuned, surface `/tune` so the learned-routing moat
+  // is discoverable without leaving the TUI. Calm, one line (AGENT.md §1.2).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { existsSync } = await import('node:fs');
+        const { join } = await import('node:path');
+        const cwd = process.cwd();
+        if (existsSync(join(cwd, '.mint', 'routing.json'))) return; // already tuned
+        if (!existsSync(join(cwd, '.mint', 'outcomes.sqlite'))) return;
+        const { openOutcomesStore } = await import('../brain/memory/outcomes.js');
+        const store = openOutcomesStore(cwd);
+        const count = store.count();
+        store.close();
+        if (cancelled || count < 30) return;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: nextId(),
+            role: 'assistant',
+            content: `Mint has learned this repo — ${count} sessions recorded. Run /tune to optimize routing for your tasks.`,
+            kind: 'warn',
+          },
+        ]);
+      } catch {
+        /* best-effort hint — never block startup */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (notices.length === 0) return;
+    const drained = consumeNotices();
+    if (drained.length === 0) return;
+    setMessages((prev) => [
+      ...prev,
+      ...drained.map((n) => ({
+        id: n.id,
+        role: 'assistant' as const,
+        content: n.text,
+        kind: n.kind,
+      })),
+    ]);
+    // Surface the most recent error as a red toast above the input. The
+    // chat row stays as historical record; the toast is the in-your-face
+    // signal so the user doesn't miss a rate limit / gateway failure.
+    const lastError = drained.filter((n) => n.kind === 'error').pop();
+    if (lastError) setErrorToastMessage(lastError.text);
+  }, [notices, consumeNotices]);
 
   // Whether the cost-budget warning has been shown for this session. Reset
   // on /clear via `reset()` below — we mirror it in a ref so a session can
@@ -132,130 +285,190 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
     };
   }, []);
 
-  // Fetch quota on mount and after each task.
-  // Deduplicates warnings: each threshold (approaching 80%, exceeded 100%) is
-  // shown at most once per session — we use a ref so React state updates don't
-  // cause re-fires.
-  //
-  // Offline UX: we cache the last successful response in ~/.mint-quota-cache.json
-  // so the status bar keeps showing *something* when the gateway is unreachable.
-  const fetchQuota = useCallback(async () => {
-    const { config } = await import('../utils/config.js');
-    if (!config.isAuthenticated()) return;
-
-    const gatewayUrl = config.getGatewayUrl();
-    const apiToken = config.get('gatewayToken');
-
-    // Seed from cache on mount so the UI has something to show before the
-    // fetch resolves (and so offline users see stale-but-useful numbers).
-    try {
-      const { readFileSync, existsSync } = await import('node:fs');
-      const { join: joinPath } = await import('node:path');
-      const { homedir } = await import('node:os');
-      const cachePath = joinPath(homedir(), '.mint-quota-cache.json');
-      if (existsSync(cachePath) && quotaUsed == null) {
-        const cached = JSON.parse(readFileSync(cachePath, 'utf-8')) as {
-          requests_used?: number;
-          requests_limit?: number;
-        };
-        if (cached.requests_used != null) setQuotaUsed(cached.requests_used);
-        if (cached.requests_limit != null) setQuotaLimit(cached.requests_limit);
-      }
-    } catch {
-      // Cache miss / parse error — continue with live fetch.
-    }
-
-    try {
-      const response = await fetch(`${gatewayUrl}/auth/quota`, {
-        headers: {
-          'Authorization': `Bearer ${apiToken}`,
-        },
-        signal: AbortSignal.timeout(10_000),
-      });
-
-      if (!response.ok) return;
-
-      const data = await response.json() as {
-        requests_used: number;
-        requests_limit: number;
-        plan_type?: string;
-      };
-      setQuotaUsed(data.requests_used);
-      setQuotaLimit(data.requests_limit);
-
-      // Persist cache for next cold start.
-      try {
-        const { writeFileSync } = await import('node:fs');
-        const { join: joinPath } = await import('node:path');
-        const { homedir } = await import('node:os');
-        const cachePath = joinPath(homedir(), '.mint-quota-cache.json');
-        writeFileSync(cachePath, JSON.stringify(data), 'utf-8');
-      } catch {
-        // Cache write failure is non-fatal.
-      }
-
-      // Only free-tier users get quota warnings; pro/enterprise have no cap.
-      if (data.plan_type !== 'free' || data.requests_limit <= 0) return;
-
-      const usagePercent = (data.requests_used / data.requests_limit) * 100;
-      const shown = quotaWarningShownRef.current;
-
-      if (usagePercent >= 100 && shown !== 'exceeded') {
-        quotaWarningShownRef.current = 'exceeded';
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: nextId(),
-            role: 'assistant',
-            content: `🚫 You've used all ${data.requests_limit} free requests.\n\nTo continue:\n  • Upgrade to Pro at https://usemint.dev/upgrade\n  • Add your own API keys: mint config:set providers.anthropic <key>`,
-          },
-        ]);
-      } else if (usagePercent >= 80 && usagePercent < 100 && shown === 'none') {
-        quotaWarningShownRef.current = 'approaching';
-        const remaining = data.requests_limit - data.requests_used;
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: nextId(),
-            role: 'assistant',
-            content: `⚠️  You've used ${data.requests_used} of your ${data.requests_limit} free requests (${remaining} remaining).\n\nTo continue after your quota:\n  • Upgrade to Pro for unlimited requests\n  • Add your own API keys with: mint config:set providers.anthropic <key>`,
-          },
-        ]);
-      }
-    } catch {
-      // Quota is advisory — a fetch failure should never break the TUI.
+  // Quota fetch + threshold warnings live in useQuotaWarnings. Threshold
+  // notices render as styled notice rows (kind: 'error' | 'warn') — never
+  // plain assistant messages, which would render with an empty "Mint"
+  // header. We also promote the friendlier quota text into the error toast,
+  // displacing the raw gateway 429 error which is less actionable.
+  const handleQuotaNotice = useCallback((notice: { level: 'approaching' | 'exceeded'; text: string }) => {
+    const isExceeded = notice.level === 'exceeded';
+    // Strip leading glyph — MessageList adds its own per kind.
+    const stripped = notice.text.replace(/^[✗⚠]\s+/, '');
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: nextId(),
+        role: 'assistant',
+        content: stripped,
+        kind: isExceeded ? 'error' : 'warn',
+      },
+    ]);
+    if (isExceeded) {
+      // Replace any raw gateway toast with the friendlier first line.
+      const firstLine = stripped.split('\n')[0] ?? stripped;
+      setErrorToastMessage(firstLine);
     }
   }, []);
+  const { quotaUsed, quotaLimit, fetchQuota } = useQuotaWarnings({
+    onNotice: handleQuotaNotice,
+  });
 
-  useEffect(() => {
-    fetchQuota();
-  }, [fetchQuota]);
+  // Slash-command dispatch. Returns true if the input was a recognized
+  // command — BrainApp short-circuits without sending it to the brain.
+  // Wrap `reset` so /clear also drops the L2 session-memory ring. We don't
+  // touch `apply`/`reset` from useBrainEvents — that's mid-turn state; the
+  // session summaries ring is parallel and survives a single reset() call.
+  const resetWithSession = useCallback(() => {
+    reset();
+    session.clear();
+    setLastTurnRoute(null);
+  }, [reset, session]);
+
+  const { handleSlashCommand } = useSlashCommands({
+    setMessages,
+    setMode,
+    setModelPreference,
+    setInput,
+    setQueue,
+    reset: resetWithSession,
+    fetchQuota,
+    formatEventLine,
+    resetBudgetWarn: useCallback(() => {
+      budgetWarnedRef.current = false;
+    }, []),
+    clearCostBanner: useCallback(() => setCostBannerMessage(null), []),
+    nextId,
+    queue,
+    modelPreference,
+    recentEvents,
+    quotaUsed,
+    quotaLimit,
+    sessionCost: panelState.totalCost,
+  });
 
   useInput(
     (keypress, key) => {
       if (key.ctrl && keypress === 'c') {
+        // Finalize any in-flight streaming assistant row so MessageList stops
+        // merging streamingContent into it and the spinner stops.
+        const inflightId = assistantMsgIdRef.current;
+        if (inflightId) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === inflightId && m.isStreaming
+                ? { ...m, isStreaming: false, interrupted: true }
+                : m,
+            ),
+          );
+        }
+        // Drop pending queued items — interrupting the train, not one item.
+        if (queue.length > 0) {
+          const cleared = queue.length;
+          setQueue([]);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: nextId(),
+              role: 'assistant',
+              content: `Queue cleared (${cleared} item${cleared === 1 ? '' : 's'})`,
+              kind: 'warn',
+            },
+          ]);
+        }
         abortRef.current?.abort();
-        exit();
+        // Drain in-flight memory writes so the last turn's extraction
+        // doesn't get lost when the user hits Ctrl+C. 2s soft timeout —
+        // never block longer (AGENT.md §1.6 keystroke is sacred). Then
+        // exit unconditionally.
+        void (async () => {
+          try {
+            const { awaitPendingMemoryWrites } = await import(
+              '../brain/memory/pending.js'
+            );
+            await awaitPendingMemoryWrites(2000);
+          } catch {
+            /* shutdown drain is best-effort */
+          } finally {
+            exit();
+          }
+        })();
         return;
       }
-      if (key.tab && (recentToolCalls.length > 0 || pipelinePhases.length > 0) && (isBusy || input.length === 0)) {
-        setIsInspectorOpen((v) => !v);
+      // Esc aborts the running task (but keeps the CLI alive — Ctrl+C is
+      // the hard exit). Only claims Esc when nothing else owns it: dialogs,
+      // banners, and toasts have their own Esc handlers when visible.
+      if (
+        key.escape &&
+        isBusy &&
+        !pendingApproval &&
+        !costBannerMessage &&
+        !errorToastMessage
+      ) {
+        const inflightId = assistantMsgIdRef.current;
+        if (inflightId) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === inflightId && m.isStreaming
+                ? { ...m, isStreaming: false, interrupted: true }
+                : m,
+            ),
+          );
+        }
+        if (queue.length > 0) {
+          const cleared = queue.length;
+          setQueue([]);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: nextId(),
+              role: 'assistant',
+              content: `Queue cleared (${cleared} item${cleared === 1 ? '' : 's'})`,
+              kind: 'warn',
+            },
+          ]);
+        }
+        abortRef.current?.abort();
+        return;
+      }
+      // Single source of truth for slash-autocomplete gating: mirror the
+      // exact condition used in InputBox so up/down/Tab don't double-fire
+      // (autocomplete nav + transcript scroll on the same key).
+      const slashOpen =
+        input.startsWith('/') && input.length >= 1 && !isBusy;
+      const hasAutocomplete =
+        slashOpen &&
+        SLASH_COMMANDS.some((cmd) => `/${cmd.name}`.startsWith(input.toLowerCase()));
+
+      if (
+        (key.tab || (key.ctrl && keypress === 'o')) &&
+        !hasAutocomplete &&
+        (recentToolCalls.length > 0 || pipelinePhases.length > 0) &&
+        (isBusy || input.length === 0)
+      ) {
+        setInspectorView((v) => (v === 'open' ? 'collapsed' : 'open'));
         return;
       }
 
-      // Scroll the transcript when there's something to scroll through.
-      // Only capture arrow keys when the input is empty or a run is in
-      // progress, so ordinary cursor movement inside the input still works.
-      const canScroll = messages.length > 0 && (isBusy || input.length === 0 || scrollOffset > 0);
+      // Up/down ownership cascade (AGENT.md §1.6 — no double-handlers):
+      //   1. autocomplete (handled inside InputBox, gated above)
+      //   2. history recall (handled inside InputBox when input is empty)
+      //   3. transcript scroll (here, only when history can't claim the key)
+      //
+      // History claims up/down whenever the input is empty and we're not busy,
+      // so we restrict transcript scroll on arrow keys to: a run is in
+      // progress, or the user is already scrolled up. PageUp/PageDown always
+      // scroll the transcript when there's anything to scroll.
+      const canScroll = messages.length > 0 && !hasAutocomplete;
       if (!canScroll) return;
 
       const pageStep = Math.max(8, Math.floor(termSize.rows / 2));
+      const arrowCanScroll = isBusy || scrollOffset > 0;
 
-      if (key.upArrow) {
+      if (key.upArrow && arrowCanScroll) {
         setScrollOffset((n) => n + 3);
         return;
       }
-      if (key.downArrow) {
+      if (key.downArrow && arrowCanScroll) {
         setScrollOffset((n) => Math.max(0, n - 3));
         return;
       }
@@ -272,198 +485,61 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
   );
 
   const handleSubmit = useCallback(
-    async (userInput: string) => {
+    async (userInput: string, opts?: { skipHistory?: boolean }) => {
       const trimmed = userInput.trim();
       if (!trimmed) return;
 
-      // Approval gate — if a resolve is pending, treat Enter as "yes", `no` as reject
+      // Any user submission dismisses the cost-budget banner (Batch G #16)
+      // and the error toast — both are single transient nudges.
+      setCostBannerMessage(null);
+      setErrorToastMessage(null);
+
+      // Approval is now handled entirely inside <ApprovalDialog> — the dialog
+      // owns y/n/a/Enter/Esc when pendingApproval is set, and InputBox is
+      // paused for the duration. handleSubmit should never see input while a
+      // dialog is open; defensively drop anything that slips through.
       if (pendingApproval) {
-        const approve = trimmed.toLowerCase() !== 'n' && trimmed.toLowerCase() !== 'no';
-        resolveApproval(approve);
         setInput('');
         return;
       }
 
-      if (isBusy) return;
-
-      // Slash commands
-      if (trimmed === '/help') {
+      // /clear-queue — drop any pending queued items. Runs immediately even
+      // while busy, since it's the explicit out for an over-eager train.
+      if (trimmed === '/clear-queue') {
+        const n = queue.length;
+        setQueue([]);
         setMessages((prev) => [
           ...prev,
           {
             id: nextId(),
             role: 'assistant',
-            content: [
-              'Brain commands:',
-              '  /help              — this help',
-              '  /clear             — clear chat',
-              '  /trace             — show recent events from this session',
-              '  /model [id|auto]   — list models or switch (e.g. /model claude-sonnet-4)',
-              '  /login             — sign in via browser (GitHub / Google)',
-              '  /logout            — sign out of the gateway',
-              '  /usage             — show free-tier quota + cost so far',
-              '  /auto              — auto mode (no approvals)',
-              '  /diff              — diff mode (per-file approval)',
-              '  /plan              — plan mode (no writes)',
-              '  /yolo              — yolo mode (full autonomy)',
-              '  Ctrl+C             — exit',
-            ].join('\n'),
+            content: n === 0 ? 'Queue is already empty.' : `Queue cleared (${n} item${n === 1 ? '' : 's'})`,
+            kind: 'warn',
           },
         ]);
         setInput('');
         return;
       }
-      if (trimmed === '/clear') {
-        setMessages([]);
-        reset();
-        budgetWarnedRef.current = false;
-        setInput('');
-        return;
-      }
-      if (trimmed === '/trace') {
-        // Render the in-memory event buffer for this session. We render a
-        // compact one-line summary per event — use `mint trace <id>` for the
-        // full transcript.
-        const lines: string[] = recentEvents.length === 0
-          ? ['(no events yet — start a task)']
-          : recentEvents.slice(-60).map(formatEventLine);
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: nextId(),
-            role: 'assistant',
-            content: ['Recent events (this session):', ...lines].join('\n'),
-          },
-        ]);
-        setInput('');
-        return;
-      }
-      if (trimmed === '/auto' || trimmed === '/diff' || trimmed === '/plan' || trimmed === '/yolo') {
-        const newMode = trimmed.slice(1) as Mode;
-        setMode(newMode);
-        setMessages((prev) => [
-          ...prev,
-          { id: nextId(), role: 'assistant', content: `Mode: ${newMode}` },
-        ]);
+
+      // Busy → queue the submission. History is recorded at enqueue time so
+      // the user can recall it later via up-arrow (Batch D contract).
+      if (isBusy) {
+        history.recordSubmission(trimmed);
+        setQueue((q) => [...q, trimmed]);
         setInput('');
         return;
       }
 
-      // /model — list or switch active model (in-session, no relaunch)
-      if (trimmed === '/model' || trimmed.startsWith('/model ')) {
-        const arg = trimmed.slice('/model'.length).trim();
-        const { MODEL_TIERS } = await import('../providers/tiers.js');
-        const allModels = Object.keys(MODEL_TIERS).sort();
-        if (!arg) {
-          const lines = allModels.map((m) => {
-            const tier = (MODEL_TIERS as Record<string, string>)[m];
-            const active = m === modelPreference ? ' ◀ active' : '';
-            return `  ${m.padEnd(24)} [${tier}]${active}`;
-          });
-          const activeLine = `Active: ${modelPreference ?? 'auto (routed)'}`;
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: nextId(),
-              role: 'assistant',
-              content: [activeLine, '', 'Available models (use `/model <id>` or `/model auto`):', ...lines].join('\n'),
-            },
-          ]);
-          setInput('');
-          return;
-        }
-        if (arg === 'auto') {
-          setModelPreference(undefined);
-          setMessages((prev) => [
-            ...prev,
-            { id: nextId(), role: 'assistant', content: 'Model: auto (routed per task)' },
-          ]);
-          setInput('');
-          return;
-        }
-        if (!allModels.includes(arg)) {
-          setMessages((prev) => [
-            ...prev,
-            { id: nextId(), role: 'assistant', content: `Unknown model "${arg}". Run /model with no args to see the list.` },
-          ]);
-          setInput('');
-          return;
-        }
-        setModelPreference(arg);
-        setMessages((prev) => [
-          ...prev,
-          { id: nextId(), role: 'assistant', content: `Model: ${arg} (applies to your next turn)` },
-        ]);
-        setInput('');
-        return;
-      }
+      // Persist to history (Batch D). Skip approval responses (handled above)
+      // but record slash commands and prompts alike — users want /clear, /trace
+      // etc. recalled the same as any other input. Dequeue-replay path passes
+      // skipHistory=true since the prompt was already recorded at enqueue.
+      if (!opts?.skipHistory) history.recordSubmission(trimmed);
 
-      // /login — browser OAuth, in-session
-      if (trimmed === '/login') {
-        setMessages((prev) => [
-          ...prev,
-          { id: nextId(), role: 'assistant', content: 'Opening browser to sign in… complete the flow in your browser, then return here.' },
-        ]);
-        setInput('');
-        try {
-          const { loginWithBrowser } = await import('../cli/commands/login-browser.js');
-          const result = await loginWithBrowser({ silent: true });
-          setMessages((prev) => [
-            ...prev,
-            { id: nextId(), role: 'assistant', content: `Signed in as ${result.email} (${result.plan} plan).` },
-          ]);
-          fetchQuota();
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          setMessages((prev) => [
-            ...prev,
-            { id: nextId(), role: 'assistant', content: `Sign-in failed: ${msg}` },
-          ]);
-        }
-        return;
-      }
-
-      // /logout — clear stored gateway token
-      if (trimmed === '/logout') {
-        try {
-          const { config } = await import('../utils/config.js');
-          config.del('gatewayToken');
-          config.del('email');
-          setMessages((prev) => [
-            ...prev,
-            { id: nextId(), role: 'assistant', content: 'Signed out. Run /login or `mint login` to sign back in.' },
-          ]);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          setMessages((prev) => [
-            ...prev,
-            { id: nextId(), role: 'assistant', content: `Logout failed: ${msg}` },
-          ]);
-        }
-        setInput('');
-        return;
-      }
-
-      // /usage — show quota + session cost
-      if (trimmed === '/usage') {
-        const used = quotaUsed ?? 0;
-        const limit = quotaLimit ?? 50;
-        const remaining = Math.max(0, limit - used);
-        const cost = panelState.totalCost.toFixed(4);
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: nextId(),
-            role: 'assistant',
-            content: [
-              `Free quota: ${used}/${limit} used (${remaining} remaining this month)`,
-              `Session cost: $${cost}`,
-              '',
-              'See full breakdown: `mint usage` or `mint account`',
-            ].join('\n'),
-          },
-        ]);
-        setInput('');
+      // Slash commands — delegated to useSlashCommands. Returns true if the
+      // input was a recognized command (in which case we short-circuit and
+      // do not push it to the brain).
+      if (await handleSlashCommand(trimmed)) {
         return;
       }
 
@@ -487,6 +563,16 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
         modelPreference && modelPreference !== 'auto'
           ? (modelPreference as ModelId)
           : undefined;
+      const recentUserTurns = messages
+        .filter((m) => m.role === 'user')
+        .map((m) => m.content)
+        .slice(-4);
+
+      // Settle the prior turn's summarizer before the next runBrain reads
+      // `session.summaryTexts`. Bounded at 1.5s so a hung summary never
+      // blocks the user — `awaitPending` resolves on timeout if needed
+       // (AGENT.md §1.6 — keystroke is sacred).
+      await session.awaitPending(1500);
 
       try {
         for await (const event of runBrain({
@@ -495,21 +581,45 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
           mode,
           signal: controller.signal,
           model: overrideModel,
+          recentUserTurns,
+          priorTurnSummaries: session.summaryTexts,
+          projectMemories,
+          userPreferences,
+          priorModel: lastTurnRoute?.model,
+          priorKind: lastTurnRoute?.kind,
         })) {
           apply(event);
 
           if (event.type === 'classify') {
             setCurrentModel(event.model);
-            // Surface routing reasoning so the user sees WHY this model was picked.
-            const reasoning = event.reasoning ? ` — ${event.reasoning}` : '';
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: nextId(),
-                role: 'assistant',
-                content: `→ Routed to **${event.model}** (${event.kind} · ${event.complexity}, ${event.confidence.toFixed(2)} conf, via ${event.source})${reasoning}`,
-              },
-            ]);
+            // Remember (kind, model) for next-turn sticky routing. Set here
+            // (not on `done`) so the value is recorded as soon as the route
+            // is committed — even if the turn aborts mid-stream.
+            setLastTurnRoute({ kind: event.kind, model: event.model });
+            // Model identity is surfaced via the [model] tag in the assistant
+            // header (MessageList). The full routing reasoning lives in /trace
+            // and the BrainToolInspector — we don't dump it into the transcript.
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantMsgIdRef.current
+                  ? { ...m, model: event.model }
+                  : m,
+              ),
+            );
+          }
+          if (event.type === 'plan.draft') {
+            // Attach the structured plan to the in-flight assistant row so
+            // MessageList can render it as a framed `Plan` panel ABOVE the
+            // Mint header — the response body that follows reads as nested
+            // under the plan rather than competing with it.
+            const planSteps = event.steps;
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id === assistantMsgIdRef.current
+                  ? { ...m, planSteps }
+                  : m,
+              ),
+            );
           }
           if (event.type === 'cost.delta' && !budgetWarnedRef.current) {
             // Cost-budget warning: read threshold lazily so changes via
@@ -520,14 +630,9 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
               const budget = (config.get('brain') as { sessionBudgetUsd?: number } | undefined)?.sessionBudgetUsd ?? 0.5;
               if (budget > 0 && panelState.totalCost + event.usd > budget) {
                 budgetWarnedRef.current = true;
-                setMessages((prev) => [
-                  ...prev,
-                  {
-                    id: nextId(),
-                    role: 'assistant',
-                    content: `⚠️  Session cost has exceeded $${budget.toFixed(2)}. Press Ctrl+C to abort, or continue — you'll only be warned once per session. Adjust with: mint config:set brain.sessionBudgetUsd <usd>`,
-                  },
-                ]);
+                setCostBannerMessage(
+                  `Session cost has exceeded $${budget.toFixed(2)}. Press Ctrl+C to abort, or continue — you'll only be warned once per session. Adjust with: mint config:set brain.sessionBudgetUsd <usd>`,
+                );
               }
             } catch {
               /* config read is best-effort */
@@ -535,14 +640,32 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
           }
           if (event.type === 'error') {
             setErrorMsg(event.error);
+            // Finalize the in-flight assistant row so it doesn't sit with
+            // `isStreaming: true` forever. If no content arrived, drop the
+            // row entirely — otherwise mark it interrupted.
+            const inFlightId = assistantMsgIdRef.current;
+            setMessages((prev) => {
+              const target = prev.find((m) => m.id === inFlightId);
+              if (!target) return prev;
+              if (target.content.trim().length === 0) {
+                return prev.filter((m) => m.id !== inFlightId);
+              }
+              return prev.map((m) =>
+                m.id === inFlightId
+                  ? { ...m, isStreaming: false, interrupted: true }
+                  : m,
+              );
+            });
           }
           if (event.type === 'done') {
+            const output = event.result.output || '(no output)';
+            const content = output;
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === assistantMsgIdRef.current
                   ? {
                       ...m,
-                      content: event.result.output || '(no output)',
+                      content,
                       isStreaming: false,
                       cost: event.result.totalCostUsd,
                       model: event.result.model,
@@ -550,6 +673,18 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
                   : m,
               ),
             );
+            // L2 session memory — fire-and-forget summarize. Picks up this turn's
+            // user prompt, the final assistant content, the files actually touched
+            // by tool calls, and the brain's success flag. Does not block the
+            // render thread (see useSessionMemory.recordTurn).
+            session.recordTurn({
+              userTask: trimmed,
+              finalAssistant: output,
+              filesTouched: event.result.filesTouched,
+              toolCalls: event.result.toolCalls,
+              outcome: event.result.success ? 'success' : 'partial',
+              model: event.result.model,
+            });
             // Track real Opus comparison from actual token counts — replaces
             // the legacy App.tsx's hardcoded `result.totalCost * 50` multiplier.
             try {
@@ -576,14 +711,42 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         setErrorMsg(msg);
-        setMessages((prev) => prev.filter((m) => m.id !== assistantMsgIdRef.current));
+        // Keep an already-interrupted row so the "(interrupted)" line stays
+        // visible; drop only the orphan empty streaming row from a real error.
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMsgIdRef.current && m.isStreaming
+              ? { ...m, isStreaming: false, interrupted: true }
+              : m,
+          ),
+        );
       } finally {
         setIsBusy(false);
         abortRef.current = null;
       }
     },
-    [isBusy, mode, modelPreference, pendingApproval, resolveApproval, apply, reset],
+    [isBusy, mode, modelPreference, pendingApproval, apply, reset, history, queue.length, handleSlashCommand, session],
   );
+
+  // Dequeue head when the in-flight turn finishes. Use a ref to guard against
+  // re-dispatch within the same tick: handleSubmit calls setIsBusy(true)
+  // synchronously, but React batches state updates — if isBusy is briefly
+  // observed false while the next render is pending, we could double-dispatch
+  // the same head. The ref breaks that race.
+  const dequeueLockRef = useRef(false);
+  useEffect(() => {
+    if (isBusy || queue.length === 0 || pendingApproval) return;
+    if (dequeueLockRef.current) return;
+    dequeueLockRef.current = true;
+    const [head, ...rest] = queue;
+    setQueue(rest);
+    // Submit asynchronously so React commits the queue shift first; handleSubmit
+    // will set isBusy=true which re-locks the effect.
+    Promise.resolve().then(() => {
+      dequeueLockRef.current = false;
+      if (head) handleSubmit(head, { skipHistory: true });
+    });
+  }, [isBusy, queue, pendingApproval, handleSubmit]);
 
   // Auto-submit an initial prompt
   useEffect(() => {
@@ -594,24 +757,85 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const showWelcome = messages.length === 0 && !isBusy;
-  // Auto-show the tool inspector while the agent is working — users shouldn't
-  // need to remember Tab to see what's happening. They can still Tab to close.
-  const showInspector = (isInspectorOpen || isBusy) && recentToolCalls.length > 0;
-  const inspectorHeight = showInspector
-    ? Math.min(12, Math.max(6, Math.floor(termSize.rows * 0.32)))
-    : 0;
-  const showDiffPopup = pendingApproval?.reason === 'diff' && lastDiff !== null;
-  const diffPopupRows = showDiffPopup
-    ? Math.min(
-        12,
-        2 + lastDiff!.hunks.reduce((acc, h) => acc + h.lines.length, 0),
-      )
-    : 0;
-  const approvalNotice = pendingApproval
-    ? `Approve ${pendingApproval.reason}? Press y or Enter for yes, n for no.`
+  // Inspector reserves space proactively so message area never reflows
+  // mid-turn (AGENT.md §1.6 — no layout shifts when a spinner starts).
+  // While the agent is working we *render* the strip even if recentEvents is
+  // empty; pre-session we hide it entirely so the welcome screen owns the
+  // full height.
+  const inspectorAvailable = recentEvents.length > 0 || isBusy;
+  const showInspectorOpen = inspectorView === 'open' && inspectorAvailable && !showWelcome;
+  const showInspectorStrip = inspectorView === 'collapsed' && inspectorAvailable && !showWelcome;
+  const openInspectorHeight = Math.min(12, Math.max(6, Math.floor(termSize.rows * 0.32)));
+  const inspectorHeight = showInspectorOpen
+    ? openInspectorHeight
+    : showInspectorStrip
+      ? 1
+      : 0;
+  // Convert hook's hunk shape ({type:'context'|'add'|'remove', content}) to
+  // DiffView's compact shape ({kind:'+'|'-'|' ', text}) once per render.
+  const convertedDiffHunks: DiffHunk[] | null = lastDiff
+    ? lastDiff.hunks.map((h) => ({
+        header: `@@ -${h.oldStart},${h.oldLines} +${h.newStart},${h.newLines} @@`,
+        lines: h.lines.map((l) => ({
+          kind: l.type === 'add' ? ('+' as const) : l.type === 'remove' ? ('-' as const) : (' ' as const),
+          text: l.content,
+        })),
+      }))
     : null;
-  const inputAreaHeight = approvalNotice ? 4 : 3;
-  const reservedRows = (errorMsg ? 1 : 0) + inspectorHeight + diffPopupRows + inputAreaHeight + 1;
+
+  // Pull tool/file hints + diff out of the approval payload (delegated to
+  // useApprovalFlow). The hook also computes the row budget reserved above
+  // the input so the message area never reflows when the dialog appears.
+  const approvalLastDiff =
+    lastDiff && convertedDiffHunks ? { file: lastDiff.file, hunks: convertedDiffHunks } : null;
+  const approvalDisplay = useApprovalFlow(pendingApproval, approvalLastDiff);
+  const approvalToolName = approvalDisplay.toolName;
+  const approvalFilePath = approvalDisplay.filePath;
+  const approvalDiff = approvalDisplay.diff;
+
+  // Standalone diff popup (when there's a proposed diff but no live approval
+  // gate — e.g. auto mode applied the change). Replaces the legacy inline
+  // popup. We hide it while the approval dialog is open since the dialog
+  // already embeds the diff.
+  const showStandaloneDiff = lastDiff !== null && !pendingApproval;
+  const standaloneDiffRows = showStandaloneDiff && convertedDiffHunks
+    ? Math.min(
+        20,
+        // 1 file header + N rendered rows (capped).
+        1 +
+          convertedDiffHunks.reduce(
+            (acc, h) => acc + (h.header ? 1 : 0) + h.lines.length,
+            0,
+          ),
+      ) + 2 // paddingX adds top/bottom internal padding budget
+    : 0;
+
+  // Approval dialog row budget — reserved from the moment pendingApproval
+  // becomes truthy so the message area never reflows under the user (AGENT.md
+  // §1.6 — no layout shifts when a spinner starts; §1.5 — trust requires the
+  // dialog to be visible immediately, not after the next render tick).
+  // Computed by useApprovalFlow.
+  const approvalDialogRows = pendingApproval ? approvalDisplay.rows : 0;
+
+  // When busy, InputBox renders a 1-row spinner strip above the bordered input.
+  const inputAreaHeight = 3 + (isBusy ? 1 : 0);
+  // Queue strip: 1 header + N items.
+  const queueHeight = queue.length > 0 ? queue.length + 1 : 0;
+  // Cost banner: round-bordered single line — 1 body row + 2 border rows.
+  // Reserved from the moment costBannerMessage is non-null (AGENT.md §1.6).
+  const costBannerHeight = costBannerMessage ? 3 : 0;
+  // Same shape as cost banner — red round box, 1 body + 2 border rows.
+  const errorToastHeight = errorToastMessage ? 3 : 0;
+  const reservedRows =
+    (errorMsg ? 1 : 0) +
+    inspectorHeight +
+    standaloneDiffRows +
+    approvalDialogRows +
+    costBannerHeight +
+    errorToastHeight +
+    queueHeight +
+    inputAreaHeight +
+    1;
   const messageAreaHeight = Math.max(1, termSize.rows - reservedRows);
 
   return (
@@ -634,42 +858,90 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
         />
       )}
 
-      {showInspector && !showWelcome && (
-        <BrainToolInspector calls={recentToolCalls} maxHeight={inspectorHeight} />
+      {showInspectorOpen && (
+        <BrainToolInspector
+          calls={recentToolCalls}
+          currentActivity={currentActivity}
+          events={recentEvents}
+          panelState={panelState}
+          maxHeight={inspectorHeight}
+        />
       )}
 
-      {showDiffPopup && lastDiff && (
-        <Box
-          flexDirection="column"
-          borderStyle="round"
-          borderColor="yellow"
-          paddingX={1}
-          height={diffPopupRows}
-          overflow="hidden"
-        >
-          <Text color="yellow" bold>
-            Diff: {lastDiff.file}
+      {showInspectorStrip && (
+        <Box height={1} paddingX={1} overflow="hidden">
+          <Text dimColor>
+            <Text color="cyan">› </Text>
+            {currentActivity?.label ?? 'Trace'}
+            <Text dimColor>  (Tab to expand)</Text>
           </Text>
-          {lastDiff.hunks.flatMap((h, hi) =>
-            h.lines.slice(0, 8).map((l, li) => (
-              <Text
-                key={`${hi}-${li}`}
-                color={l.type === 'add' ? 'green' : l.type === 'remove' ? 'red' : undefined}
-                dimColor={l.type === 'context'}
-              >
-                {l.type === 'add' ? '+' : l.type === 'remove' ? '-' : ' '} {l.content}
-              </Text>
-            )),
-          )}
+        </Box>
+      )}
+
+      {showStandaloneDiff && lastDiff && convertedDiffHunks && (
+        <Box height={standaloneDiffRows} overflow="hidden" flexDirection="column">
+          <DiffView
+            file={lastDiff.file}
+            hunks={convertedDiffHunks}
+            maxRows={20}
+            termCols={termSize.cols}
+          />
+        </Box>
+      )}
+
+      {/* Approval dialog — reserves rows from the moment pendingApproval is
+          set so the message area doesn't reflow when the gate appears. */}
+      {pendingApproval && (
+        <Box height={approvalDialogRows} overflow="hidden" flexDirection="column">
+          <ApprovalDialog
+            reason={pendingApproval.reason === 'diff'
+              ? `Apply the proposed edit?`
+              : pendingApproval.reason === 'iteration'
+                ? `Continue with this iteration's destructive tool calls?`
+                : pendingApproval.reason === 'spend_limit'
+                  ? `Spend cap reached — $${Number(pendingApproval.payload.spentUsd ?? 0).toFixed(4)} of $${Number(pendingApproval.payload.capUsd ?? 0).toFixed(2)}. Keep going?`
+                  : `Run ${approvalToolName ?? 'this tool'}?`}
+            toolName={approvalToolName}
+            filePath={approvalFilePath}
+            diffPreview={approvalDiff}
+            onApprove={() => resolveApproval(true)}
+            onReject={() => resolveApproval(false)}
+            termCols={termSize.cols}
+          />
+        </Box>
+      )}
+
+      {queue.length > 0 && (
+        <Box height={queueHeight} overflow="hidden">
+          <QueuedPrompts items={queue} termCols={termSize.cols} />
+        </Box>
+      )}
+
+      {/* Cost-budget banner — transient, dismiss on Esc or next submit.
+          Reserves rows the moment the message is set (AGENT.md §1.6). */}
+      {costBannerMessage && (
+        <Box height={costBannerHeight} overflow="hidden" flexDirection="column">
+          <CostBanner
+            message={costBannerMessage}
+            onDismiss={() => setCostBannerMessage(null)}
+            termCols={termSize.cols}
+          />
+        </Box>
+      )}
+
+      {/* Error toast — red round box surfaced for rate-limit / gateway
+          failures. Dismiss on Esc or next submit. */}
+      {errorToastMessage && (
+        <Box height={errorToastHeight} overflow="hidden" flexDirection="column">
+          <ErrorToast
+            message={errorToastMessage}
+            onDismiss={() => setErrorToastMessage(null)}
+            termCols={termSize.cols}
+          />
         </Box>
       )}
 
       <Box height={inputAreaHeight} overflow="hidden" flexDirection="column">
-        {approvalNotice && (
-          <Box paddingX={1}>
-            <Text color="yellow">{approvalNotice}</Text>
-          </Box>
-        )}
         <InputBox
           value={input}
           onChange={setInput}
@@ -677,6 +949,11 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
           isBusy={isBusy}
           isRouting={false}
           currentActivity={currentActivity}
+          inspectorHint={recentToolCalls.length > 0 ? `ctrl+o to ${inspectorView === 'open' ? 'collapse' : 'expand'}` : undefined}
+          onHistoryPrev={history.recallPrev}
+          onHistoryNext={history.recallNext}
+          onHistoryExit={history.exitHistory}
+          isPaused={pendingApproval !== null}
         />
       </Box>
 
@@ -687,9 +964,11 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
           sessionCost={panelState.totalCost}
           monthlyCost={0}
           agentMode={mode}
-          inspectorHint={recentToolCalls.length > 0 ? 'Tab tools' : undefined}
+          inspectorHint={recentToolCalls.length > 0 ? 'Ctrl+O trace' : undefined}
           quotaUsed={quotaUsed}
           quotaLimit={quotaLimit}
+          termCols={termSize.cols}
+          cacheHitRatio={panelState.cacheHitRatio}
         />
       </Box>
     </Box>

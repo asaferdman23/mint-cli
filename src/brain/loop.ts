@@ -16,12 +16,16 @@
  */
 import { Session, type EventSink } from './session.js';
 import { TokenBudget, countTokens, approxCostUsd } from './tokens.js';
-import { loadRoutingTable, resolveRoute, type RouteEntry } from './router.js';
+import { loadRoutingTable, resolveRoute, isStickyEligible, type RouteEntry } from './router.js';
 import { classify, type ClassifyFeatures } from './classifier.js';
 import { extractClassifierFeatures } from './classifier.js';
 import { buildBM25Index } from './memory/bm25.js';
 import { retrieve } from './memory/retriever.js';
 import { openOutcomesStore } from './memory/outcomes.js';
+import { openMemoryStore, type ScoredMemory } from './memory/store.js';
+import { extractMemories } from './memory/extract.js';
+import { trackPendingMemoryWrite } from './memory/pending.js';
+import type { TurnInputs } from './memory/summarize-turn.js';
 import {
   probeEmbeddings,
   makeEmbeddingProvider,
@@ -34,9 +38,13 @@ import { maybeCompact } from './compact.js';
 import { MODE_POLICIES } from './modes.js';
 import { runDeepMode, shouldUseDeepMode } from './deep-mode.js';
 import { streamAgent } from '../providers/index.js';
+import { config } from '../utils/config.js';
+import { askApproval } from './approvals.js';
 import { getToolDefinitions } from '../tools/index.js';
 import { loadIndex, indexProject } from '../context/indexer.js';
-import type { AgentEvent, BrainResult, Mode } from './events.js';
+import type { ProjectIndex } from '../context/indexer.js';
+import { buildPromptTiers, flattenTiers } from './prompt-tiers.js';
+import type { AgentEvent, BrainResult, Mode, TaskKind } from './events.js';
 import type { Message, ModelId } from '../providers/types.js';
 
 export interface RunBrainOptions {
@@ -55,9 +63,62 @@ export interface RunBrainOptions {
   onEvent?: EventSink;
   /** Override the max iteration count for this run. */
   maxIterations?: number;
+  /** Override the per-session spend cap (USD) for this run only. When undefined,
+   *  the loop reads `brain.spendCap` from config. 0 disables the cap. */
+  spendCap?: number;
+  /** Recent user turns from the interactive session, used only for classification context. */
+  recentUserTurns?: string[];
+  /** L2 session memory — one-paragraph summaries of prior turns (oldest first).
+   *  Injected into the dynamic tier so the executor sees continuity across
+   *  follow-up prompts. Owned by `useSessionMemory` in the TUI. */
+  priorTurnSummaries?: string[];
+  /** L3 project memory — short text snippets from <cwd>/.mint/memory.sqlite,
+   *  loaded by BrainApp at session start. Injected into the dynamic tier. */
+  projectMemories?: string[];
+  /** L4 user memory — preference texts from `~/.mint/memory.sqlite`, loaded
+   *  by BrainApp at session start. Injected into the project tier as a
+   *  `<user_preferences>` block above AGENT.md / MINT.md content. */
+  userPreferences?: string[];
+  /** Model selected for the prior turn in this conversation. When the kind is
+   *  unchanged across turns, the loop reuses this model regardless of the
+   *  classifier's freshly-resolved choice. Prevents jarring provider swaps on
+   *  classifier wobble (e.g., trivial ↔ simple). */
+  priorModel?: ModelId;
+  /** Task kind of the prior turn. Used together with `priorModel` to gate
+   *  sticky-model selection — only sticky when the same kind continues. */
+  priorKind?: TaskKind;
 }
 
 const DEFAULT_MODE: Mode = 'diff';
+
+function deriveRepoSignals(index: ProjectIndex): Pick<ClassifyFeatures, 'topLanguages' | 'frameworks'> {
+  const langLoc = new Map<string, number>();
+  for (const file of Object.values(index.files)) {
+    langLoc.set(file.language, (langLoc.get(file.language) ?? 0) + file.loc);
+  }
+  const topLanguages = [...langLoc.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([language]) => language);
+
+  const paths = new Set(Object.keys(index.files));
+  const has = (path: string) => paths.has(path);
+  const frameworks = new Set<string>();
+  if (has('package.json')) {
+    const pkg = index.files['package.json'];
+    const summary = `${pkg.summary} ${pkg.exports.join(' ')}`.toLowerCase();
+    if (summary.includes('react') || [...paths].some((p) => p.endsWith('.tsx') || p.includes('/components/'))) frameworks.add('react');
+    if ([...paths].some((p) => p.startsWith('app/') || p.startsWith('pages/') || p.includes('next.config'))) frameworks.add('nextjs');
+    if ([...paths].some((p) => p.includes('vite.config'))) frameworks.add('vite');
+  }
+  if ([...paths].some((p) => p.includes('vitest.config'))) frameworks.add('vitest');
+  if ([...paths].some((p) => p.includes('jest.config'))) frameworks.add('jest');
+  if ([...paths].some((p) => p.endsWith('pyproject.toml'))) frameworks.add('python');
+  if ([...paths].some((p) => p.endsWith('Cargo.toml'))) frameworks.add('rust');
+  if ([...paths].some((p) => p.endsWith('go.mod'))) frameworks.add('go');
+
+  return { topLanguages, frameworks: [...frameworks] };
+}
 
 export async function* runBrain(options: RunBrainOptions): AsyncGenerator<AgentEvent> {
   const startedAt = Date.now();
@@ -184,7 +245,9 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
     task: options.task,
     projectFileCount: index.totalFiles,
     language: index.language,
+    ...deriveRepoSignals(index),
     topFiles,
+    recentUserTurns: options.recentUserTurns,
     pastOutcomes,
   };
 
@@ -201,13 +264,47 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
     overrides: { model: options.model, reasoning: options.reasoning },
   });
 
+  // Sticky model: if the conversation continues in the same task kind,
+  // reuse the prior turn's model. Prevents jarring provider swaps when
+  // the classifier wobbles on complexity ("trivial" ↔ "simple"). Side
+  // effect: keeps Anthropic prompt cache hot across the conversation.
+  // Skipped when an explicit `--model` override is supplied — the user's
+  // choice wins. Falls through to the freshly-resolved model if the prior
+  // model has become unavailable mid-session.
+  if (
+    !options.model &&
+    options.priorKind === decision.kind &&
+    options.priorModel &&
+    isStickyEligible(options.priorModel, route)
+  ) {
+    const swapped = route.model;
+    if (swapped !== options.priorModel) {
+      route.model = options.priorModel;
+      try {
+        session.trace.write({
+          type: 'route.stickied',
+          sessionId: session.id,
+          ts: Date.now(),
+          from: swapped,
+          to: options.priorModel,
+          kind: decision.kind,
+        } as unknown as AgentEvent);
+      } catch {
+        /* telemetry is best-effort */
+      }
+    }
+  }
+
+  const needsPlan = decision.needsPlan || route.needsPlan;
+
   session.emit({
     type: 'classify',
     kind: decision.kind,
     complexity: decision.complexity,
     model: route.model,
+    planModel: needsPlan ? route.planModel ?? route.model : undefined,
     estFilesTouched: decision.estFilesTouched,
-    needsPlan: decision.needsPlan,
+    needsPlan,
     needsApproval: decision.needsApproval,
     confidence: decision.confidence,
     reasoning: decision.reasoning,
@@ -249,7 +346,7 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
   // the system prompt. The classifier's complexity + estFilesTouched gates
   // this so simpler tasks skip the extra model call.
   let deepPlanBlock = '';
-  if (shouldUseDeepMode(decision)) {
+  if (shouldUseDeepMode({ ...decision, needsPlan })) {
     const deep = await runDeepMode(
       {
         session,
@@ -258,18 +355,11 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
         route,
         contextFiles: retrieved.files,
       },
-      // Per-step executor. Today this announces the subtask in the event
-      // stream so `mint trace` shows a clear plan→build hierarchy. The actual
-      // tool work for each step happens in the outer loop below, guided by
-      // the plan block injected into the system prompt. A future change can
-      // replace this with a focused inner tool loop per step (see roadmap).
-      async (step) => {
-        const filesHint = step.filesHint?.length ? ` [${step.filesHint.join(', ')}]` : '';
-        session.emit({
-          type: 'text.delta',
-          text: `\n→ step ${step.id}: ${step.description}${filesHint}\n`,
-        });
-      },
+      // Per-step executor — no-op announce. Plan steps are rendered by the
+      // TUI via the structured plan.draft event (PlanPanel above the
+      // assistant header), so emitting them as text.delta would duplicate
+      // them inline in the response body.
+      async (_step) => {},
     );
     if (deep.planSteps.length > 0) {
       const planLines = deep.planSteps
@@ -286,8 +376,81 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
     }
   }
 
-  // 6. Build initial messages
-  const systemPrompt = buildSystemPrompt(session.cwd, retrieved.files) + deepPlanBlock;
+  // 5b. Per-turn hybrid memory retrieval (PR7). Supersedes the
+  // bootstrap-on-mount `options.projectMemories` from BrainApp — the
+  // bootstrap is a stopgap for first paint; per-turn retrieval is
+  // task-aware so it produces better-targeted memories on every turn.
+  // Decisions and open_questions are deliberately excluded from default
+  // injection (too noisy) — they surface only via `/memory list`.
+  let perTurnMemories: ScoredMemory[] = [];
+  try {
+    const memStartedAt = Date.now();
+    const memStore = openMemoryStore(session.cwd);
+    // PR8: retrieval K and half-life are user-tunable via config knobs.
+    const retrievalK = (config.getPath<number>('memory.retrieval.k') ?? 10);
+    const retrievalHalfLife = (config.getPath<number>('memory.retrieval.halfLifeDays') ?? 14);
+    perTurnMemories = await memStore.queryScored({
+      query: options.task,
+      kinds: ['preference', 'fact', 'episode'],
+      k: retrievalK,
+      halfLifeDays: retrievalHalfLife,
+    });
+    memStore.close();
+    const memElapsedMs = Date.now() - memStartedAt;
+    if (memElapsedMs > 50) {
+      try {
+        session.trace.write({
+          type: 'warn',
+          message: `memory.retrieved slow: ${memElapsedMs}ms`,
+          sessionId: session.id,
+          ts: Date.now(),
+        } as unknown as AgentEvent);
+      } catch {
+        /* trace is best-effort */
+      }
+    }
+    // Emit a `memory.retrieved` trace event listing what fired this turn.
+    // Bypasses session.emit() / AgentEvent (the union doesn't model this
+    // shape) — trace JSONL is the source of truth for `mint trace --memory`.
+    try {
+      session.trace.write({
+        type: 'memory.retrieved',
+        sessionId: session.id,
+        ts: Date.now(),
+        task: options.task,
+        memories: perTurnMemories.map((s) => ({
+          id: s.memory.id,
+          kind: s.memory.kind,
+          text: summarizeMemoryForTrace(s.memory),
+          score: s.score,
+          components: s.components,
+        })),
+      } as unknown as AgentEvent);
+    } catch {
+      /* telemetry is best-effort */
+    }
+  } catch {
+    /* per-turn retrieval is best-effort — fall back to bootstrap */
+  }
+
+  const perTurnTexts = perTurnMemories.map((s) => s.memory.text);
+  // If per-turn retrieval succeeded, use it. Otherwise fall back to the
+  // bootstrap list BrainApp loaded on mount.
+  const projectMemoriesForTier =
+    perTurnTexts.length > 0 ? perTurnTexts : options.projectMemories;
+
+  // 6. Build initial messages — structured tiers for cache-aware Anthropic
+  // requests; non-Anthropic providers receive the flattened string via
+  // `systemPrompt` fallback below.
+  const tiers = await buildPromptTiers({
+    cwd: session.cwd,
+    files: retrieved.files,
+    deepPlanBlock,
+    sessionSummaries: options.priorTurnSummaries,
+    projectMemories: projectMemoriesForTier,
+    userPreferences: options.userPreferences,
+  });
+  const systemPrompt = flattenTiers(tiers);
   let messages: Message[] = [{ role: 'user', content: options.task }];
 
   budget.add(countTokens(systemPrompt) + countTokens(options.task));
@@ -301,6 +464,15 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
   let cleanExit = false;
   let aborted = false;
   let streamFailed = false;
+  // Set when a safety guard (spend cap or runaway-loop detector) stops the
+  // loop — distinct from a clean finish or a max-iterations overrun.
+  let haltedBySafety = false;
+
+  // Safety knobs (Phase 0.1). spendCap 0 = disabled. Per-run override (from
+  // `mint --cap=X` or programmatic callers) wins over the persistent config.
+  const spendCap = options.spendCap ?? config.getPath<number>('brain.spendCap') ?? 0;
+  const loopDetectionOn = config.getPath<boolean>('brain.runawayLoopDetection') !== false;
+  const loopThreshold = config.getPath<number>('brain.loopDetectionThreshold') ?? 3;
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     if (session.aborted()) {
@@ -309,6 +481,30 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
       break;
     }
     session.recordIteration();
+
+    // 7·0 Spend cap — halt and ask before starting a turn that would run
+    // past the user's hard ceiling. Once approved, don't nag again.
+    if (spendCap > 0 && !session.spendCapApproved && session.totals.costUsd >= spendCap) {
+      const ok = await askApproval(session, {
+        reason: 'spend_limit',
+        payload: {
+          spentUsd: session.totals.costUsd,
+          capUsd: spendCap,
+          iteration: iteration + 1,
+        },
+      });
+      if (!ok) {
+        session.emit({
+          type: 'warn',
+          message: `Stopped at spend cap — $${session.totals.costUsd.toFixed(
+            4,
+          )} of $${spendCap.toFixed(2)}. Raise brain.spendCap to continue.`,
+        });
+        haltedBySafety = true;
+        break;
+      }
+      session.approveSpendCap();
+    }
 
     // 7a. Compact if needed before the next turn
     const compaction = await maybeCompact(messages, budget, session, {
@@ -332,6 +528,7 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
         model: route.model,
         messages,
         systemPrompt,
+        systemTiers: tiers,
         tools,
         maxTokens: 4096,
         signal: session.signal,
@@ -406,6 +603,29 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
       break;
     }
 
+    // 7c·1 Runaway-loop guard — record each call's signature, halt if the
+    // model is repeating an identical tool call past the threshold.
+    if (loopDetectionOn) {
+      for (const call of toolCalls) {
+        session.recordToolSignature(call.name, call.input);
+      }
+      const repeat = session.detectRepeatPattern(loopThreshold);
+      if (repeat) {
+        session.emit({
+          type: 'loop.detected',
+          tool: repeat.tool,
+          count: repeat.count,
+          iteration: iteration + 1,
+        });
+        session.emit({
+          type: 'warn',
+          message: `Stopped — ${repeat.tool} was called ${repeat.count}× with identical input (runaway loop). Send a new prompt to redirect.`,
+        });
+        haltedBySafety = true;
+        break;
+      }
+    }
+
     // 7d. Record assistant message with tool-call metadata
     messages.push({
       role: 'assistant',
@@ -427,11 +647,22 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
       content: '',
       ...( { toolResults: results.map((r) => ({ toolCallId: r.id, content: r.output })) } as unknown as Record<string, unknown>),
     } as unknown as Message);
+
+    // 7g. Bail out if the user has rejected approvals twice in a row.
+    // Continuing past this point would just make the model try yet another
+    // tool — the user wants to redirect, not see more attempts.
+    if (session.consecutiveRejections >= 2) {
+      session.emit({
+        type: 'warn',
+        message: 'Stopped — too many rejections in a row. Send a new prompt to redirect.',
+      });
+      break;
+    }
   }
 
   // Detect "hit max iterations without finishing" — surface it to the user
   // instead of silently claiming success on partial work.
-  const hitMaxIterations = !cleanExit && !aborted && !streamFailed;
+  const hitMaxIterations = !cleanExit && !aborted && !streamFailed && !haltedBySafety;
   if (hitMaxIterations) {
     session.emit({
       type: 'warn',
@@ -480,6 +711,74 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
     /* outcomes are best-effort */
   }
 
+  // Fire-and-forget L3 memory extraction. Mirrors `outcomes.record` above:
+  // best-effort, swallow errors, do not block the `done` event. Persists to
+  // <cwd>/.mint/memory.sqlite via openMemoryStore — never ~/.mint (that's L4
+  // and lands in PR5).
+  //
+  // PR8: gated on `memory.extract.enabled`. When false, the entire block is
+  // a no-op — no LLM call, no SQLite write.
+  const extractEnabled = config.getPath<boolean>('memory.extract.enabled') !== false;
+  if (extractEnabled) {
+    const extractKinds =
+      config.getPath<Array<'preference' | 'fact' | 'decision' | 'episode' | 'open_question'>>(
+        'memory.extract.kinds',
+      ) ?? ['preference', 'fact', 'episode'];
+    const turnInputs: TurnInputs = {
+      userTask: options.task,
+      finalAssistant: totalOutput,
+      filesTouched: totals.filesTouched,
+      toolCalls: totals.toolCalls,
+      outcome: result.success ? 'success' : aborted ? 'aborted' : 'partial',
+      model: route.model,
+    };
+    trackPendingMemoryWrite(
+      (async () => {
+        try {
+          const memStore = openMemoryStore(session.cwd, {
+            onWrite: (ev) => {
+              // Trace-only telemetry — never surfaced to the user. We bypass
+              // session.emit() (and therefore the AgentEvent union) and write
+              // straight to the trace JSONL so consumers of `mint trace
+              // --memory` can reconstruct what was learned.
+              try {
+                session.trace.write({
+                  type: 'memory.write',
+                  sessionId: session.id,
+                  kind: ev.kind,
+                  action: ev.action,
+                  ts: Date.now(),
+                } as unknown as AgentEvent);
+              } catch {
+                /* telemetry is best-effort */
+              }
+            },
+          });
+          const memories = await extractMemories(turnInputs, {
+            signal: session.signal,
+            kinds: extractKinds,
+            onFallback: (reason) => {
+              try {
+                session.trace.write({
+                  type: 'memory.extract.fallback',
+                  sessionId: session.id,
+                  ts: Date.now(),
+                  reason,
+                } as unknown as AgentEvent);
+              } catch {
+                /* telemetry is best-effort */
+              }
+            },
+          });
+          for (const m of memories) await memStore.write(m.kind, m);
+          memStore.close();
+        } catch {
+          /* best-effort */
+        }
+      })(),
+    );
+  }
+
   // Cleanup
   outcomes?.close();
   embeddings?.store.close();
@@ -507,28 +806,26 @@ async function tryOpenEmbeddings(
   }
 }
 
-function buildSystemPrompt(cwd: string, files: Array<{ path: string; summary?: string }>): string {
-  const header = `You are Mint, a coding agent running in a terminal.
-
-<environment>
-  <cwd>${cwd}</cwd>
-  <platform>${process.platform}</platform>
-</environment>
-
-<rules>
-1. Think before acting. Plan before editing.
-2. Use read_file before editing — never edit blindly.
-3. Prefer edit_file for targeted changes, write_file for new files.
-4. After changes, verify with bash (tests, build, type-check).
-5. Keep changes minimal and focused on the task.
-6. If a command fails, analyze the error and try again.
-7. Summarize what you did when finished.
-</rules>`;
-
-  if (files.length === 0) return header;
-  const context = files
-    .slice(0, 10)
-    .map((f) => `- ${f.path}${f.summary ? ` — ${f.summary}` : ''}`)
-    .join('\n');
-  return `${header}\n\n<context>\nRelevant files (from hybrid retrieval):\n${context}\n</context>`;
+/** Back-compat shim — returns the flattened system prompt that legacy callers
+ *  (tests, headless paths that don't surface tiered caching) expect. New
+ *  callers should use `buildPromptTiers()` + the provider `systemTiers` field.
+ */
+async function buildSystemPrompt(
+  cwd: string,
+  files: Array<{ path: string; summary?: string }>,
+): Promise<string> {
+  const tiers = await buildPromptTiers({ cwd, files });
+  return flattenTiers(tiers);
 }
+
+
+/** Short, privacy-conscious label for a memory entering the trace JSONL.
+ *  Never echoes raw user content — just the already-flattened summary text
+ *  from QueryRow.text truncated to 80 chars. Path-like and key-string content
+ *  is the most we leak. */
+function summarizeMemoryForTrace(m: { kind: string; text: string }): string {
+  const t = m.text ?? '';
+  return t.length > 80 ? `${t.slice(0, 79)}…` : t;
+}
+
+export const __testing = { buildSystemPrompt, summarizeMemoryForTrace };

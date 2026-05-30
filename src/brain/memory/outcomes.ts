@@ -38,6 +38,11 @@ export interface OutcomeRow {
   embedding: Buffer | null;
   /** Recorded classifier feature vector (used by `mint tune`). */
   classifierFeatures: Record<string, number> | null;
+  /** Power-user quality judgment: 'good' | 'meh' | 'bad' | null. Set via
+   *  `mint rate <sessionId>` or the `mint bench` inline prompt. */
+  userRating: string | null;
+  /** Optional one-liner explaining the rating. */
+  ratingNote: string | null;
 }
 
 export interface RecordOutcomeInput {
@@ -112,12 +117,23 @@ export class OutcomesStore {
       CREATE INDEX IF NOT EXISTS idx_ts ON outcomes(ts);
     `);
 
-    // Add classifier_features column to existing tables. SQLite has no
-    // ALTER TABLE IF NOT EXISTS so we check the table info and skip if present.
+    // Schema migrations. SQLite has no ALTER TABLE IF NOT EXISTS so we
+    // check table_info and only add columns that aren't already present.
+    // Each migration is best-effort and idempotent.
     try {
       const cols = this.db.prepare(`PRAGMA table_info(outcomes)`).all() as Array<{ name: string }>;
-      if (!cols.some((c) => c.name === 'classifier_features')) {
+      const has = (name: string): boolean => cols.some((c) => c.name === name);
+      if (!has('classifier_features')) {
         this.db.exec(`ALTER TABLE outcomes ADD COLUMN classifier_features TEXT`);
+      }
+      // 2026-05-30: user judgment for `mint tune` to weight by quality, not
+      // just the auto-flagged "didn't crash" success boolean. rating is one
+      // of: 'good' | 'meh' | 'bad'; note is optional one-liner.
+      if (!has('user_rating')) {
+        this.db.exec(`ALTER TABLE outcomes ADD COLUMN user_rating TEXT`);
+      }
+      if (!has('rating_note')) {
+        this.db.exec(`ALTER TABLE outcomes ADD COLUMN rating_note TEXT`);
       }
     } catch {
       /* migration is best-effort — schema may already be ahead of us */
@@ -201,6 +217,19 @@ export class OutcomesStore {
     this.pruneStmt.run(maxRows);
   }
 
+  /** Attach a user rating to the most recent outcome for this session. Returns
+   *  true when a row was updated. Idempotent — re-rating the same session
+   *  overwrites. Rating values are not validated here; bench / CLI commands
+   *  enforce 'good' | 'meh' | 'bad' at the entry point. */
+  setUserRating(sessionId: string, rating: string, note?: string): boolean {
+    const stmt = this.db.prepare(
+      `UPDATE outcomes SET user_rating = ?, rating_note = ?
+       WHERE id = (SELECT id FROM outcomes WHERE session_id = ? ORDER BY ts DESC LIMIT 1)`,
+    );
+    const info = stmt.run(rating, note ?? null, sessionId);
+    return info.changes > 0;
+  }
+
   count(): number {
     const r = this.countStmt.get() as { n: number };
     return r.n;
@@ -233,6 +262,8 @@ interface RawRow {
   user_accepted: number;
   embedding: Buffer | null;
   classifier_features: string | null;
+  user_rating: string | null;
+  rating_note: string | null;
 }
 
 function rowToOutcome(r: RawRow): OutcomeRow {
@@ -272,6 +303,8 @@ function rowToOutcome(r: RawRow): OutcomeRow {
     userAccepted: (r.user_accepted as -1 | 0 | 1) ?? -1,
     embedding: r.embedding,
     classifierFeatures,
+    userRating: r.user_rating ?? null,
+    ratingNote: r.rating_note ?? null,
   };
 }
 

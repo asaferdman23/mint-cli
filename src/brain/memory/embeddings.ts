@@ -166,17 +166,19 @@ export interface ChunkRow {
 
 export class EmbeddingsStore {
   private readonly db: Db;
+  private readonly projectRoot: string;
   private readonly insertStmt;
   private readonly dropFileStmt;
   private readonly fetchAllStmt;
   private readonly shaByPathStmt;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, projectRoot: string = '') {
     const dir = join(dbPath, '..');
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('synchronous = NORMAL');
+    this.projectRoot = projectRoot;
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS chunks (
@@ -192,23 +194,49 @@ export class EmbeddingsStore {
       CREATE INDEX IF NOT EXISTS idx_chunks_sha ON chunks(path, sha);
     `);
 
+    // Migration (PR4): add `project_root` so chunks from different cwds
+    // indexing the same file path don't collide in the global
+    // ~/.mint/embeddings.sqlite. Idempotent — checks PRAGMA table_info first.
+    try {
+      const cols = this.db.prepare(`PRAGMA table_info(chunks)`).all() as Array<{ name: string }>;
+      if (!cols.some((c) => c.name === 'project_root')) {
+        this.db.exec(`ALTER TABLE chunks ADD COLUMN project_root TEXT NOT NULL DEFAULT ''`);
+      }
+    } catch {
+      /* best-effort */
+    }
+    // Bump schema_version PRAGMA so future migrations can see we ran.
+    try {
+      const ver = this.db.pragma('user_version', { simple: true }) as number;
+      if (typeof ver === 'number' && ver < 1) this.db.pragma('user_version = 1');
+    } catch {
+      /* best-effort */
+    }
+    try {
+      this.db.exec(`CREATE INDEX IF NOT EXISTS idx_chunks_proj ON chunks(project_root)`);
+    } catch {
+      /* best-effort — index creation can race if column ALTER just happened on another conn */
+    }
+
     this.insertStmt = this.db.prepare(`
-      INSERT INTO chunks (path, start, end, sha, embedding, summary)
-      VALUES (@path, @start, @end, @sha, @embedding, @summary)
+      INSERT INTO chunks (path, start, end, sha, embedding, summary, project_root)
+      VALUES (@path, @start, @end, @sha, @embedding, @summary, @projectRoot)
     `);
-    this.dropFileStmt = this.db.prepare(`DELETE FROM chunks WHERE path = ?`);
+    this.dropFileStmt = this.db.prepare(
+      `DELETE FROM chunks WHERE path = ? AND project_root = ?`,
+    );
     this.fetchAllStmt = this.db.prepare(
-      `SELECT id, path, start, end, sha, embedding, summary FROM chunks`,
+      `SELECT id, path, start, end, sha, embedding, summary FROM chunks WHERE project_root = ?`,
     );
     this.shaByPathStmt = this.db.prepare(
-      `SELECT DISTINCT sha FROM chunks WHERE path = ? LIMIT 1`,
+      `SELECT DISTINCT sha FROM chunks WHERE path = ? AND project_root = ? LIMIT 1`,
     );
   }
 
-  /** Replace all chunks for a file with a new set. */
+  /** Replace all chunks for a file with a new set (scoped to this project_root). */
   replaceFile(path: string, chunks: Array<Omit<ChunkRow, 'id'>>): void {
     const txn = this.db.transaction(() => {
-      this.dropFileStmt.run(path);
+      this.dropFileStmt.run(path, this.projectRoot);
       for (const c of chunks) {
         this.insertStmt.run({
           path: c.path,
@@ -217,21 +245,22 @@ export class EmbeddingsStore {
           sha: c.sha,
           embedding: Buffer.from(c.embedding.buffer),
           summary: c.summary ?? '',
+          projectRoot: this.projectRoot,
         });
       }
     });
     txn();
   }
 
-  /** Has this file been indexed at this sha already? */
+  /** Has this file been indexed at this sha already (in this project)? */
   hasFileSha(path: string, sha: string): boolean {
-    const row = this.shaByPathStmt.get(path) as { sha: string } | undefined;
+    const row = this.shaByPathStmt.get(path, this.projectRoot) as { sha: string } | undefined;
     return row?.sha === sha;
   }
 
   /** Pull all chunks into memory for similarity scoring. Cheap up to ~50k chunks. */
   loadAll(): ChunkRow[] {
-    const rows = this.fetchAllStmt.all() as Array<{
+    const rows = this.fetchAllStmt.all(this.projectRoot) as Array<{
       id: number;
       path: string;
       start: number;
@@ -261,7 +290,7 @@ export class EmbeddingsStore {
 }
 
 export function openEmbeddingsStore(cwd: string): EmbeddingsStore {
-  return new EmbeddingsStore(join(cwd, '.mint', 'embeddings.sqlite'));
+  return new EmbeddingsStore(join(cwd, '.mint', 'embeddings.sqlite'), cwd);
 }
 
 // ─── Similarity ─────────────────────────────────────────────────────────────

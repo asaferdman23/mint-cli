@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
+import { createRequire } from 'node:module';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { login, logout, whoami, signup } from './commands/auth.js';
@@ -11,12 +12,14 @@ import { showAccount } from './commands/account.js';
 import { runDoctor } from './commands/doctor.js';
 import { config } from '../utils/config.js';
 
+const require = createRequire(import.meta.url);
+const { version } = require('../../package.json') as { version: string };
 const program = new Command();
 
 program
   .name('mint')
   .description('AI coding CLI with smart model routing')
-  .version('0.1.0');
+  .version(version);
 
 // Main command - run a prompt
 program
@@ -29,6 +32,7 @@ program
   .option('--diff', 'Diff mode — review each file change')
   .option('--think', 'Prefer reasoning-enabled models')
   .option('--fast', 'Prefer low-latency models')
+  .option('--cap <usd>', 'Hard spend cap for THIS session in USD (e.g. --cap 0.50). Overrides brain.spendCap config.')
   .action(async (promptParts: string[], options) => {
     const prompt = promptParts.join(' ').trim();
     const brainMode: 'plan' | 'diff' | 'auto' | 'yolo' = options.yolo
@@ -40,6 +44,14 @@ program
       : options.auto
       ? 'auto'
       : 'diff';
+    // Resolve spend cap: --cap flag wins over MINT_SPEND_CAP env var, both
+    // win over the persistent brain.spendCap config. undefined = use config.
+    const envCap = process.env.MINT_SPEND_CAP != null ? Number(process.env.MINT_SPEND_CAP) : undefined;
+    const capOverride = options.cap != null ? Number(options.cap) : envCap;
+    if (capOverride != null && (Number.isNaN(capOverride) || capOverride < 0)) {
+      console.error(chalk.red(`  Invalid spend cap value: ${options.cap ?? process.env.MINT_SPEND_CAP}`));
+      process.exit(1);
+    }
 
     if (!prompt) {
       // No args → run onboarding checks first.
@@ -67,7 +79,8 @@ program
       model: options.model,
       think: options.think,
       fast: options.fast,
-      auto: options.auto || options.yolo,
+      mode: brainMode,
+      spendCap: capOverride,
     });
   });
 
@@ -176,14 +189,15 @@ program
   .description('List recent agent sessions, or replay one by session id')
   .option('-n, --limit <n>', 'How many sessions to list', '20')
   .option('--tail', 'Follow the most recent live session')
-  .action(async (sessionId: string | undefined, options: { limit?: string; tail?: boolean }) => {
+  .option('--memory', 'When replaying a session, also list memories available at session start')
+  .action(async (sessionId: string | undefined, options: { limit?: string; tail?: boolean; memory?: boolean }) => {
     const { runTraceList, runTraceReplay, runTraceTail } = await import('./commands/trace.js');
     if (options.tail) {
       await runTraceTail();
       return;
     }
     if (sessionId) {
-      runTraceReplay(sessionId);
+      await runTraceReplay(sessionId, { withMemory: options.memory ?? false });
       return;
     }
     runTraceList(parseInt(options.limit ?? '20', 10) || 20);
@@ -211,6 +225,75 @@ program
       apply: options.apply,
       minSamples: parseInt(options.minSamples ?? '30', 10) || 30,
       limit: parseInt(options.limit ?? '200', 10) || 200,
+    });
+  });
+
+// Bench command — run a fixed task suite, produce a publishable report
+program
+  .command('bench [subcommand]')
+  .description('Run the bench task suite — see bench/tasks.json. Use `mint bench report` to print the latest report.')
+  .option('--tasks <path>', 'Path to a tasks JSON file', './bench/tasks.json')
+  .option('--no-rate', 'Skip the per-task rating prompt (auto-rates everything)')
+  .option('--auto', 'Run in auto mode (no per-diff approval gates)')
+  .option('--cap <usd>', 'Per-task spend cap in USD')
+  .option('--run <id>', 'For `bench report`: aggregate this specific run id')
+  .action(async (subcommand: string | undefined, options: { tasks?: string; rate?: boolean; auto?: boolean; cap?: string; run?: string }) => {
+    if (subcommand === 'report') {
+      const { runBenchReport } = await import('./commands/bench.js');
+      runBenchReport({ run: options.run });
+      return;
+    }
+    if (subcommand && subcommand !== 'report') {
+      console.error(chalk.red(`  Unknown bench subcommand: ${subcommand}. Try 'mint bench' or 'mint bench report'.`));
+      process.exit(1);
+    }
+    const { runBench } = await import('./commands/bench.js');
+    const cap = options.cap != null ? Number(options.cap) : undefined;
+    if (cap != null && (Number.isNaN(cap) || cap < 0)) {
+      console.error(chalk.red(`  Invalid --cap value: ${options.cap}`));
+      process.exit(1);
+    }
+    await runBench({
+      tasks: options.tasks,
+      // commander negates --no-rate into options.rate === false
+      noRate: options.rate === false,
+      auto: options.auto,
+      cap,
+    });
+  });
+
+// Rate command — attach a quality rating to a past session
+program
+  .command('rate <sessionId> <rating>')
+  .description('Attach a user rating (good/meh/bad) to a past session. Powers `mint tune`.')
+  .option('--note <text>', 'Optional one-liner explaining the rating')
+  .action(async (sessionId: string, rating: string, options: { note?: string }) => {
+    const normalized = rating.toLowerCase();
+    if (!['good', 'meh', 'bad'].includes(normalized)) {
+      console.error(chalk.red(`  Invalid rating: '${rating}'. Use good, meh, or bad.`));
+      process.exit(1);
+    }
+    const { openOutcomesStore } = await import('../brain/memory/outcomes.js');
+    const store = openOutcomesStore(process.cwd());
+    const ok = store.setUserRating(sessionId, normalized, options.note);
+    store.close();
+    if (!ok) {
+      console.error(chalk.red(`  No outcome found for session ${sessionId}`));
+      process.exit(1);
+    }
+    console.log(chalk.green(`  ✓ Rated ${sessionId} as ${normalized}${options.note ? ` — "${options.note}"` : ''}`));
+  });
+
+// Audit command — measure cache + context engineering across recent traces
+program
+  .command('audit [sessionId]')
+  .description('Measure cache hit rate and input tokens/turn across recent traces')
+  .option('--limit <n>', 'How many recent sessions to aggregate', '50')
+  .action(async (sessionId: string | undefined, options: { limit?: string }) => {
+    const { runAudit } = await import('./commands/audit.js');
+    runAudit({
+      session: sessionId,
+      limit: parseInt(options.limit ?? '50', 10) || 50,
     });
   });
 
@@ -337,7 +420,7 @@ program
     const mode: 'yolo' | 'plan' | 'diff' | 'auto' = resolveAgentMode(options);
     await runOneShotBrain(task, {
       model: options.model,
-      auto: mode === 'auto' || mode === 'yolo',
+      mode,
     });
   });
 
@@ -431,6 +514,12 @@ program
       console.log(chalk.dim(`  Generated MINT.md`));
     } else {
       console.log(chalk.dim(`  MINT.md already exists — skipped`));
+    }
+
+    // Zero-friction switching: if the project carries a CLAUDE.md (from Claude
+    // Code), Mint reads it directly as agent context — no migration needed.
+    if (existsSync(joinPath(cwd, 'CLAUDE.md')) && !existsSync(joinPath(cwd, 'AGENT.md'))) {
+      console.log(chalk.dim(`  Detected CLAUDE.md — Mint will use it as agent context`));
     }
 
     // Generate starter skills
@@ -624,7 +713,14 @@ async function generateMintMd(
 
 async function runOneShotBrain(
   prompt: string,
-  options: { model?: string; think?: boolean; fast?: boolean; auto?: boolean },
+  options: {
+    model?: string;
+    think?: boolean;
+    fast?: boolean;
+    mode?: 'plan' | 'diff' | 'auto' | 'yolo';
+    /** Per-session spend cap (USD). Overrides brain.spendCap config for this run only. */
+    spendCap?: number;
+  },
 ): Promise<void> {
   const { runHeadless } = await import('../brain/index.js');
   const cwd = process.cwd();
@@ -637,15 +733,17 @@ async function runOneShotBrain(
   process.on('SIGINT', onSigint);
 
   const overrideModel = options.model && options.model !== 'auto' ? options.model : undefined;
+  const mode = options.mode ?? 'auto';
 
   try {
     const { result, error } = await runHeadless({
       task: prompt,
       cwd,
-      mode: options.auto ? 'auto' : 'auto',
+      mode,
       signal: abort.signal,
       model: overrideModel as import('../providers/types.js').ModelId | undefined,
       reasoning: options.think ? true : options.fast ? false : undefined,
+      spendCap: options.spendCap,
       onEvent: (event) => {
         switch (event.type) {
           case 'classify':

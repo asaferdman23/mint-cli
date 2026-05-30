@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { classify, preclassify, fallbackClassify, COMPLEXITIES } from '../classifier.js';
-import { loadRoutingTable } from '../router.js';
+import { classify, preclassify, fallbackClassify, extractClassifierFeatures, COMPLEXITIES } from '../classifier.js';
+import { loadRoutingTable, resolveRoute } from '../router.js';
 import type { TaskKind, Complexity } from '../events.js';
 
 const table = loadRoutingTable(process.cwd());
@@ -24,6 +24,8 @@ const GOLDEN: GoldenCase[] = [
   { task: 'why is the orchestrator using grok 4.1 fast?', expectKind: 'question' },
   { task: 'describe the pipeline phases', expectKind: 'explain' },
   { task: 'walk me through the session-memory lifecycle', expectKind: 'explain' },
+  { task: 'can you teach about skills in Claude Code?', expectKind: 'explain' },
+  { task: 'can we plan an app together?', expectKind: 'scaffold', expectComplexityAtLeast: 'moderate' },
 
   // small edits
   { task: 'fix the typo in the welcome banner', expectKind: 'edit_small', expectComplexityAtMost: 'simple' },
@@ -101,8 +103,29 @@ describe('preclassify', () => {
     expect(r?.kind).toBe('question');
   });
 
+  it('does not preclassify deeper questions as trivial', () => {
+    expect(preclassify('what can we do better?')).toBeNull();
+    expect(preclassify('what is the best approach for reliability?')).toBeNull();
+  });
+
+  it('does not preclassify contextual follow-up questions when history exists', () => {
+    expect(preclassify('what about the second option?', { hasRecentContext: true })).toBeNull();
+  });
+
   it('does not flag questions with edit verbs', () => {
     expect(preclassify('can you fix the auth bug?')).toBeNull();
+  });
+
+  it('lets action-intent questions reach the real classifier', () => {
+    expect(preclassify('can you review this file?')).toBeNull();
+    expect(preclassify('can you debug the failing tests?')).toBeNull();
+    expect(preclassify('can you run the test suite?')).toBeNull();
+  });
+
+  it('routes product planning questions to the scaffold planner path', () => {
+    const r = preclassify('can we plan an app together?');
+    expect(r?.kind).toBe('scaffold');
+    expect(r?.needsPlan).toBe(true);
   });
 });
 
@@ -132,6 +155,44 @@ describe('fallbackClassify', () => {
     const r = fallbackClassify({ task: 'the CI is failing with a crash' }, config);
     expect(r.kind).toBe('debug');
   });
+
+  it('uses top-file mentions as a complexity signal', () => {
+    const vec = extractClassifierFeatures({
+      task: 'what should we change in src/brain/router.ts?',
+      topFiles: ['src/brain/router.ts'],
+    });
+    expect(vec.topFileMention).toBe(1);
+  });
+
+  it('uses deeper question wording as a complexity signal', () => {
+    const vec = extractClassifierFeatures({
+      task: 'what is the best approach for reliability?',
+    });
+    expect(vec.deepQuestion).toBe(1);
+  });
+
+  it('uses recent context as a follow-up signal', () => {
+    const vec = extractClassifierFeatures({
+      task: 'what about the second option?',
+      recentUserTurns: ['We discussed two architecture options.'],
+    });
+    expect(vec.contextualFollowup).toBe(1);
+  });
+
+  it('prefers prior successful small-edit outcomes for similar simple tasks', () => {
+    const r = fallbackClassify(
+      {
+        task: 'update the header',
+        projectFileCount: 10,
+        pastOutcomes: [
+          { taskPreview: 'update the header', kind: 'edit_small', complexity: 'simple', success: true },
+        ],
+      },
+      config,
+    );
+    expect(r.kind).toBe('edit_small');
+    expect(rank(r.complexity)).toBeLessThanOrEqual(rank('simple'));
+  });
 });
 
 describe('routing table', () => {
@@ -154,5 +215,23 @@ describe('routing table', () => {
   it('writeCode uses a coding model', () => {
     expect(table.writeCode.model).toBeTruthy();
     expect(table.writeCode.fallbacks.length).toBeGreaterThan(0);
+  });
+
+  it('keeps shallow questions cheap through the trivial override', () => {
+    const route = resolveRoute({
+      kind: 'question',
+      complexity: 'trivial',
+      table,
+    });
+    expect(route.model).toBe('mistral-small');
+  });
+
+  it('routes non-trivial questions to a stronger model', () => {
+    const route = resolveRoute({
+      kind: 'question',
+      complexity: 'simple',
+      table,
+    });
+    expect(route.model).toBe('gemini-2-flash');
   });
 });

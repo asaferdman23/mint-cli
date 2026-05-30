@@ -26,8 +26,9 @@ const cache = new Map<string, CacheEntry>();
 /**
  * Search order (first found wins):
  *   1. {cwd}/AGENT.md
- *   2. {cwd}/.axon/AGENT.md
- *   3. ~/.axon/AGENT.md
+ *   2. {cwd}/CLAUDE.md   — so users switching from Claude Code work day one
+ *   3. {cwd}/.mint/AGENT.md
+ *   4. ~/.mint/AGENT.md
  *
  * Returns null if none found.
  * Caches with mtime invalidation — safe to call on every agent iteration.
@@ -35,6 +36,7 @@ const cache = new Map<string, CacheEntry>();
 export async function loadAgentMd(cwd: string): Promise<AgentMd | null> {
   const candidates = [
     join(cwd, 'AGENT.md'),
+    join(cwd, 'CLAUDE.md'),
     join(cwd, '.mint', 'AGENT.md'),
     join(homedir(), '.mint', 'AGENT.md'),
   ];

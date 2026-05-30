@@ -18,9 +18,13 @@ function classify(overrides: Partial<ClassifyResult>): ClassifyResult {
 }
 
 describe('shouldUseDeepMode', () => {
-  it('triggers only on complex + >=4 files', () => {
+  it('triggers on complex + >=4 files', () => {
     expect(shouldUseDeepMode(classify({ complexity: 'complex', estFilesTouched: 5 }))).toBe(true);
     expect(shouldUseDeepMode(classify({ complexity: 'complex', estFilesTouched: 4 }))).toBe(true);
+  });
+
+  it('triggers when a route explicitly needs a plan', () => {
+    expect(shouldUseDeepMode(classify({ complexity: 'moderate', estFilesTouched: 1, needsPlan: true }))).toBe(true);
   });
 
   it('does not trigger for simple tasks', () => {
