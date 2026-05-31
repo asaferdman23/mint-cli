@@ -1,24 +1,33 @@
 ## Why
 
-The Mint cost story has so far been single-axis: prompt caching on Anthropic.
-That's one lever out of at least six the original mission named — caching,
-context engineering, harness engineering, token efficiency, routing, and
-compaction. We built code for some of the others (compaction, hybrid retrieval,
-classifier, token budget) but they're **not surfaced in `mint audit`**, so we
-can't prove they're working. We *didn't* build the highest-leverage token wins
-yet — tools-array pruning, system-prompt slimming, retrieval pinning, output
-verbosity control, mid-stream cap.
+**Strategic reframe (2026-05-31):** Mint's cost story is shifting from
+single-axis (Anthropic prompt caching) to **model-agnostic multi-axis token
+efficiency**. The mission is: **whatever model you pick — frontier or cheap,
+new or old — Mint runs it at its ceiling.** 7 of 10 efficiency levers in
+this change are model-agnostic (tools pruning, retrieval pinning, system-
+prompt slim, compaction, hard cap, loop detector, mid-stream cap). Only
+caching is provider-specific, and even there other providers have analogs
+we'll wire in `cross-provider-caching`.
 
-This change makes Mint's cost claim multi-axis and defensible:
-1. `mint audit` becomes a token-efficiency report card (not just a cache meter).
-2. We ship the four highest-leverage cost levers we haven't built yet.
-3. The result: a Show HN screenshot that says "Mint reduces input tokens on
-   six measurable axes" — vs the current "we have caching like Claude Code,
-   but tested." Much harder for any competitor to replicate axis-by-axis.
+The original cache-only story had three problems:
+1. Single-axis pitch is brittle — competitors can copy caching in a sprint
+2. The other levers we already built (compaction, hybrid retrieval, classifier,
+   token budget) aren't surfaced in `mint audit`, so users can't see them work
+3. The highest-leverage token wins aren't built yet: tools-array pruning,
+   system-prompt slimming, retrieval pinning, mid-stream cap
 
-This is also a hedge against the Sonnet-only critique: most of these levers
-work on any model (only caching is provider-specific today). The wedge
-broadens.
+This change closes all three:
+1. `mint audit` becomes a multi-axis token-efficiency report card — every
+   axis visible, every axis benefitting every model in the fleet
+2. We ship the four highest-leverage cost levers (all model-agnostic)
+3. The proof artifact (after `cross-model-bench` runs) shows the same task
+   set across Sonnet, Mistral, Gemini Flash, Llama 70B, GPT-4o — proving
+   the efficiency claim isn't Sonnet-specific
+
+The result: a comparison table no competitor can replicate, because none of
+them have multi-axis audit + multi-provider routing + per-repo learning
+stitched together. Cache becomes a *bonus* tier on top of the model-agnostic
+foundation, not the foundation itself.
 
 ## What Changes
 
