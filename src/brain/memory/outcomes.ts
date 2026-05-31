@@ -43,6 +43,11 @@ export interface OutcomeRow {
   userRating: string | null;
   /** Optional one-liner explaining the rating. */
   ratingNote: string | null;
+  /** Multi-axis efficiency telemetry (2026-05-31). */
+  toolsArrayTokensAvg: number | null;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  compactionCount: number;
 }
 
 export interface RecordOutcomeInput {
@@ -67,6 +72,14 @@ export interface RecordOutcomeInput {
   embedding?: Float32Array;
   /** Classifier feature vector at the moment of routing (for `mint tune`). */
   classifierFeatures?: Record<string, number>;
+  /** Avg tools-array token footprint per turn (constant within a session). */
+  toolsArrayTokensAvg?: number;
+  /** Sum of cache-read tokens across the session (Anthropic + others). */
+  cacheReadTokens?: number;
+  /** Sum of cache-write tokens across the session. */
+  cacheCreationTokens?: number;
+  /** Number of compaction events fired during the session. */
+  compactionCount?: number;
 }
 
 export function hashTask(task: string): string {
@@ -135,6 +148,21 @@ export class OutcomesStore {
       if (!has('rating_note')) {
         this.db.exec(`ALTER TABLE outcomes ADD COLUMN rating_note TEXT`);
       }
+      // 2026-05-31: multi-axis token efficiency telemetry. Stored as
+      // aggregates per session so `mint audit` can report without re-parsing
+      // every trace JSONL.
+      if (!has('tools_array_tokens_avg')) {
+        this.db.exec(`ALTER TABLE outcomes ADD COLUMN tools_array_tokens_avg INTEGER`);
+      }
+      if (!has('cache_read_tokens')) {
+        this.db.exec(`ALTER TABLE outcomes ADD COLUMN cache_read_tokens INTEGER DEFAULT 0`);
+      }
+      if (!has('cache_creation_tokens')) {
+        this.db.exec(`ALTER TABLE outcomes ADD COLUMN cache_creation_tokens INTEGER DEFAULT 0`);
+      }
+      if (!has('compaction_count')) {
+        this.db.exec(`ALTER TABLE outcomes ADD COLUMN compaction_count INTEGER DEFAULT 0`);
+      }
     } catch {
       /* migration is best-effort — schema may already be ahead of us */
     }
@@ -143,11 +171,13 @@ export class OutcomesStore {
       INSERT INTO outcomes (
         ts, session_id, task, task_hash, kind, complexity, plan_json, files_touched,
         model, fallback_model, tokens_in, tokens_out, cost_usd, duration_ms,
-        tool_calls, iterations, success, user_accepted, embedding, classifier_features
+        tool_calls, iterations, success, user_accepted, embedding, classifier_features,
+        tools_array_tokens_avg, cache_read_tokens, cache_creation_tokens, compaction_count
       ) VALUES (
         @ts, @sessionId, @task, @taskHash, @kind, @complexity, @planJson, @filesTouched,
         @model, @fallbackModel, @tokensIn, @tokensOut, @costUsd, @durationMs,
-        @toolCalls, @iterations, @success, @userAccepted, @embedding, @classifierFeatures
+        @toolCalls, @iterations, @success, @userAccepted, @embedding, @classifierFeatures,
+        @toolsArrayTokensAvg, @cacheReadTokens, @cacheCreationTokens, @compactionCount
       )
     `);
 
@@ -194,6 +224,10 @@ export class OutcomesStore {
       userAccepted: input.userAccepted ?? -1,
       embedding: input.embedding ? Buffer.from(input.embedding.buffer) : null,
       classifierFeatures: input.classifierFeatures ? JSON.stringify(input.classifierFeatures) : null,
+      toolsArrayTokensAvg: input.toolsArrayTokensAvg ?? null,
+      cacheReadTokens: input.cacheReadTokens ?? 0,
+      cacheCreationTokens: input.cacheCreationTokens ?? 0,
+      compactionCount: input.compactionCount ?? 0,
     };
     const result = this.insertStmt.run(row);
     return Number(result.lastInsertRowid);
@@ -264,6 +298,10 @@ interface RawRow {
   classifier_features: string | null;
   user_rating: string | null;
   rating_note: string | null;
+  tools_array_tokens_avg: number | null;
+  cache_read_tokens: number | null;
+  cache_creation_tokens: number | null;
+  compaction_count: number | null;
 }
 
 function rowToOutcome(r: RawRow): OutcomeRow {
@@ -305,6 +343,10 @@ function rowToOutcome(r: RawRow): OutcomeRow {
     classifierFeatures,
     userRating: r.user_rating ?? null,
     ratingNote: r.rating_note ?? null,
+    toolsArrayTokensAvg: r.tools_array_tokens_avg ?? null,
+    cacheReadTokens: r.cache_read_tokens ?? 0,
+    cacheCreationTokens: r.cache_creation_tokens ?? 0,
+    compactionCount: r.compaction_count ?? 0,
   };
 }
 

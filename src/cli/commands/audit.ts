@@ -25,6 +25,8 @@ interface TurnMetrics {
   outputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
+  /** Tools array footprint for this turn — exposes pruning win. */
+  toolsArrayTokens: number;
   costUsd: number;
 }
 
@@ -35,7 +37,15 @@ interface ModelStats {
   totalOutput: number;
   totalCacheRead: number;
   totalCacheWrite: number;
+  totalToolsArrayTokens: number;
   totalCost: number;
+}
+
+/** Per-session signal kept separate from per-turn ModelStats because it lives
+ *  on events that fire at most once per session (e.g. compact). */
+interface SessionMetrics {
+  sessionId: string;
+  compactionCount: number;
 }
 
 function traceDir(): string {
@@ -71,6 +81,7 @@ function readTurns(path: string): TurnMetrics[] {
         outputTokens: event.outputTokens,
         cacheReadTokens: event.cacheReadInputTokens ?? 0,
         cacheCreationTokens: event.cacheCreationInputTokens ?? 0,
+        toolsArrayTokens: event.toolsArrayTokens ?? 0,
         costUsd: event.usd,
       });
     }
@@ -78,6 +89,27 @@ function readTurns(path: string): TurnMetrics[] {
     /* skip unreadable traces */
   }
   return turns;
+}
+
+/** Per-session aggregates from non-cost.delta events (compaction count). */
+function readSessionMetrics(path: string): SessionMetrics {
+  const sessionId = path.split('/').pop()!.replace(/\.jsonl$/, '');
+  let compactionCount = 0;
+  try {
+    const content = readFileSync(path, 'utf-8');
+    for (const line of content.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const event = JSON.parse(line) as AgentEvent;
+        if (event.type === 'compact') compactionCount++;
+      } catch {
+        /* skip bad lines */
+      }
+    }
+  } catch {
+    /* skip unreadable traces */
+  }
+  return { sessionId, compactionCount };
 }
 
 function aggregate(turns: TurnMetrics[]): Map<string, ModelStats> {
@@ -90,10 +122,12 @@ function aggregate(turns: TurnMetrics[]): Map<string, ModelStats> {
       totalOutput: 0,
       totalCacheRead: 0,
       totalCacheWrite: 0,
+      totalToolsArrayTokens: 0,
       totalCost: 0,
     };
     cur.turns += 1;
     cur.totalInput += t.inputTokens;
+    cur.totalToolsArrayTokens += t.toolsArrayTokens;
     cur.totalOutput += t.outputTokens;
     cur.totalCacheRead += t.cacheReadTokens;
     cur.totalCacheWrite += t.cacheCreationTokens;
@@ -121,46 +155,61 @@ function pct(n: number, d: number): string {
 }
 
 /** Render the per-model summary table. */
-function renderSummary(stats: Map<string, ModelStats>, sessions: number): void {
+function renderSummary(
+  stats: Map<string, ModelStats>,
+  sessions: number,
+  sessionMetrics: SessionMetrics[],
+): void {
   console.log('');
   console.log(chalk.cyan(`  mint audit — ${sessions} session${sessions === 1 ? '' : 's'}`));
   console.log('');
   console.log(
     chalk.dim(
-      '  model                 turns   in/turn   cache hit   cache savings   total cost',
+      '  model                 turns   in/turn   tools/turn   cache hit   cache savings   total cost',
     ),
   );
-  console.log(chalk.dim('  ' + '─'.repeat(82)));
+  console.log(chalk.dim('  ' + '─'.repeat(96)));
 
   const rows = [...stats.values()].sort((a, b) => b.turns - a.turns);
   let grandCost = 0;
   let grandSavings = 0;
   for (const s of rows) {
     const inPerTurn = Math.round(s.totalInput / Math.max(1, s.turns));
+    const toolsPerTurn = Math.round(s.totalToolsArrayTokens / Math.max(1, s.turns));
     // Anthropic-style: cacheRead billed at ~10% of fresh input → 90% saving on
-    // every cached token vs sending it fresh again. This is an estimate; only
-    // meaningful for providers that actually cache (Anthropic today).
+    // every cached token vs sending it fresh again. Estimate — only meaningful
+    // for providers that actually cache.
     const billableInput = s.totalInput + s.totalCacheRead + s.totalCacheWrite;
     const cacheHit = pct(s.totalCacheRead, billableInput);
-    // Hypothetical cost if cacheRead tokens had been billed as fresh input.
-    // Uses a 0.9× saving estimate per cached token — accurate for Anthropic
-    // (cache read is 10% of fresh), conservative for any future cache models.
-    // We don't have per-row pricing here, so we approximate via the realized
-    // cost share: savings ≈ totalCacheRead / billableInput × totalCost × 9.
     const savings = billableInput > 0
       ? (s.totalCacheRead / billableInput) * s.totalCost * 9
       : 0;
     grandCost += s.totalCost;
     grandSavings += savings;
+    const toolsCol = toolsPerTurn > 0 ? fmtTokens(toolsPerTurn) : '—';
     console.log(
-      `  ${s.model.padEnd(20)}  ${String(s.turns).padStart(5)}   ${fmtTokens(inPerTurn).padStart(7)}   ${cacheHit.padStart(9)}   ${fmtCost(savings).padStart(13)}   ${fmtCost(s.totalCost).padStart(10)}`,
+      `  ${s.model.padEnd(20)}  ${String(s.turns).padStart(5)}   ${fmtTokens(inPerTurn).padStart(7)}   ${toolsCol.padStart(10)}   ${cacheHit.padStart(9)}   ${fmtCost(savings).padStart(13)}   ${fmtCost(s.totalCost).padStart(10)}`,
     );
   }
 
-  console.log(chalk.dim('  ' + '─'.repeat(82)));
+  console.log(chalk.dim('  ' + '─'.repeat(96)));
   console.log(
-    `  ${'TOTAL'.padEnd(20)}  ${''.padStart(5)}   ${''.padStart(7)}   ${''.padStart(9)}   ${fmtCost(grandSavings).padStart(13)}   ${fmtCost(grandCost).padStart(10)}`,
+    `  ${'TOTAL'.padEnd(20)}  ${''.padStart(5)}   ${''.padStart(7)}   ${''.padStart(10)}   ${''.padStart(9)}   ${fmtCost(grandSavings).padStart(13)}   ${fmtCost(grandCost).padStart(10)}`,
   );
+
+  // Sessions with compaction — surfaces when long-session compaction kicked
+  // in. If zero across all sessions, the long-session savings claim is
+  // unproven on real data.
+  const sessionsWithCompaction = sessionMetrics.filter((s) => s.compactionCount > 0).length;
+  const totalCompactions = sessionMetrics.reduce((a, s) => a + s.compactionCount, 0);
+  if (sessions > 0) {
+    console.log('');
+    console.log(
+      chalk.dim(
+        `  Compaction: ${totalCompactions} event${totalCompactions === 1 ? '' : 's'} across ${sessionsWithCompaction}/${sessions} session${sessions === 1 ? '' : 's'}`,
+      ),
+    );
+  }
 
   console.log('');
   console.log(chalk.dim('  Read this:'));
@@ -172,6 +221,16 @@ function renderSummary(stats: Map<string, ModelStats>, sessions: number): void {
   console.log(
     chalk.dim(
       '  • in/turn ballooning above ~10k = retrieval is over-fetching; tighten the context.',
+    ),
+  );
+  console.log(
+    chalk.dim(
+      '  • tools/turn shows fixed tool overhead — the win from tools-array pruning lives here.',
+    ),
+  );
+  console.log(
+    chalk.dim(
+      '  • compaction = 0 across long sessions means the long-session savings claim is unverified.',
     ),
   );
   console.log(
@@ -232,7 +291,11 @@ export function runAudit(opts: { limit?: number; session?: string } = {}): void 
     return;
   }
   const allTurns: TurnMetrics[] = [];
-  for (const p of paths) allTurns.push(...readTurns(p));
+  const sessionMetrics: SessionMetrics[] = [];
+  for (const p of paths) {
+    allTurns.push(...readTurns(p));
+    sessionMetrics.push(readSessionMetrics(p));
+  }
   const stats = aggregate(allTurns);
-  renderSummary(stats, paths.length);
+  renderSummary(stats, paths.length, sessionMetrics);
 }

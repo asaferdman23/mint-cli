@@ -457,6 +457,12 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
 
   // 7. Tool-call loop
   const tools = getToolDefinitions();
+  // Pre-compute the tools-array token footprint once per session — tool
+  // definitions don't change across iterations, so this is a constant we
+  // can attach to every cost.delta to surface in `mint audit` how much of
+  // input is fixed tool overhead vs task content (powers the tools-pruning
+  // win measurement).
+  const toolsArrayTokens = countTokens(JSON.stringify(tools));
   const maxIterations = Math.min(options.maxIterations ?? route.maxIterations, route.maxIterations);
   let totalOutput = '';
   // Track exit reason so the success flag can distinguish "LLM finished" from
@@ -467,6 +473,9 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
   // Set when a safety guard (spend cap or runaway-loop detector) stops the
   // loop — distinct from a clean finish or a max-iterations overrun.
   let haltedBySafety = false;
+  // Track how many times compaction fired this session — surfaces in audit
+  // so users can see when long-session compaction kicked in vs not.
+  let compactionCount = 0;
 
   // Safety knobs (Phase 0.1). spendCap 0 = disabled. Per-run override (from
   // `mint --cap=X` or programmatic callers) wins over the persistent config.
@@ -511,6 +520,7 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
       signal: session.signal,
     });
     messages = compaction.messages;
+    if (compaction.compacted) compactionCount++;
 
     // 7b. Stream
     let turnText = '';
@@ -591,6 +601,7 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
         outputTokens: turnOutputTokens,
         cacheReadInputTokens: cacheRead,
         cacheCreationInputTokens: cacheWrite,
+        toolsArrayTokens,
         usd: turnCost,
       });
       budget.add(turnOutputTokens);
@@ -706,6 +717,10 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
       iterations: totals.iterations,
       success: result.success,
       classifierFeatures: extractClassifierFeatures(features),
+      toolsArrayTokensAvg: toolsArrayTokens,
+      cacheReadTokens: totals.cacheReadTokens,
+      cacheCreationTokens: totals.cacheCreationTokens,
+      compactionCount,
     });
   } catch {
     /* outcomes are best-effort */

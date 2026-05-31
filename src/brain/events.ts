@@ -153,6 +153,10 @@ export type AgentEvent =
       cacheReadInputTokens?: number;
       /** Tokens billed at cache-write tier (~125% of fresh). Anthropic only today. */
       cacheCreationInputTokens?: number;
+      /** Estimated input tokens consumed by the tools array on this turn.
+       *  Used by `mint audit` to show how much of input is fixed overhead vs
+       *  task content — exposes the win from tools-array pruning. */
+      toolsArrayTokens?: number;
       usd: number;
       ts: number;
     }
