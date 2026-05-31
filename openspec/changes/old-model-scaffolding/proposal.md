@@ -1,97 +1,176 @@
-> **🚧 DRAFT — planned (Wave 2). Not ready to execute.**
-> Full spec + tasks land when prioritized.
-
 ## Why
 
-Raw model capability sets a ceiling per task — Llama 3.1 8B can't suddenly
-understand SQLite WAL semantics. But weak/old models routinely *miss their
-own ceiling* on tasks they could handle, because:
+**Strategic: this is the moat we own that no competitor has.**
 
-- They emit malformed tool calls (slightly-off arg shapes, wrong key names)
-- They jump to a hack without reasoning through the problem
-- They produce output that's "almost right" but doesn't parse
-- They give up on multi-step tasks where a small CoT nudge would carry them
+Claude Code, Cursor, Aider, Cline, Pi, OpenHands — all assume the model is
+the model. If Sonnet picks badly, you eat it. If Llama 70B emits a malformed
+tool call, the tool errors and the model has to figure out what went wrong
+from the error message. If Mistral Small over-explains instead of just editing,
+you pay for the prose. None of them scaffold around weak-model failure modes.
 
-Each of those is fixable in the harness — not by changing the model, but by
-scaffolding around it. The result: weak models punch above their weight, and
-Mint's "any model gets to its ceiling" promise becomes provable on the cheap
-end of the fleet, not just the frontier end.
+Mint already routes per-task kind via `mint tune`. The natural next step:
+**when we route to a weak model, scaffold around its known weaknesses** so it
+hits its ceiling instead of fumbling halfway. Combined with `mint tune` (which
+learns per-repo which model handles which kind) and `cross-model-bench` (which
+proves the per-cell cost-quality profile), scaffolding makes the cheap end of
+the fleet *viable*. Without it, routing to cheap is gambling. With it, routing
+to cheap is engineered.
 
-This is the **model-agnostic quality lever** that converts our existing
-strengths (audit, tune, routing) into a cross-fleet performance multiplier.
+**The honest promise:** weak models hit their own ceiling more consistently,
+on more tasks, with less waste. We do NOT make Llama 8B reason like Opus —
+raw capability is raw capability. We make Llama 8B nail the tasks it *could*
+have nailed but routinely doesn't, because the harness wasn't catching its
+known failure modes.
+
+This is the lever that converts the model-agnostic story from a thesis into
+a durable advantage. Competitors can match caching in a sprint. They can't
+match per-(model, task-kind) scaffolding without rebuilding the routing+tune
+loop underneath it.
 
 ## What Changes
 
-**1. Chain-of-thought hints by task kind**
-- A static map `KIND_COT_HINTS: Record<TaskKind, string>` of small reasoning
-  scaffolds appended to the user task on weak models.
-- Examples: `debug` → "Before fixing, list 3 possible causes and rank by
-  likelihood." `refactor` → "Outline the rename plan as a list of file:line
-  changes before editing."
-- Applied conditionally: only when the resolved model is below a capability
-  threshold (e.g., `MODELS[m].capabilities.reasoning < 8`).
-- Frontier models skip the scaffold — they don't need it and it adds tokens.
+**1. Chain-of-thought hints by task kind — gated on model reasoning capability**
+
+A static map `KIND_COT_HINTS: Record<TaskKind, string>` of small reasoning
+scaffolds injected as a tier-3 (dynamic) system block. Applied only when
+`MODELS[route.model].capabilities.reasoning < 8`. Frontier models skip — they
+don't need it and the extra tokens hurt cache hit rate.
+
+Example hints:
+- `debug` → "Before fixing, list 3 possible causes and rank by likelihood."
+- `refactor` → "Outline the rename plan as file:line pairs before editing."
+- `edit_multi` → "List files to touch and the change per file before editing."
+- `scaffold` → "List files to create and their structure before writing."
+
+Empty for `question`/`explain` (read-only doesn't need scaffolding).
+
+Lives in tier-3 (dynamic) so cache for tier-1+2 isn't invalidated when the
+hint changes per task kind.
 
 **2. Output validation + auto-retry for malformed tool calls**
-- After each tool call, validate the input against the tool's JSON schema.
-- On validation failure: emit a correction prompt to the model with the
-  specific error and re-run that tool turn (max 1 retry; counts against the
-  spend cap).
-- Today the loop just runs the malformed call and lets the tool error out;
-  the model then has to figure out what went wrong from a tool error message.
+
+After each tool call is parsed from the stream:
+- Validate `call.input` against the tool's `input_schema` (JSON Schema).
+- If invalid: emit `warn` event + append a correction prompt with the specific
+  validation error, re-run that turn's stream once.
+- Max 1 retry per tool call. Counts against `brain.spendCap`.
+- Today the loop runs the malformed call and lets the tool error out; the
+  model has to figure out what went wrong from a tool error message. Wasteful
+  for weak models that may misinterpret the error and loop.
 
 **3. Format normalization at the tool-host boundary**
-- Best-effort coercion of common weak-model malformations:
-  - String args that should be arrays (`path: "a, b"` → `["a", "b"]`)
-  - Wrong-cased keys (`Path` → `path`)
-  - Missing optional fields with sensible defaults
-- Log every normalization as a `warn` event so users see when the model
-  needed help.
 
-**4. Per-model prompt micro-variants where it materially helps**
-- A registry mapping `(modelId, taskKind) → promptPatch` for known weak
-  spots (e.g., Llama tends to over-think simple edits → "Just make the
-  change; don't explain unless asked").
-- Empty for frontier models; opt-in additions for cheap models.
+Best-effort coercion of common weak-model malformations:
+- Comma-separated string where the schema wants an array: `path: "a, b"` →
+  `["a", "b"]`
+- Wrong-cased keys: `Path` → `path`, `FileName` → `path`
+- Path normalization: strip leading `./`, expand `~`, resolve `..`
+- Missing optional fields filled with documented defaults
+- Trailing whitespace / quote weirdness in stringified args
+
+Every normalization emits a `warn` event with the original → normalized diff
+so trace shows when the harness helped the model.
+
+**4. Per-model prompt micro-variants**
+
+Registry `MODEL_PROMPT_PATCHES: Record<ModelId, Partial<Record<TaskKind, string>>>`
+mapping `(modelId, kind) → promptPatch`. Patches addressed to known weak spots
+identified via `mint bench` or `mint audit` data.
+
+Examples (seed values — to be tuned with real bench data):
+- `groq-llama-70b` × `edit_small` → "Just make the change. No explanation
+  unless asked."
+- `mistral-small` × `edit_small` → "Output ONLY a tool call. No prose."
+- `groq-llama-8b` × `debug` → "Be concise. List one likely cause and fix it."
+
+Empty for frontier models (Sonnet/Opus/Grok-4/Gemini Pro). Opt-in additions
+for any model based on real-world observation.
+
+**5. Audit visibility — the proof axis**
+
+Every scaffolding fire emits a `scaffolding.applied` event:
+- type: `'cot_hint' | 'validate_retry' | 'normalize' | 'model_patch'`
+- model, kind, optional detail (what was normalized)
+
+`mint audit` gains a `scaffold/turn` column showing avg scaffolding events
+per turn per model. High rate = strong signal that model is struggling on
+that task kind. This is what makes the feature provable, not vibes.
 
 **Explicitly out of scope:**
-- Substituting raw capability — we don't fine-tune models, don't ensemble,
-  don't tree-of-thought beyond a single CoT prompt addition. The honest
-  promise is "weaker models hit their own ceiling more often," not "weak
-  models become frontier."
+- Substituting raw capability — no fine-tuning, no ensembles, no tree-of-thought
+  beyond a single CoT addition. The honest promise stands: ceiling-hitting
+  consistency, not capability substitution.
+- Tool-call repair via a separate LLM call (too expensive).
+- Per-language scaffolding (deferred — start with kind+model dimensions).
+- Per-provider quirks beyond format normalization (e.g., Gemini's particular
+  tool-call shape; handled in the provider layer already).
 
 ## Capabilities
 
 ### New Capabilities
-- `old-model-scaffolding`: CoT hints by task kind, tool-call validation +
-  retry, format normalization, per-model prompt micro-variants. Audit and
-  trace surface all of these so users can see when scaffolding fired.
+- `old-model-scaffolding`: CoT hints by kind+model, tool-call validation +
+  retry, format normalization, per-(model, kind) prompt patches, audit
+  surface for all four.
 
 ### Modified Capabilities
 - `token-efficiency` (if `multi-axis-token-efficiency` lands first): the
-  audit gains a `scaffolding fires/turn` column showing how often weak
-  models needed help.
+  audit gains a `scaffold/turn` column.
 
 ## Impact
 
 **Affected code:**
-- New `src/brain/scaffolding/` module — kind-hints, normalizers, validators
-- `src/brain/loop.ts` — wire CoT hint injection after route resolution
-- `src/brain/tools-host.ts` — validation + retry + normalization
-- `src/cli/commands/audit.ts` — surface scaffolding fire counts
+- New `src/brain/scaffolding/` module:
+  - `cot-hints.ts` — `KIND_COT_HINTS` map + threshold gate
+  - `validate.ts` — minimal JSON Schema validator (~50 LoC; no new dep)
+  - `normalize.ts` — format coercion helpers
+  - `model-patches.ts` — `MODEL_PROMPT_PATCHES` registry
+  - `index.ts` — public surface
+- `src/brain/loop.ts` — inject CoT hints into tier-3, wire validate+retry
+  around the tool-call dispatch
+- `src/brain/tools-host.ts` — normalize tool input before execution
+- `src/brain/prompt-tiers.ts` — accept scaffolding text as a dynamic-tier
+  contribution
+- `src/brain/events.ts` — `scaffolding.applied` event
+- `src/cli/commands/audit.ts` — render `scaffold/turn` column + per-type
+  breakdown
+- `src/utils/config.ts` — knobs: `brain.scaffolding.{cotThreshold,
+  validateRetries, normalize, modelPatches}`
+
+**Affected APIs:**
+- No new CLI commands. `--no-scaffold` flag added to one-shot path for A/B.
+- Internal: `RunBrainOptions.scaffolding?: 'on' | 'off'` for programmatic
+  override.
+
+**Dependencies:** None new. Uses existing event sink + approval flow.
 
 **Risk:**
-- CoT hints could degrade frontier models if accidentally applied to them.
-  Mitigation: capability-threshold gate, opt-out per model in config.
-- Format normalization could mask real model bugs by silently fixing them.
-  Mitigation: every normalization emits a `warn` event so it's visible in
-  trace.
-- Retry loop could double-spend on truly broken cases. Mitigation: hard
-  max 1 retry per tool call; counts against spend cap.
+- **Frontier models accidentally get CoT hints.** Mitigation: capability
+  threshold (`reasoning < 8`) gates injection; per-model opt-out config.
+- **Format normalization masks real model bugs.** Mitigation: every
+  normalization emits `warn` with the diff — visible in trace + audit.
+- **Retry doubles cost on truly broken cases.** Mitigation: hard max 1
+  retry; counts against `brain.spendCap` (already enforced).
+- **CoT hints add tokens that hurt cache.** Mitigation: hints live in
+  tier-3 (the dynamic tier that already varies per turn). Tier-1+2 cache
+  unaffected.
+- **Static `KIND_COT_HINTS` doesn't fit every project.** Mitigation: hints
+  are short (one sentence each) and conservative; future change can make
+  them per-project configurable via MINT.md.
 
 ## Dependencies / order
 
 - Hard dependency on `multi-axis-token-efficiency` Task 1 (audit
-  instrumentation) so scaffolding-fire counts are observable.
-- Shipping order: Wave 2, alongside `subagents-parallel-exploration` and
-  `apply-mode-polish`.
+  instrumentation) — scaffolding-fire counts need the audit surface to be
+  observable.
+- Soft dependency on `cross-model-bench` — bench produces the data that
+  reveals which (model, kind) pairs warrant patches in
+  `MODEL_PROMPT_PATCHES`. Without bench data, we ship the patches from
+  intuition; with it, we ship them from evidence.
+
+Shipping order: **Wave 2**, but can land in parallel with
+`subagents-parallel-exploration` and `apply-mode-polish`. Likely the first
+Wave 2 change to ship because:
+1. It's the highest-leverage moat (no competitor has it)
+2. It compounds with `mint tune` (already shipped)
+3. It makes `cross-model-bench` results richer (every cheap-model cell
+   shows the lift)

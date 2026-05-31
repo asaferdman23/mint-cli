@@ -64,7 +64,7 @@ the model-agnostic pitch is unsubstantiated. The table it produces
 | ⛰ | 🚧 Draft | [apply-mode-polish](changes/apply-mode-polish/) | floor: Cursor UX parity | ~3–4 days |
 | ⛰ | 🚧 Draft | [day-one-model-registry](changes/day-one-model-registry/) | floor: model freshness | ~2–3 days |
 | ⛰ | 🚧 Draft | [cross-provider-caching](changes/cross-provider-caching/) | caching pillar (50%→100%) | ~3–4 days |
-| ⛰ | 🚧 Draft | [old-model-scaffolding](changes/old-model-scaffolding/) | **make weak/old models punch above their weight** (CoT hints, validation+retry, format normalization) | ~1 week |
+| ⛰ | ✅ Active | [old-model-scaffolding](changes/old-model-scaffolding/) | **make weak/old models punch above their weight** (CoT hints, validation+retry, format normalization, per-model patches) — promoted to Wave 1.7 priority as the load-bearing competitive moat | ~1 week |
 
 ### Wave 3 — start beating, not just matching (weeks 6–8)
 
