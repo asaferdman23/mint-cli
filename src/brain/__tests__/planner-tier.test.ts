@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { loadRoutingTable, resolveRoute } from '../router.js';
 
 describe('planner tier (route.planModel)', () => {
-  it('refactor route uses claude-opus-4 as planner, claude-sonnet-4 as executor', () => {
+  it('refactor route uses claude-opus-4-8 as planner, claude-sonnet-4-6 as executor', () => {
     const table = loadRoutingTable(process.cwd());
     const route = resolveRoute({
       kind: 'refactor',
@@ -10,11 +10,11 @@ describe('planner tier (route.planModel)', () => {
       table,
     });
     expect(route.needsPlan).toBe(true);
-    expect(route.model).toBe('claude-sonnet-4');
-    expect(route.planModel).toBe('claude-opus-4');
+    expect(route.model).toBe('claude-sonnet-4-6');
+    expect(route.planModel).toBe('claude-opus-4-8');
   });
 
-  it('scaffold route uses grok-4-beta planner with reasoning enabled', () => {
+  it('scaffold route uses grok-4.3 planner with reasoning enabled', () => {
     const table = loadRoutingTable(process.cwd());
     const route = resolveRoute({
       kind: 'scaffold',
@@ -22,8 +22,8 @@ describe('planner tier (route.planModel)', () => {
       table,
     });
     expect(route.needsPlan).toBe(true);
-    expect(route.model).toBe('claude-sonnet-4');
-    expect(route.planModel).toBe('grok-4-beta');
+    expect(route.model).toBe('claude-sonnet-4-6');
+    expect(route.planModel).toBe('grok-4.3');
     expect(route.planProviderOptions).toEqual({ reasoning: { enabled: true } });
   });
 
@@ -38,7 +38,7 @@ describe('planner tier (route.planModel)', () => {
     expect(route.planModel).toBeUndefined();
   });
 
-  it('complex complexity override pairs grok-4-beta executor with claude-opus-4 planner', () => {
+  it('complex complexity override pairs claude-opus-4-8 executor with claude-opus-4-8 planner', () => {
     const table = loadRoutingTable(process.cwd());
     const route = resolveRoute({
       kind: 'edit_multi',
@@ -46,7 +46,7 @@ describe('planner tier (route.planModel)', () => {
       table,
     });
     // complexityOverrides.complex overrides the model + planModel
-    expect(route.model).toBe('grok-4-beta');
-    expect(route.planModel).toBe('claude-opus-4');
+    expect(route.model).toBe('claude-opus-4-8');
+    expect(route.planModel).toBe('claude-opus-4-8');
   });
 });

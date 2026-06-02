@@ -232,6 +232,6 @@ describe('routing table', () => {
       complexity: 'simple',
       table,
     });
-    expect(route.model).toBe('gemini-2-flash');
+    expect(route.model).toBe('gemini-3.5-flash');
   });
 });

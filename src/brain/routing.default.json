@@ -1,69 +1,69 @@
 {
-  "version": 3,
+  "version": 4,
   "defaults": {
     "toolBudget": 20,
     "maxIterations": 30,
     "compactionTokens": 80000
   },
   "_enterpriseNote": "v2 (2026-05-12): removed all Chinese-origin model providers (DeepSeek, Kimi/Moonshot, Qwen) for enterprise compliance. Default fleet is US/EU only: Anthropic, Google, xAI, OpenAI, Mistral (FR), Groq (US infra w/ Llama+gpt-oss).",
-  "_routingThesis": "v3 (2026-05-24): frontier-by-default for real code work. Cheap models reserved for (a) pure reads / questions, (b) the classifier, (c) the review pass, and (d) the 'trivial' complexity bucket. The cost story rests on prompt caching + precise context retrieval making Sonnet cost-competitive with naive cheap-model use, while delivering one-shot success and the auditable quality Claude Code's quality crisis exposed.",
+  "_routingThesis": "v4 (2026-06): refreshed to latest frontier — Opus 4.8 ($5/$25, down from $15/$75), Sonnet 4.6 ($3/$15) workhorse, Grok 4.3 ($1.25/$2.50, 1M ctx) cheap-frontier reasoner, Gemini 3.5 Flash ($1.50/$9) for reads, GPT-5.x as cross-vendor fallbacks. Frontier-on-demand: Sonnet 4.6 executes, Opus 4.8 plans complex work, cheap models reserved for reads/classifier/review/trivial. Cost story still rests on caching + precise retrieval, not on dropping to weak models. Savings anchor is the customer's own baseline (see docs/PRODUCT_DEFINITION.md), not Opus list price.",
   "routes": {
     "question": {
-      "model": "gemini-2-flash",
-      "fallbacks": ["mistral-small", "claude-sonnet-4"],
+      "model": "gemini-3.5-flash",
+      "fallbacks": ["claude-haiku-4-5", "mistral-small"],
       "toolBudget": 3,
       "maxIterations": 4,
       "needsPlan": false
     },
     "edit_small": {
-      "model": "claude-sonnet-4",
-      "fallbacks": ["gemini-2-pro", "gpt-4o"],
+      "model": "claude-sonnet-4-6",
+      "fallbacks": ["gemini-3.1-pro", "grok-4.3"],
       "toolBudget": 10,
       "maxIterations": 15,
       "needsPlan": false
     },
     "edit_multi": {
-      "model": "claude-sonnet-4",
-      "fallbacks": ["gemini-2-pro", "groq-llama-70b"],
+      "model": "claude-sonnet-4-6",
+      "fallbacks": ["gemini-3.1-pro", "grok-4.3"],
       "toolBudget": 20,
       "maxIterations": 25,
       "needsPlan": false
     },
     "refactor": {
-      "model": "claude-sonnet-4",
-      "planModel": "claude-opus-4",
-      "fallbacks": ["gemini-2-pro", "gpt-4o"],
+      "model": "claude-sonnet-4-6",
+      "planModel": "claude-opus-4-8",
+      "fallbacks": ["gemini-3.1-pro", "gpt-5.4"],
       "toolBudget": 30,
       "maxIterations": 40,
       "needsPlan": true
     },
     "debug": {
-      "model": "grok-4.1-fast",
-      "fallbacks": ["claude-sonnet-4", "gemini-2-pro"],
+      "model": "grok-4.3",
+      "fallbacks": ["claude-sonnet-4-6", "gemini-3.1-pro"],
       "toolBudget": 25,
       "maxIterations": 30,
       "needsPlan": false,
       "providerOptions": { "reasoning": { "enabled": true } }
     },
     "scaffold": {
-      "model": "claude-sonnet-4",
-      "planModel": "grok-4-beta",
+      "model": "claude-sonnet-4-6",
+      "planModel": "grok-4.3",
       "planProviderOptions": { "reasoning": { "enabled": true } },
-      "fallbacks": ["gemini-2-pro", "gpt-4o"],
+      "fallbacks": ["gemini-3.1-pro", "gpt-5.4"],
       "toolBudget": 15,
       "maxIterations": 20,
       "needsPlan": true
     },
     "review": {
-      "model": "mistral-small",
-      "fallbacks": ["gemini-2-flash", "claude-sonnet-4"],
+      "model": "gemini-3.5-flash",
+      "fallbacks": ["claude-haiku-4-5", "claude-sonnet-4-6"],
       "toolBudget": 5,
       "maxIterations": 6,
       "needsPlan": false
     },
     "explain": {
-      "model": "gemini-2-flash",
-      "fallbacks": ["claude-sonnet-4", "groq-llama-70b"],
+      "model": "gemini-3.5-flash",
+      "fallbacks": ["claude-haiku-4-5", "mistral-small"],
       "toolBudget": 0,
       "maxIterations": 2,
       "needsPlan": false
@@ -71,8 +71,8 @@
   },
   "complexityOverrides": {
     "complex": {
-      "model": "grok-4-beta",
-      "planModel": "claude-opus-4",
+      "model": "claude-opus-4-8",
+      "planModel": "claude-opus-4-8",
       "providerOptions": { "reasoning": { "enabled": true } }
     },
     "moderate": {},
@@ -82,8 +82,8 @@
     }
   },
   "writeCode": {
-    "model": "claude-sonnet-4",
-    "fallbacks": ["gemini-2-pro", "gpt-4o"]
+    "model": "claude-sonnet-4-6",
+    "fallbacks": ["gemini-3.1-pro", "gpt-5.4"]
   },
   "embedding": {
     "model": "embedding-small"

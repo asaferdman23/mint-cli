@@ -16,10 +16,10 @@ describe('isStickyEligible', () => {
   });
 
   it('returns true when prior model is in route.fallbacks', () => {
-    // question/simple resolves to gemini-2-flash with fallbacks
-    // ['mistral-small', 'groq-llama-70b'] in the default table.
+    // question/simple resolves to gemini-3.5-flash with fallbacks
+    // ['claude-haiku-4-5', 'mistral-small'] in the default table.
     const route = resolveRoute({ kind: 'question', complexity: 'simple', table });
-    expect(route.model).toBe('gemini-2-flash');
+    expect(route.model).toBe('gemini-3.5-flash');
     expect(route.fallbacks).toContain('mistral-small');
     expect(isStickyEligible('mistral-small', route)).toBe(true);
   });
@@ -46,7 +46,7 @@ describe('sticky-route scenario (user-reported flow)', () => {
   // Walks the exact scenario from the bug report:
   //   Turn 3: "do you have agent md?" → kind=question, trivial → mistral-small
   //   Turn 4: "whats wrriten there?"   → kind=question, simple  → would resolve
-  //   to gemini-2-flash, but sticky should keep mistral-small.
+  //   to gemini-3.5-flash, but sticky should keep mistral-small.
   const table = loadRoutingTable(process.cwd());
 
   it('stickies mistral-small (trivial) across to question/simple', () => {
@@ -54,7 +54,7 @@ describe('sticky-route scenario (user-reported flow)', () => {
     expect(prior.model).toBe('mistral-small');
 
     const fresh = resolveRoute({ kind: 'question', complexity: 'simple', table });
-    expect(fresh.model).toBe('gemini-2-flash');
+    expect(fresh.model).toBe('gemini-3.5-flash');
     // The kind is unchanged, prior is in the fresh route's fallbacks →
     // eligible. The loop will overwrite fresh.model with prior.model.
     expect(isStickyEligible(prior.model, fresh)).toBe(true);

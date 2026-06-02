@@ -7,6 +7,7 @@ export const grokProvider = new OpenAICompatibleProvider({
   baseURL: 'https://api.x.ai/v1',
   apiKeyConfigPath: 'providers.grok',
   modelMap: {
+    'grok-4.3':         'grok-4.3',
     'grok-3':           'grok-3',
     'grok-3-fast':      'grok-3-fast',
     'grok-3-mini-fast': 'grok-3-mini-fast',

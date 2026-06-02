@@ -24,9 +24,9 @@ const TASK_PATTERNS: Record<TaskType, RegExp[]> = {
 
 // Model tiers for different scenarios (enterprise: US/EU only).
 const MODEL_TIERS = {
-  budget: ['mistral-small', 'gemini-2-flash', 'groq-llama-70b'] as ModelId[],
-  balanced: ['gemini-2-pro', 'gpt-4o', 'claude-sonnet-4'] as ModelId[],
-  premium: ['claude-opus-4'] as ModelId[],
+  budget: ['mistral-small', 'gemini-3.5-flash', 'groq-llama-70b'] as ModelId[],
+  balanced: ['gemini-3.1-pro', 'claude-sonnet-4-6', 'grok-4.3'] as ModelId[],
+  premium: ['claude-opus-4-8', 'gpt-5.5'] as ModelId[],
 };
 
 export function detectTaskType(prompt: string): TaskType {

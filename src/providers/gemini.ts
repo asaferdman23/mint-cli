@@ -5,6 +5,8 @@ import { calculateCost } from './router.js';
 import { config } from '../utils/config.js';
 
 const MODEL_MAP: Partial<Record<ModelId, string>> = {
+  'gemini-3.5-flash':  'gemini-3.5-flash',
+  'gemini-3.1-pro':    'gemini-3.1-pro',
   'gemini-2-flash':    'gemini-2.0-flash',
   'gemini-2-pro':      'gemini-2.0-pro-exp',
   'gemini-1-5-flash':  'gemini-1.5-flash',

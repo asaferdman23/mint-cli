@@ -12,6 +12,17 @@ import { isRecording, isReplaying, recordStream, replayStream } from './record-r
 // a provider returns a retryable error. Keep this in sync with MODELS.
 // Enterprise fleet: US/EU providers only (no DeepSeek/Kimi/Qwen).
 const FALLBACK_CHAIN: Partial<Record<ModelId, ModelId[]>> = {
+  // Latest frontier (2026-06) — cross-vendor chains so a provider outage
+  // degrades to a peer-tier model, not a weaker one.
+  'claude-opus-4-8': ['claude-sonnet-4-6', 'gpt-5.5', 'grok-4.3'],
+  'claude-sonnet-4-6': ['gemini-3.1-pro', 'grok-4.3', 'gpt-5.4'],
+  'claude-haiku-4-5': ['gemini-3.5-flash', 'grok-4.1-fast', 'mistral-small'],
+  'gpt-5.5': ['claude-opus-4-8', 'grok-4.3', 'gemini-3.1-pro'],
+  'gpt-5.4': ['claude-sonnet-4-6', 'gemini-3.1-pro', 'grok-4.3'],
+  'grok-4.3': ['claude-sonnet-4-6', 'gemini-3.1-pro', 'gpt-5.4'],
+  'gemini-3.5-flash': ['claude-haiku-4-5', 'grok-4.1-fast', 'mistral-small'],
+  'gemini-3.1-pro': ['claude-sonnet-4-6', 'grok-4.3', 'gpt-5.4'],
+  // Prior fleet.
   'mistral-small': ['groq-llama-70b', 'gemini-2-flash'],
   'grok-4-beta': ['grok-4.1-fast', 'claude-sonnet-4'],
   'grok-4.1-fast': ['claude-sonnet-4', 'gemini-2-pro'],

@@ -11,6 +11,16 @@ export type ContextTier = 'apex' | 'smart' | 'fast' | 'ultra';
  * - ULTRA: Groq 8B, mistral-small — max compression, skeleton context only
  */
 export const MODEL_TIERS: Record<ModelId, ContextTier> = {
+  // Latest frontier (2026-06).
+  'claude-opus-4-8':      'apex',
+  'claude-sonnet-4-6':    'smart',
+  'claude-haiku-4-5':     'fast',
+  'gpt-5.5':              'apex',
+  'gpt-5.4':              'smart',
+  'grok-4.3':             'apex',
+  'gemini-3.5-flash':     'smart',
+  'gemini-3.1-pro':       'apex',
+  // Prior fleet.
   'claude-opus-4':        'apex',
   'gpt-4o':               'apex',
   'gemini-2-pro':         'apex',

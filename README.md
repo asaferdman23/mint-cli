@@ -64,9 +64,9 @@ Mint can't surprise you with a bill or spin forever:
 
 Mint's **brain** analyzes your task and intelligently routes between models:
 
-- **Simple edits & questions** → Gemini Flash / Mistral Small (cents-per-million-token tier)
-- **Multi-file work & refactors** → Claude Sonnet, planned by Claude Opus when needed
-- **Debugging** → Grok fast models
+- **Simple edits & questions** → Gemini 3.5 Flash / Mistral Small (cents-per-million-token tier)
+- **Multi-file work & refactors** → Claude Sonnet 4.6, planned by Claude Opus 4.8 when needed
+- **Debugging** → Grok 4.3 (reasoning, 1M context)
 - **Context retrieval** → Hybrid search (BM25 + embeddings)
 
 Mint runs a **US/EU-only model fleet** (Anthropic, Google, OpenAI, xAI, Mistral, Groq) —
@@ -199,14 +199,14 @@ Add your own API keys for unlimited usage:
 
 ```bash
 # Most cost-effective for everyday tasks
-mint config:set providers.gemini <key>      # Gemini Flash/Pro
+mint config:set providers.gemini <key>      # Gemini 3.5 Flash / 3.1 Pro
 mint config:set providers.mistral <key>     # Mistral Small (EU)
 mint config:set providers.groq <key>        # Fast Llama / gpt-oss inference
 
 # Heavier reasoning
-mint config:set providers.anthropic <key>   # Claude Sonnet / Opus
-mint config:set providers.openai <key>      # GPT models
-mint config:set providers.grok <key>        # xAI Grok
+mint config:set providers.anthropic <key>   # Claude Sonnet 4.6 / Opus 4.8
+mint config:set providers.openai <key>      # GPT-5.5 / GPT-5.4
+mint config:set providers.grok <key>        # xAI Grok 4.3
 ```
 
 Check configuration:
@@ -251,7 +251,7 @@ A: Two options: (1) Upgrade to Pro for unlimited gateway access, or (2) Add your
 A: When using Mint Gateway, code is sent to our servers then forwarded to the AI provider (Google, Anthropic, etc.). We don't store your code. With BYOK, your code goes directly to your chosen provider.
 
 **Q: Which model should I use?**  
-A: The brain auto-selects. Simple tasks go to Gemini Flash or Mistral Small; multi-file work and refactors go to Claude Sonnet (planned by Claude Opus when needed); debugging uses Grok. You can override with `--model`.
+A: The brain auto-selects. Simple tasks go to Gemini 3.5 Flash or Mistral Small; multi-file work and refactors go to Claude Sonnet 4.6 (planned by Claude Opus 4.8 when needed); debugging uses Grok 4.3. You can override with `--model`.
 
 **Q: Can I self-host?**  
 A: Yes! With BYOK mode, Mint runs entirely locally. The gateway is only needed for the free tier.

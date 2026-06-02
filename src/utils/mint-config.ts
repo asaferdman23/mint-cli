@@ -28,8 +28,8 @@ export interface MintProjectConfig {
 
 const DEFAULT_CONFIG: MintProjectConfig = {
   model: {
-    default: 'claude-sonnet-4',
-    thinking: 'claude-opus-4',
+    default: 'claude-sonnet-4-6',
+    thinking: 'claude-opus-4-8',
     provider: 'anthropic',
     baseURL: 'https://api.anthropic.com',
   },

@@ -4,6 +4,16 @@
  * Allowed providers are US/EU only.
  */
 export type ModelId =
+  // Latest frontier (2026-06): added in the model-registry refresh.
+  | 'claude-opus-4-8'
+  | 'claude-sonnet-4-6'
+  | 'claude-haiku-4-5'
+  | 'gpt-5.5'
+  | 'gpt-5.4'
+  | 'grok-4.3'
+  | 'gemini-3.5-flash'
+  | 'gemini-3.1-pro'
+  // Prior fleet (kept for back-compat / fallbacks; no longer default-routed).
   | 'claude-sonnet-4'
   | 'claude-opus-4'
   | 'gemini-2-flash'
@@ -39,6 +49,80 @@ export interface ModelInfo {
 }
 
 export const MODELS: Record<ModelId, ModelInfo> = {
+  // ── Latest frontier (verified June 2026) ──────────────────────────────
+  'claude-opus-4-8': {
+    id: 'claude-opus-4-8',
+    provider: 'anthropic',
+    name: 'Claude Opus 4.8',
+    inputPrice: 5.0,
+    outputPrice: 25.0,
+    contextWindow: 200000,
+    capabilities: { coding: 10, reasoning: 10, speed: 6 },
+  },
+  'claude-sonnet-4-6': {
+    id: 'claude-sonnet-4-6',
+    provider: 'anthropic',
+    name: 'Claude Sonnet 4.6',
+    inputPrice: 3.0,
+    outputPrice: 15.0,
+    contextWindow: 200000,
+    capabilities: { coding: 10, reasoning: 9, speed: 8 },
+  },
+  'claude-haiku-4-5': {
+    id: 'claude-haiku-4-5',
+    provider: 'anthropic',
+    name: 'Claude Haiku 4.5',
+    inputPrice: 1.0,
+    outputPrice: 5.0,
+    contextWindow: 200000,
+    capabilities: { coding: 8, reasoning: 8, speed: 10 },
+  },
+  'gpt-5.5': {
+    id: 'gpt-5.5',
+    provider: 'openai',
+    name: 'GPT-5.5',
+    inputPrice: 5.0,
+    outputPrice: 30.0,
+    contextWindow: 400000,
+    capabilities: { coding: 10, reasoning: 10, speed: 7 },
+  },
+  'gpt-5.4': {
+    id: 'gpt-5.4',
+    provider: 'openai',
+    name: 'GPT-5.4',
+    inputPrice: 2.5,
+    outputPrice: 15.0,
+    contextWindow: 400000,
+    capabilities: { coding: 9, reasoning: 9, speed: 8 },
+  },
+  'grok-4.3': {
+    id: 'grok-4.3',
+    provider: 'grok',
+    name: 'Grok 4.3',
+    inputPrice: 1.25,
+    outputPrice: 2.5,
+    contextWindow: 1000000,
+    capabilities: { coding: 9, reasoning: 10, speed: 8 },
+  },
+  'gemini-3.5-flash': {
+    id: 'gemini-3.5-flash',
+    provider: 'gemini',
+    name: 'Gemini 3.5 Flash',
+    inputPrice: 1.5,
+    outputPrice: 9.0,
+    contextWindow: 1000000,
+    capabilities: { coding: 9, reasoning: 8, speed: 10 },
+  },
+  'gemini-3.1-pro': {
+    id: 'gemini-3.1-pro',
+    provider: 'gemini',
+    name: 'Gemini 3.1 Pro',
+    inputPrice: 2.0,
+    outputPrice: 12.0,
+    contextWindow: 1000000,
+    capabilities: { coding: 9, reasoning: 10, speed: 7 },
+  },
+  // ── Prior fleet ───────────────────────────────────────────────────────
   'claude-sonnet-4': {
     id: 'claude-sonnet-4',
     provider: 'anthropic',
