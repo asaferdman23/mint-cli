@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 
 const TERMINAL_LINES = [
@@ -80,10 +80,91 @@ const STEPS = [
   },
 ]
 
+const SITE_URL = 'https://usemint.dev'
+const OG_TITLE = 'Mint — Agentic Coding CLI | One Orchestrator Loop to Perfection'
+const OG_DESC =
+  'Mint is an agentic coding CLI with one smart orchestrator loop — cheap model dispatch, built-in code tools, and project indexing. Free tier: 20 runs/day.'
+const OG_IMAGE = `${SITE_URL}/mint_logo_small.png`
+
+function setMetaTag(attr: string, value: string, content: string) {
+  let el = document.querySelector<HTMLMetaElement>(`meta[${attr}="${value}"]`)
+  if (!el) {
+    el = document.createElement('meta')
+    el.setAttribute(attr, value)
+    document.head.appendChild(el)
+  }
+  el.setAttribute('content', content)
+}
+
+function setLinkTag(rel: string, href: string) {
+  let el = document.querySelector<HTMLLinkElement>(`link[rel="${rel}"]`)
+  if (!el) {
+    el = document.createElement('link')
+    el.setAttribute('rel', rel)
+    document.head.appendChild(el)
+  }
+  el.setAttribute('href', href)
+}
+
+function injectJsonLd() {
+  const id = 'jsonld-software-app'
+  if (document.getElementById(id)) return
+  const script = document.createElement('script')
+  script.id = id
+  script.type = 'application/ld+json'
+  script.textContent = JSON.stringify({
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: 'Mint',
+    applicationCategory: 'DeveloperApplication',
+    operatingSystem: 'macOS, Linux, Windows',
+    description:
+      'Mint is an agentic coding CLI with one smart orchestrator loop — cheap model dispatch, built-in code tools, and project indexing.',
+    url: SITE_URL,
+    offers: {
+      '@type': 'Offer',
+      price: '0',
+      priceCurrency: 'USD',
+      description: 'Free tier: 20 runs/day',
+    },
+    author: { '@type': 'Organization', name: 'Mint', url: SITE_URL },
+  })
+  document.head.appendChild(script)
+}
+
 export function Landing() {
   const [email, setEmail] = useState('')
   const [submitted, setSubmitted] = useState(false)
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    document.title = OG_TITLE
+    setMetaTag('name', 'description', OG_DESC)
+    setMetaTag('name', 'robots', 'index, follow')
+
+    // Open Graph
+    setMetaTag('property', 'og:type', 'website')
+    setMetaTag('property', 'og:url', `${SITE_URL}/`)
+    setMetaTag('property', 'og:site_name', 'Mint')
+    setMetaTag('property', 'og:title', OG_TITLE)
+    setMetaTag('property', 'og:description', OG_DESC)
+    setMetaTag('property', 'og:image', OG_IMAGE)
+    setMetaTag('property', 'og:image:alt', 'Mint CLI logo')
+
+    // Twitter Card
+    setMetaTag('name', 'twitter:card', 'summary_large_image')
+    setMetaTag('name', 'twitter:title', OG_TITLE)
+    setMetaTag('name', 'twitter:description', OG_DESC)
+    setMetaTag('name', 'twitter:image', OG_IMAGE)
+
+    // Geo
+    setMetaTag('name', 'geo.region', 'US')
+    setMetaTag('name', 'geo.placename', 'United States')
+    setMetaTag('name', 'ICBM', '37.0902, -95.7129')
+
+    setLinkTag('canonical', `${SITE_URL}/`)
+    injectJsonLd()
+  }, [])
 
   async function handleWaitlist(e: React.FormEvent) {
     e.preventDefault()
