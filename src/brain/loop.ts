@@ -215,14 +215,28 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
   });
 
   session.rebindModel(route.model);
-  const budget = new TokenBudget(route.model, { compactRatio: 0.6 });
+
+  // Scale context budget, output ceiling, and compaction trigger by complexity.
+  // Trivial tasks waste money with a 40% retrieval window and 4096-token outputs.
+  const complexityParamsMap = {
+    trivial:  { retrievalFraction: 0.15, maxFiles: 3,  compactRatio: 0.75, maxTokens: 1024 },
+    simple:   { retrievalFraction: 0.20, maxFiles: 5,  compactRatio: 0.70, maxTokens: 2048 },
+    moderate: { retrievalFraction: 0.30, maxFiles: 8,  compactRatio: 0.60, maxTokens: 3072 },
+    complex:  { retrievalFraction: 0.40, maxFiles: 12, compactRatio: 0.50, maxTokens: 4096 },
+  };
+  const complexityParams =
+    complexityParamsMap[decision.complexity as keyof typeof complexityParamsMap] ??
+    { retrievalFraction: 0.40, maxFiles: 12, compactRatio: 0.60, maxTokens: 4096 };
+
+  const budget = new TokenBudget(route.model, { compactRatio: complexityParams.compactRatio });
 
   // 5. Retrieve context
   const retrieved = await retrieve(
     {
       task: options.task,
       budget,
-      maxFiles: 12,
+      maxFiles: complexityParams.maxFiles,
+      budgetFraction: complexityParams.retrievalFraction,
       maxOutcomes: 5,
       signal: session.signal,
     },
@@ -333,7 +347,7 @@ async function runInner(session: Session, options: RunBrainOptions): Promise<Bra
         messages,
         systemPrompt,
         tools,
-        maxTokens: 4096,
+        maxTokens: complexityParams.maxTokens,
         signal: session.signal,
         providerOptions: route.providerOptions,
       })) {

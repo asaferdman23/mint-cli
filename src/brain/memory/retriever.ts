@@ -38,6 +38,8 @@ export interface RetrieveInput {
   maxFiles?: number;
   /** How many past outcomes to surface. Default 5. */
   maxOutcomes?: number;
+  /** Fraction of the model's context window to allocate for retrieval. Default 0.4. */
+  budgetFraction?: number;
   signal?: AbortSignal;
 }
 
@@ -82,7 +84,7 @@ export async function retrieve(
   const { task, budget } = input;
   const maxFiles = input.maxFiles ?? 12;
   const maxOutcomes = input.maxOutcomes ?? 5;
-  const retrievalBudget = budget.retrievalBudget();
+  const retrievalBudget = budget.retrievalBudget(input.budgetFraction);
 
   // 1. BM25 top-40
   const bm25Hits = deps.bm25.search(task, 40);
