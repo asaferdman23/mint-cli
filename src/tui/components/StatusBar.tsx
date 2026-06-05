@@ -18,6 +18,10 @@ interface StatusBarProps {
   /** Anthropic prompt-cache hit ratio in [0,1]. Undefined when no cache-aware
    *  turns have happened yet. Rendered only when showExtras (≥110 cols). */
   cacheHitRatio?: number;
+  /** Number of lines the transcript is scrolled up from the bottom. When > 0,
+   *  the bar shows a prominent yellow hint so the user knows they're viewing
+   *  history (and how to get back). */
+  scrollOffset?: number;
 }
 
 function formatTokens(tokens: number): string {
@@ -60,10 +64,14 @@ export function StatusBar({
   quotaLimit,
   termCols,
   cacheHitRatio,
+  scrollOffset = 0,
 }: StatusBarProps): React.ReactElement {
   const model = currentModel ?? 'auto';
   // Surface reasoning-enabled models in the status bar.
   const isThinking = typeof currentModel === 'string' && (
+    currentModel === 'claude-opus-4-8' ||
+    currentModel === 'grok-4.3' ||
+    currentModel === 'gemini-3.1-pro' ||
     currentModel === 'claude-opus-4' ||
     currentModel === 'grok-4-beta' ||
     currentModel === 'grok-4.1-fast'
@@ -89,6 +97,23 @@ export function StatusBar({
   const showDetails = cols >= 70;
   const showTokens = cols >= 90;
   const showExtras = cols >= 110;
+
+  // Scroll indicator takes precedence over chrome details — when the user is
+  // viewing history, that fact is the most important thing on the bar.
+  if (scrollOffset > 0) {
+    return (
+      <Box paddingX={1}>
+        <Box flexGrow={1} flexShrink={1} gap={0} overflow="hidden">
+          <Text color="yellow">↑ {scrollOffset} line{scrollOffset === 1 ? '' : 's'} up</Text>
+          <Text dimColor> · ↓/PgDn/G to bottom · Esc to dismiss</Text>
+        </Box>
+        <Box flexShrink={0} gap={0}>
+          <Text dimColor> │ </Text>
+          <Text color={modeColor(agentMode) as Parameters<typeof Text>[0]['color']}>{agentMode}</Text>
+        </Box>
+      </Box>
+    );
+  }
 
   return (
     <Box paddingX={1}>

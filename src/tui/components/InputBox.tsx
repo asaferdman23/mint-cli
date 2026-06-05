@@ -56,17 +56,25 @@ export function InputBox({
 
   // When busy, tick a once-per-second counter so long "Thinking…" spins show
   // elapsed time. Prevents the "is this hung?" feeling during slow generations.
+  //
+  // While `isPaused` is set, an overlay (approval dialog) is waiting for the
+  // human — the agent is not the bottleneck, the user is. Keep ticking and
+  // Ink reflows the input row every second, which makes the dialog above it
+  // visibly jump. Freeze the counter while paused.
   useEffect(() => {
-    if (!isBusy) {
-      setElapsedSec(0);
+    if (!isBusy || isPaused) {
+      if (!isBusy) setElapsedSec(0);
       return;
     }
-    const startedAt = Date.now();
+    const startedAt = Date.now() - elapsedSec * 1000;
     const interval = setInterval(() => {
       setElapsedSec(Math.floor((Date.now() - startedAt) / 1000));
     }, 1000);
     return () => clearInterval(interval);
-  }, [isBusy]);
+    // elapsedSec intentionally omitted — including it would reset the timer
+    // every tick. We only want the effect to re-run when busy/paused flip.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isBusy, isPaused]);
 
   const showAutocomplete = value.startsWith('/') && value.length >= 1 && !isBusy && !isRouting;
   const autocompleteMatches = showAutocomplete

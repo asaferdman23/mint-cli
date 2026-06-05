@@ -53,12 +53,26 @@ const configSchema = z.object({
       /** Number of identical consecutive tool calls that trips the runaway
        *  loop detector. */
       loopDetectionThreshold: z.number().default(3),
+      /** Old-model scaffolding — best-effort harness fixes for weak-model
+       *  failure modes. Milestone 1 ships format normalization only
+       *  (capitalized keys etc.); future milestones add CoT hints, tool-call
+       *  validation+retry, and per-(model,kind) prompt patches. */
+      scaffolding: z
+        .object({
+          /** Normalize known weak-model tool-call malformations before
+           *  dispatch (e.g. `Path` → `path`). Every fix emits a `warn` +
+           *  `scaffolding.applied` event so the intervention is visible
+           *  in `mint trace` / `mint audit`. */
+          normalize: z.boolean().default(true),
+        })
+        .default({ normalize: true }),
     })
     .default({
       sessionBudgetUsd: 0.5,
       spendCap: 2,
       runawayLoopDetection: true,
       loopDetectionThreshold: 3,
+      scaffolding: { normalize: true },
     }),
 
   /** Anthropic-specific opt-ins. */

@@ -22,6 +22,7 @@ import { DiffView, type DiffHunk } from './components/DiffView.js';
 import { SLASH_COMMANDS } from './components/SlashAutocomplete.js';
 import { useBrainEvents } from './hooks/useBrainEvents.js';
 import { useInputHistory } from './hooks/useInputHistory.js';
+import { useMouseScroll } from './hooks/useMouseScroll.js';
 import { useApprovalFlow } from './hooks/useApprovalFlow.js';
 import { useQuotaWarnings } from './hooks/useQuotaWarnings.js';
 import { useSlashCommands } from './hooks/useSlashCommands.js';
@@ -102,6 +103,8 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
   // events start flowing the message area never shrinks.
   const [inspectorView, setInspectorView] = useState<'collapsed' | 'open'>('collapsed');
   const [scrollOffset, setScrollOffset] = useState(0);
+  // Track the last `g` key for the vim-style `g g → top` chord.
+  const lastGAtRef = useRef<number>(0);
   // FIFO queue of prompts the user typed while a turn was in flight.
   // The dequeue effect (below) shifts the head when isBusy flips false.
   const [queue, setQueue] = useState<string[]>([]);
@@ -285,6 +288,14 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
     };
   }, []);
 
+  // Mouse wheel scrolling. Step size matches the keyboard arrow step (3 lines)
+  // so the feel is consistent whether the user reaches for the arrow keys or
+  // the wheel. Wheel-down past the bottom (scrollOffset=0) is a no-op.
+  useMouseScroll({
+    onWheelUp: useCallback(() => setScrollOffset((n) => n + 3), []),
+    onWheelDown: useCallback(() => setScrollOffset((n) => Math.max(0, n - 3)), []),
+  });
+
   // Quota fetch + threshold warnings live in useQuotaWarnings. Threshold
   // notices render as styled notice rows (kind: 'error' | 'warn') — never
   // plain assistant messages, which would render with an empty "Mint"
@@ -394,6 +405,19 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
         })();
         return;
       }
+      // Esc — when scrolled, jumps back to bottom (clears the indicator). This
+      // takes priority over the abort behavior because the hint in StatusBar
+      // tells the user Esc dismisses the scroll view.
+      if (
+        key.escape &&
+        scrollOffset > 0 &&
+        !pendingApproval &&
+        !costBannerMessage &&
+        !errorToastMessage
+      ) {
+        setScrollOffset(0);
+        return;
+      }
       // Esc aborts the running task (but keeps the CLI alive — Ctrl+C is
       // the hard exit). Only claims Esc when nothing else owns it: dialogs,
       // banners, and toasts have their own Esc handlers when visible.
@@ -462,7 +486,10 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
       if (!canScroll) return;
 
       const pageStep = Math.max(8, Math.floor(termSize.rows / 2));
+      const halfPageStep = Math.max(4, Math.floor(termSize.rows / 4));
       const arrowCanScroll = isBusy || scrollOffset > 0;
+      // BIG_JUMP is "scroll past everything"; clamping happens in MessageList.
+      const BIG_JUMP = 1_000_000;
 
       if (key.upArrow && arrowCanScroll) {
         setScrollOffset((n) => n + 3);
@@ -479,6 +506,43 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
       if (key.pageDown) {
         setScrollOffset((n) => Math.max(0, n - pageStep));
         return;
+      }
+      // Ctrl+U / Ctrl+D — vim/less half-page scroll. Always-on, no arrow gate.
+      if (key.ctrl && keypress === 'u') {
+        setScrollOffset((n) => n + halfPageStep);
+        return;
+      }
+      if (key.ctrl && keypress === 'd') {
+        setScrollOffset((n) => Math.max(0, n - halfPageStep));
+        return;
+      }
+      // Home / End — terminals send different escape sequences; Ink strips
+      // the leading ESC and we see the tail. Cover the common variants.
+      const isHome =
+        keypress === 'home' || keypress.endsWith('[H') ||
+        keypress.endsWith('OH') || keypress === '[1~' || keypress === '[7~';
+      const isEnd =
+        keypress === 'end' || keypress.endsWith('[F') ||
+        keypress.endsWith('OF') || keypress === '[4~' || keypress === '[8~';
+      if (isHome) { setScrollOffset(BIG_JUMP); return; }
+      if (isEnd) { setScrollOffset(0); return; }
+      // Vim shortcuts: g g → top, G → bottom. Only when input is empty so they
+      // don't fight typing. `g` waits for a second `g` within ~700ms.
+      if (input.length === 0 && !slashOpen) {
+        if (keypress === 'G') {
+          setScrollOffset(0);
+          return;
+        }
+        if (keypress === 'g') {
+          const now = Date.now();
+          if (lastGAtRef.current && now - lastGAtRef.current < 700) {
+            setScrollOffset(BIG_JUMP);
+            lastGAtRef.current = 0;
+          } else {
+            lastGAtRef.current = now;
+          }
+          return;
+        }
       }
     },
     { isActive: messages.length > 0 },
@@ -596,13 +660,22 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
             // (not on `done`) so the value is recorded as soon as the route
             // is committed — even if the turn aborts mid-stream.
             setLastTurnRoute({ kind: event.kind, model: event.model });
-            // Model identity is surfaced via the [model] tag in the assistant
-            // header (MessageList). The full routing reasoning lives in /trace
-            // and the BrainToolInspector — we don't dump it into the transcript.
+            // Attach the routing rationale to the in-flight assistant message
+            // so MessageList can render it as a one-line chip ABOVE the
+            // assistant header. Every turn doubles as a visible demo of the
+            // brain's decision — the core wedge made non-silent.
+            const routing = {
+              model: event.model,
+              kind: event.kind,
+              complexity: event.complexity,
+              reasoning: event.reasoning,
+              confidence: event.confidence,
+              source: event.source,
+            };
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === assistantMsgIdRef.current
-                  ? { ...m, model: event.model }
+                  ? { ...m, model: event.model, routing }
                   : m,
               ),
             );
@@ -826,6 +899,11 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
   const costBannerHeight = costBannerMessage ? 3 : 0;
   // Same shape as cost banner — red round box, 1 body + 2 border rows.
   const errorToastHeight = errorToastMessage ? 3 : 0;
+  // One row of breathing room between the scrolling message area and whatever
+  // sits above the input (trace strip, queue, banners, dialog, or just the
+  // input itself). Without it, a long assistant message's bottom border
+  // visually fuses with the input box and the screen looks claustrophobic.
+  const inputGapHeight = 1;
   const reservedRows =
     (errorMsg ? 1 : 0) +
     inspectorHeight +
@@ -834,6 +912,7 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
     costBannerHeight +
     errorToastHeight +
     queueHeight +
+    inputGapHeight +
     inputAreaHeight +
     1;
   const messageAreaHeight = Math.max(1, termSize.rows - reservedRows);
@@ -904,6 +983,7 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
             toolName={approvalToolName}
             filePath={approvalFilePath}
             diffPreview={approvalDiff}
+            iterationCalls={approvalDisplay.iterationCalls}
             onApprove={() => resolveApproval(true)}
             onReject={() => resolveApproval(false)}
             termCols={termSize.cols}
@@ -941,6 +1021,10 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
         </Box>
       )}
 
+      {/* 1-row spacer — keeps the input visually separated from the message
+          area, trace strip, or any banner directly above it. */}
+      <Box height={inputGapHeight} />
+
       <Box height={inputAreaHeight} overflow="hidden" flexDirection="column">
         <InputBox
           value={input}
@@ -969,6 +1053,7 @@ export function BrainApp({ initialPrompt, agentMode: initialMode, modelPreferenc
           quotaLimit={quotaLimit}
           termCols={termSize.cols}
           cacheHitRatio={panelState.cacheHitRatio}
+          scrollOffset={scrollOffset}
         />
       </Box>
     </Box>

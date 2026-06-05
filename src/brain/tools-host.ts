@@ -13,6 +13,7 @@
  */
 import {
   executeTool as executeToolRaw,
+  getToolDefinitions,
   isConcurrencySafeTool,
   isDestructiveTool,
   toolRequiresApproval,
@@ -21,6 +22,8 @@ import {
 import { countTokens } from './tokens.js';
 import { askApproval, needsDiffPreview } from './approvals.js';
 import { MODE_POLICIES, isReadOnlyBash, isReadOnlyTool, isWriteTool } from './modes.js';
+import { normalizeToolInput } from './scaffolding/index.js';
+import { getConfig } from '../utils/config.js';
 import type { Session } from './session.js';
 
 export interface BrainToolCall {
@@ -121,6 +124,34 @@ async function runSingle(
 ): Promise<BrainToolResult> {
   const startedAt = Date.now();
   const policy = MODE_POLICIES[session.mode];
+
+  // ── Scaffolding: best-effort format normalization (Milestone 1) ──────────
+  // Silently fix weak-model malformations (e.g. `Path` → `path`) BEFORE any
+  // approval/dispatch so the user approves the actual input that will run.
+  // Every fix is announced via `warn` + `scaffolding.applied` events — never
+  // silent magic. Frontier models never emit malformed keys so this is a
+  // no-op for them.
+  const scaffoldingOn = getConfig().brain?.scaffolding?.normalize !== false;
+  if (scaffoldingOn) {
+    const schema = getToolDefinitions([call.name])[0]?.input_schema;
+    if (schema) {
+      const { input: normalized, normalizations } = normalizeToolInput(call.input, schema);
+      if (normalizations.length > 0) {
+        call = { ...call, input: normalized };
+        const modelId = session.budget?.model;
+        for (const diff of normalizations) {
+          session.emit({ type: 'warn', message: diff.message });
+          session.emit({
+            type: 'scaffolding.applied',
+            kind: 'normalize',
+            model: modelId,
+            tool: call.name,
+            detail: diff.rule,
+          });
+        }
+      }
+    }
+  }
 
   session.emit({
     type: 'tool.call',

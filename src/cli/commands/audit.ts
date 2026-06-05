@@ -39,6 +39,16 @@ interface ModelStats {
   totalCacheWrite: number;
   totalToolsArrayTokens: number;
   totalCost: number;
+  /** Total scaffolding.applied events attributed to this model — proves the
+   *  harness intervened on weak-model output. Broken down by kind below. */
+  scaffoldFires: number;
+  scaffoldByKind: Record<string, number>;
+}
+
+interface ScaffoldEventRow {
+  model: string;
+  kind: string;
+  detail?: string;
 }
 
 /** Per-session signal kept separate from per-turn ModelStats because it lives
@@ -91,6 +101,32 @@ function readTurns(path: string): TurnMetrics[] {
   return turns;
 }
 
+/** Read scaffolding.applied events from one trace. Model may be absent on
+ *  early events (before route binding); those fall into the 'unknown' bucket. */
+function readScaffolding(path: string): ScaffoldEventRow[] {
+  const rows: ScaffoldEventRow[] = [];
+  try {
+    const content = readFileSync(path, 'utf-8');
+    for (const line of content.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const event = JSON.parse(line) as AgentEvent;
+        if (event.type !== 'scaffolding.applied') continue;
+        rows.push({
+          model: event.model ?? 'unknown',
+          kind: event.kind,
+          detail: event.detail,
+        });
+      } catch {
+        /* skip bad lines */
+      }
+    }
+  } catch {
+    /* skip unreadable traces */
+  }
+  return rows;
+}
+
 /** Per-session aggregates from non-cost.delta events (compaction count). */
 function readSessionMetrics(path: string): SessionMetrics {
   const sessionId = path.split('/').pop()!.replace(/\.jsonl$/, '');
@@ -112,11 +148,14 @@ function readSessionMetrics(path: string): SessionMetrics {
   return { sessionId, compactionCount };
 }
 
-function aggregate(turns: TurnMetrics[]): Map<string, ModelStats> {
+function aggregate(
+  turns: TurnMetrics[],
+  scaffolds: ScaffoldEventRow[],
+): Map<string, ModelStats> {
   const byModel = new Map<string, ModelStats>();
-  for (const t of turns) {
-    const cur = byModel.get(t.model) ?? {
-      model: t.model,
+  const ensure = (model: string): ModelStats => {
+    const cur = byModel.get(model) ?? {
+      model,
       turns: 0,
       totalInput: 0,
       totalOutput: 0,
@@ -124,7 +163,14 @@ function aggregate(turns: TurnMetrics[]): Map<string, ModelStats> {
       totalCacheWrite: 0,
       totalToolsArrayTokens: 0,
       totalCost: 0,
+      scaffoldFires: 0,
+      scaffoldByKind: {},
     };
+    byModel.set(model, cur);
+    return cur;
+  };
+  for (const t of turns) {
+    const cur = ensure(t.model);
     cur.turns += 1;
     cur.totalInput += t.inputTokens;
     cur.totalToolsArrayTokens += t.toolsArrayTokens;
@@ -132,7 +178,11 @@ function aggregate(turns: TurnMetrics[]): Map<string, ModelStats> {
     cur.totalCacheRead += t.cacheReadTokens;
     cur.totalCacheWrite += t.cacheCreationTokens;
     cur.totalCost += t.costUsd;
-    byModel.set(t.model, cur);
+  }
+  for (const s of scaffolds) {
+    const cur = ensure(s.model);
+    cur.scaffoldFires += 1;
+    cur.scaffoldByKind[s.kind] = (cur.scaffoldByKind[s.kind] ?? 0) + 1;
   }
   return byModel;
 }
@@ -165,10 +215,10 @@ function renderSummary(
   console.log('');
   console.log(
     chalk.dim(
-      '  model                 turns   in/turn   tools/turn   cache hit   cache savings   total cost',
+      '  model                 turns   in/turn   tools/turn   cache hit   scaffold/turn   cache savings   total cost',
     ),
   );
-  console.log(chalk.dim('  ' + '─'.repeat(96)));
+  console.log(chalk.dim('  ' + '─'.repeat(112)));
 
   const rows = [...stats.values()].sort((a, b) => b.turns - a.turns);
   let grandCost = 0;
@@ -187,15 +237,31 @@ function renderSummary(
     grandCost += s.totalCost;
     grandSavings += savings;
     const toolsCol = toolsPerTurn > 0 ? fmtTokens(toolsPerTurn) : '—';
+    const scaffoldPerTurn = s.turns > 0 ? s.scaffoldFires / s.turns : 0;
+    const scaffoldCol = s.scaffoldFires > 0 ? scaffoldPerTurn.toFixed(2) : '—';
     console.log(
-      `  ${s.model.padEnd(20)}  ${String(s.turns).padStart(5)}   ${fmtTokens(inPerTurn).padStart(7)}   ${toolsCol.padStart(10)}   ${cacheHit.padStart(9)}   ${fmtCost(savings).padStart(13)}   ${fmtCost(s.totalCost).padStart(10)}`,
+      `  ${s.model.padEnd(20)}  ${String(s.turns).padStart(5)}   ${fmtTokens(inPerTurn).padStart(7)}   ${toolsCol.padStart(10)}   ${cacheHit.padStart(9)}   ${scaffoldCol.padStart(13)}   ${fmtCost(savings).padStart(13)}   ${fmtCost(s.totalCost).padStart(10)}`,
     );
   }
 
-  console.log(chalk.dim('  ' + '─'.repeat(96)));
+  console.log(chalk.dim('  ' + '─'.repeat(112)));
   console.log(
-    `  ${'TOTAL'.padEnd(20)}  ${''.padStart(5)}   ${''.padStart(7)}   ${''.padStart(10)}   ${''.padStart(9)}   ${fmtCost(grandSavings).padStart(13)}   ${fmtCost(grandCost).padStart(10)}`,
+    `  ${'TOTAL'.padEnd(20)}  ${''.padStart(5)}   ${''.padStart(7)}   ${''.padStart(10)}   ${''.padStart(9)}   ${''.padStart(13)}   ${fmtCost(grandSavings).padStart(13)}   ${fmtCost(grandCost).padStart(10)}`,
   );
+
+  // Scaffolding breakdown — proves the harness is intervening on weak-model
+  // output. Only shown when at least one model had scaffolding fires.
+  const scaffoldRows = rows.filter((s) => s.scaffoldFires > 0);
+  if (scaffoldRows.length > 0) {
+    console.log('');
+    console.log(chalk.dim('  Scaffolding breakdown (harness interventions per model):'));
+    for (const s of scaffoldRows) {
+      const parts = Object.entries(s.scaffoldByKind)
+        .map(([kind, n]) => `${kind}=${n}`)
+        .join('  ');
+      console.log(chalk.dim(`    ${s.model.padEnd(20)}  ${parts}`));
+    }
+  }
 
   // Sessions with compaction — surfaces when long-session compaction kicked
   // in. If zero across all sessions, the long-session savings claim is
@@ -226,6 +292,11 @@ function renderSummary(
   console.log(
     chalk.dim(
       '  • tools/turn shows fixed tool overhead — the win from tools-array pruning lives here.',
+    ),
+  );
+  console.log(
+    chalk.dim(
+      '  • scaffold/turn = harness fixes per turn. High on weak models = the moat is working.',
     ),
   );
   console.log(
@@ -291,11 +362,13 @@ export function runAudit(opts: { limit?: number; session?: string } = {}): void 
     return;
   }
   const allTurns: TurnMetrics[] = [];
+  const allScaffolds: ScaffoldEventRow[] = [];
   const sessionMetrics: SessionMetrics[] = [];
   for (const p of paths) {
     allTurns.push(...readTurns(p));
+    allScaffolds.push(...readScaffolding(p));
     sessionMetrics.push(readSessionMetrics(p));
   }
-  const stats = aggregate(allTurns);
+  const stats = aggregate(allTurns, allScaffolds);
   renderSummary(stats, paths.length, sessionMetrics);
 }

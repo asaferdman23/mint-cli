@@ -12,11 +12,19 @@ export interface ApprovalDialogDiff {
   hunks: DiffHunk[];
 }
 
+export interface ApprovalDialogCall {
+  name: string;
+  preview: string;
+}
+
 export interface ApprovalDialogProps {
   reason: string;
   toolName?: string;
   filePath?: string;
   diffPreview?: ApprovalDialogDiff | null;
+  /** When this is an iteration approval, the list of bundled tool calls so
+   *  the user knows exactly what's about to run. */
+  iterationCalls?: ApprovalDialogCall[];
   onApprove: (always: boolean) => void;
   onReject: () => void;
   termCols: number;
@@ -27,10 +35,12 @@ export function ApprovalDialog({
   toolName,
   filePath,
   diffPreview,
+  iterationCalls,
   onApprove,
   onReject,
   termCols,
 }: ApprovalDialogProps): React.ReactElement {
+  const maxPreviewWidth = Math.max(20, termCols - 12);
   useInput((input, key) => {
     // Ctrl is owned by BrainApp (Ctrl+C exits); never claim it here.
     if (key.ctrl) return;
@@ -88,6 +98,22 @@ export function ApprovalDialog({
             maxRows={12}
             termCols={termCols}
           />
+        </Box>
+      )}
+      {iterationCalls && iterationCalls.length > 0 && (
+        <Box flexDirection="column">
+          {iterationCalls.map((c, i) => {
+            const preview = c.preview.length > maxPreviewWidth
+              ? `${c.preview.slice(0, maxPreviewWidth - 1)}…`
+              : c.preview;
+            return (
+              <Text key={`call-${i}`} dimColor>
+                <Text color="cyan">→ </Text>
+                <Text>{c.name}</Text>
+                {preview ? <Text dimColor>{`  ${preview}`}</Text> : null}
+              </Text>
+            );
+          })}
         </Box>
       )}
       <Box marginTop={1}>

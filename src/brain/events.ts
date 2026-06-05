@@ -181,6 +181,20 @@ export type AgentEvent =
       iteration: number;
       ts: number;
     }
+  | {
+      /** Emitted whenever the old-model-scaffolding subsystem intervenes
+       *  on the model's behalf (silent format fix, future: validation retry,
+       *  CoT hint, model-specific prompt patch). Counted per-model by
+       *  `mint audit` so the harness's contribution is provable. */
+      type: 'scaffolding.applied';
+      sessionId: string;
+      kind: 'normalize' | 'validate_retry' | 'cot_hint' | 'model_patch';
+      model?: ModelId;
+      tool?: string;
+      /** Free-form sub-classifier (e.g. normalization rule name). */
+      detail?: string;
+      ts: number;
+    }
   | { type: 'warn'; sessionId: string; message: string; ts: number }
   | { type: 'error'; sessionId: string; error: string; recoverable: boolean; ts: number }
   | { type: 'done'; sessionId: string; result: BrainResult; ts: number };
