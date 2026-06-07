@@ -1,12 +1,14 @@
-// src/tui/components/MessageList.tsx
-//
-// Renders the chat transcript. Pipeline phase rendering was removed when the
-// brain took over — live tool calls are surfaced in BrainToolInspector, and
-// phase summaries flow through the normal text delta stream.
+/**
+ * Chat transcript with opencode-style thick left-border messages.
+ * User messages: secondary (blue) border
+ * Assistant messages: primary (orange) border
+ */
 import React from 'react';
 import { Box, Text } from 'ink';
-import { MarkdownContent, countContentLines, renderMarkdownLineElements } from './MarkdownContent.js';
-import type { PipelinePhaseData } from '../types.js';
+import chalk from 'chalk';
+import { currentTheme } from '../theme/manager.js';
+import { renderMarkdown } from '../styles/markdown.js';
+import { Icons } from '../styles/icons.js';
 
 export interface ChatMessage {
   id: string;
@@ -14,94 +16,86 @@ export interface ChatMessage {
   content: string;
   model?: string;
   cost?: number;
+  durationMs?: number;
   isStreaming?: boolean;
-  phases?: PipelinePhaseData[];
+  phases?: unknown[];
 }
 
 interface MessageListProps {
   messages: ChatMessage[];
   streamingContent: string;
   availableHeight?: number;
-  livePhases?: PipelinePhaseData[];
+  livePhases?: unknown[];
   scrollOffset?: number;
 }
 
-function hasVisibleAssistantBody(msg: ChatMessage): boolean {
-  return msg.content.trim().length > 0;
-}
+// ─── Per-message line builders ───────────────────────────────────────────────
 
-function estimateMessageHeight(
-  msg: ChatMessage,
-  termWidth: number,
-  isFirst: boolean,
-): number {
-  const contentWidth = Math.max(20, termWidth - 4);
-  let lines = isFirst ? 0 : 1;
+function buildUserLines(msg: ChatMessage, width: number): string[] {
+  const t = currentTheme();
+  const contentWidth = Math.max(20, width - 4);
+  const border = chalk.hex(t.secondary)(Icons.thickBorder + ' ');
+  const lines: string[] = [];
 
-  if (msg.role === 'user') {
-    lines += countContentLines(msg.content, contentWidth);
-    return lines;
-  }
+  // Name header
+  lines.push(chalk.hex(t.secondary).bold('You'));
 
-  if (hasVisibleAssistantBody(msg)) {
-    lines += 1; // header
-    lines += countContentLines(msg.content, contentWidth);
-  }
-
-  return lines;
-}
-
-function buildAssistantRenderLines(
-  msg: ChatMessage,
-  termWidth: number,
-  isFirst: boolean,
-): React.ReactElement[] {
-  const contentWidth = Math.max(20, termWidth - 4);
-  const lines: React.ReactElement[] = [];
-
-  if (!isFirst) {
-    lines.push(
-      <Box key={`${msg.id}-separator`} marginTop={0} marginBottom={0}>
-        <Text dimColor>{'─'.repeat(Math.min(60, termWidth - 2))}</Text>
-      </Box>,
-    );
-  }
-
-  if (hasVisibleAssistantBody(msg)) {
-    lines.push(
-      <Text key={`${msg.id}-assistant-header`} color="green" bold>
-        {'Mint'}
-        {msg.model ? <Text dimColor> [{msg.model}]</Text> : null}
-      </Text>,
-    );
-    lines.push(...renderMarkdownLineElements(msg.content, contentWidth, `${msg.id}-content`));
+  // Content — treat user input as plain text (no markdown parse needed)
+  const rawLines = msg.content.split('\n');
+  for (const line of rawLines) {
+    // Word-wrap long lines
+    if (line.length <= contentWidth) {
+      lines.push(border + line);
+    } else {
+      let remaining = line;
+      while (remaining.length > 0) {
+        lines.push(border + remaining.slice(0, contentWidth));
+        remaining = remaining.slice(contentWidth);
+      }
+    }
   }
 
   return lines;
 }
 
-function buildUserRenderLines(
-  msg: ChatMessage,
-  termWidth: number,
-  isFirst: boolean,
-): React.ReactElement[] {
-  const contentWidth = Math.max(20, termWidth - 4);
-  const lines: React.ReactElement[] = [];
-  if (!isFirst) {
-    lines.push(
-      <Box key={`${msg.id}-separator`} marginBottom={0}>
-        <Text dimColor>{'─'.repeat(Math.min(60, termWidth - 2))}</Text>
-      </Box>,
-    );
+function buildAssistantLines(msg: ChatMessage, content: string, width: number): string[] {
+  const t = currentTheme();
+  const contentWidth = Math.max(20, width - 4);
+  const border = chalk.hex(t.primary)(Icons.thickBorder + ' ');
+  const lines: string[] = [];
+
+  if (!content.trim()) return lines;
+
+  // Name header
+  lines.push(chalk.hex(t.primary).bold('Mint'));
+
+  // Markdown-rendered content
+  const rendered = renderMarkdown(content, contentWidth, t);
+  for (const line of rendered) {
+    lines.push(border + line);
   }
-  lines.push(
-    <Text key={`${msg.id}-header`} color="cyan" bold>
-      You
-    </Text>,
-  );
-  lines.push(...renderMarkdownLineElements(msg.content, contentWidth, `${msg.id}-user`));
+
+  // Footer: model + duration
+  if (msg.model || msg.durationMs != null || msg.cost != null) {
+    const parts: string[] = [];
+    if (msg.model) parts.push(msg.model);
+    if (msg.durationMs != null) parts.push(formatDuration(msg.durationMs));
+    if (msg.cost != null && msg.cost > 0) parts.push('$' + msg.cost.toFixed(4));
+    lines.push(chalk.hex(t.textMuted)('  ' + parts.join('  ·  ')));
+  }
+
   return lines;
 }
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const m = Math.floor(ms / 60_000);
+  const s = Math.floor((ms % 60_000) / 1000);
+  return `${m}m${s}s`;
+}
+
+// ─── Component ───────────────────────────────────────────────────────────────
 
 export function MessageList({
   messages,
@@ -109,48 +103,45 @@ export function MessageList({
   availableHeight,
   scrollOffset = 0,
 }: MessageListProps): React.ReactElement {
+  const t = currentTheme();
   const termWidth = process.stdout.columns ?? 80;
-  const maxHeight = availableHeight ?? (process.stdout.rows ?? 24) - 6;
+  const maxHeight = availableHeight ?? Math.max(4, (process.stdout.rows ?? 24) - 6);
 
-  const allMessages = messages.map((msg) => {
-    if (msg.isStreaming) {
-      return { ...msg, content: streamingContent };
+  // Flatten all messages into display lines
+  const allLines: string[] = [];
+
+  messages.forEach((msg, idx) => {
+    // Separator between messages
+    if (idx > 0) {
+      allLines.push('');
     }
-    return msg;
-  });
 
-  // Flatten every message into line-sized React elements so scrolling is
-  // line-granular, not message-granular. Without this, long assistant
-  // replies are effectively unscrollable past their message boundary.
-  const allLines: React.ReactElement[] = [];
-  allMessages.forEach((msg, idx) => {
-    const isFirst = idx === 0;
+    const content = msg.isStreaming ? streamingContent : msg.content;
+
     if (msg.role === 'user') {
-      allLines.push(...buildUserRenderLines(msg, termWidth, isFirst));
+      allLines.push(...buildUserLines(msg, termWidth));
     } else {
-      allLines.push(...buildAssistantRenderLines(msg, termWidth, isFirst));
+      allLines.push(...buildAssistantLines(msg, content, termWidth));
     }
   });
 
-  // Window: pin to the bottom, move `scrollOffset` lines up from there.
+  // Viewport: pin to bottom, scroll up by scrollOffset lines
   const windowSize = Math.max(1, maxHeight);
-  const totalLines = allLines.length;
-  const clampedOffset = Math.min(Math.max(0, scrollOffset), Math.max(0, totalLines - windowSize));
-  const end = totalLines - clampedOffset;
+  const total = allLines.length;
+  const clamped = Math.min(Math.max(0, scrollOffset), Math.max(0, total - windowSize));
+  const end = total - clamped;
   const start = Math.max(0, end - windowSize);
-  const visibleLines = allLines.slice(start, end);
+  const visible = allLines.slice(start, end);
 
   return (
     <Box flexDirection="column" paddingX={1} overflow="hidden" height={maxHeight}>
-      {visibleLines.map((element, i) => (
-        <React.Fragment key={`line-${start + i}`}>{element}</React.Fragment>
+      {visible.map((line, i) => (
+        <Text key={`line-${start + i}`}>{line}</Text>
       ))}
-      {clampedOffset > 0 && (
-        <Box marginTop={0}>
-          <Text dimColor>
-            ▲ {clampedOffset} more line{clampedOffset === 1 ? '' : 's'} below — ↓ / PgDn to scroll back
-          </Text>
-        </Box>
+      {clamped > 0 && (
+        <Text>
+          {chalk.hex(t.textMuted)(`${Icons.separator.repeat(2)} ${clamped} more below — ↓ to scroll`)}
+        </Text>
       )}
     </Box>
   );

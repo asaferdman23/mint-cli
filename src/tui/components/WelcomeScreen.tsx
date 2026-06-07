@@ -1,67 +1,70 @@
-// src/tui/components/WelcomeScreen.tsx
+/**
+ * opencode-style welcome screen:
+ * ⌬ Mint CLI · version · cwd · examples · shortcuts
+ */
 import React from 'react';
 import { Box, Text } from 'ink';
+import chalk from 'chalk';
+import { currentTheme } from '../theme/manager.js';
+import { Icons } from '../styles/icons.js';
 
-const MINT_LOGO = [
-  '███╗   ███╗██╗███╗   ██╗████████╗     ██████╗██╗     ██╗',
-  '████╗ ████║██║████╗  ██║╚══██╔══╝    ██╔════╝██║     ██║',
-  '██╔████╔██║██║██╔██╗ ██║   ██║       ██║     ██║     ██║',
-  '██║╚██╔╝██║██║██║╚██╗██║   ██║       ██║     ██║     ██║',
-  '██║ ╚═╝ ██║██║██║ ╚████║   ██║       ╚██████╗███████╗██║',
-  '╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝   ╚═╝        ╚═════╝╚══════╝╚═╝',
-];
-
-// Example prompts the user can type to get started. Copy-paste friendly.
 const EXAMPLES = [
-  'add a README section for installation',
-  'fix the mobile nav toggle',
-  'explain what src/main.ts does',
-  'refactor the auth function to use async/await',
+  'fix the failing tests in src/brain/',
+  'add pagination to the usage dashboard',
+  'explain what loop.ts does',
+  'refactor the router to support per-route timeouts',
 ];
 
 export function WelcomeScreen(): React.ReactElement {
+  const t = currentTheme();
+  const cwd = process.cwd();
+
   return (
-    <Box flexDirection="column" alignItems="center" paddingTop={1}>
-      {/* ASCII Logo */}
-      <Box flexDirection="column" alignItems="flex-start">
-        {MINT_LOGO.map((line, i) => (
-          <Text key={i} color="cyan">
-            {line}
-          </Text>
+    <Box flexDirection="column" paddingX={2} paddingY={1}>
+
+      {/* Logo + version */}
+      <Box flexDirection="row" gap={1}>
+        <Text>{chalk.hex(t.primary).bold(`${Icons.logo} Mint CLI`)}</Text>
+        <Text>{chalk.hex(t.textMuted)('v0.3.0-beta.10')}</Text>
+      </Box>
+
+      {/* cwd */}
+      <Box>
+        <Text>
+          {chalk.hex(t.textMuted)('cwd: ')}
+          {chalk.hex(t.text)(cwd)}
+        </Text>
+      </Box>
+
+      {/* divider */}
+      <Box marginTop={1}>
+        <Text>{chalk.hex(t.borderNormal)(Icons.separator.repeat(50))}</Text>
+      </Box>
+
+      {/* Examples */}
+      <Box marginTop={1} flexDirection="column">
+        <Text>{chalk.hex(t.textEmphasized).bold('Try asking:')}</Text>
+        {EXAMPLES.map((ex, i) => (
+          <Box key={i}>
+            <Text>
+              {chalk.hex(t.primary)(`  ${Icons.arrow} `)}
+              {chalk.hex(t.text)(ex)}
+            </Text>
+          </Box>
         ))}
       </Box>
 
-      {/* Tagline */}
-      <Box marginTop={0}>
-        <Text dimColor>AI coding assistant · smart routing · under a penny per task</Text>
-      </Box>
-
-      {/* First-prompt hint */}
-      <Box marginTop={1} flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={2} paddingY={0}>
-        <Box>
-          <Text color="cyan" bold>Try typing one of these:</Text>
-        </Box>
-        <Box marginTop={0} flexDirection="column">
-          {EXAMPLES.map((ex, i) => (
-            <Box key={i}>
-              <Text dimColor>  › </Text>
-              <Text color="white">{ex}</Text>
-            </Box>
-          ))}
-        </Box>
-      </Box>
-
       {/* Shortcuts */}
-      <Box marginTop={1} flexDirection="column" alignItems="center">
-        <Text dimColor>
-          <Text color="yellow">/help</Text>
-          {' help  '}
-          <Text color="yellow">/auto</Text>
-          {' skip approvals  '}
-          <Text color="yellow">Tab</Text>
-          {' tools  '}
-          <Text color="yellow">Ctrl+C</Text>
-          {' exit'}
+      <Box marginTop={1}>
+        <Text>{chalk.hex(t.borderNormal)(Icons.separator.repeat(50))}</Text>
+      </Box>
+      <Box marginTop={0}>
+        <Text>
+          {chalk.hex(t.primary).bold('ctrl+h')}{chalk.hex(t.textMuted)(' help   ')}
+          {chalk.hex(t.primary).bold('ctrl+o')}{chalk.hex(t.textMuted)(' model   ')}
+          {chalk.hex(t.primary).bold('ctrl+t')}{chalk.hex(t.textMuted)(' theme   ')}
+          {chalk.hex(t.primary).bold('ctrl+b')}{chalk.hex(t.textMuted)(' files   ')}
+          {chalk.hex(t.primary).bold('ctrl+c')}{chalk.hex(t.textMuted)(' exit')}
         </Text>
       </Box>
     </Box>

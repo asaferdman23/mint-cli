@@ -1,40 +1,47 @@
-// src/tui/components/StatusBar.tsx
+/**
+ * opencode-style status bar:
+ * [ctrl+h help]  [Context: Xt · $Y]  [mode]  [model]
+ */
 import React from 'react';
 import { Box, Text } from 'ink';
+import chalk from 'chalk';
+import { currentTheme } from '../theme/manager.js';
 import type { ModelId } from '../../providers/types.js';
 
 interface StatusBarProps {
   currentModel: ModelId | null;
   sessionTokens: number;
   sessionCost: number;
+  agentMode?: string;
+  quotaUsed?: number;
+  quotaLimit?: number;
+  statusMessage?: { text: string; kind: 'info' | 'warn' | 'error' } | null;
+  // legacy compat
   monthlyCost?: number;
   savingsPct?: number;
-  agentMode?: string;
   inspectorHint?: string;
   deepseekModel?: string;
   contextTokens?: number;
-  quotaUsed?: number;
-  quotaLimit?: number;
 }
 
-function formatTokens(tokens: number): string {
-  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
-  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1)}k`;
-  return String(tokens);
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+  return String(n);
 }
 
-function formatCost(cost: number): string {
-  if (cost === 0) return '$0';
-  if (cost < 0.01) return `${(cost * 100).toFixed(3)}¢`;
-  return `$${cost.toFixed(4)}`;
+function fmtCost(n: number): string {
+  if (n === 0) return '$0';
+  if (n < 0.01) return `${(n * 100).toFixed(3)}¢`;
+  return `$${n.toFixed(4)}`;
 }
 
-function modeColor(mode: string): string {
+function modeColor(mode: string, theme: ReturnType<typeof currentTheme>): string {
   switch (mode) {
-    case 'yolo': return 'red';
-    case 'plan': return 'blue';
-    case 'diff': return 'yellow';
-    default: return 'green';
+    case 'yolo': return theme.error;
+    case 'plan': return theme.info;
+    case 'diff': return theme.warning;
+    default:     return theme.success;
   }
 }
 
@@ -42,91 +49,82 @@ export function StatusBar({
   currentModel,
   sessionTokens,
   sessionCost,
-  monthlyCost,
-  savingsPct,
   agentMode = 'auto',
-  inspectorHint,
-  deepseekModel,
-  contextTokens,
   quotaUsed,
   quotaLimit,
+  statusMessage,
+  deepseekModel,
 }: StatusBarProps): React.ReactElement {
+  const t = currentTheme();
   const model = deepseekModel ?? currentModel ?? 'auto';
-  const isThinking = deepseekModel === 'deepseek-reasoner';
-
-  // Calculate quota status
-  const showQuota = quotaUsed != null && quotaLimit != null;
-  const quotaRemaining = showQuota ? quotaLimit - quotaUsed : 0;
-  const quotaPercent = showQuota ? (quotaUsed / quotaLimit) * 100 : 0;
-
-  let quotaColor: Parameters<typeof Text>[0]['color'] = 'green';
-  if (quotaPercent >= 90) quotaColor = 'red';
-  else if (quotaPercent >= 70) quotaColor = 'yellow';
-
-  // Responsive layout priority (narrow → wide):
-  //   1. mode           (always show; critical safety indicator)
-  //   2. quota          (always show if set; critical for free-tier UX)
-  //   3. model          (always show; users want to know what's running)
-  //   4. session cost   (hide < 70 cols)
-  //   5. tokens         (hide < 90 cols)
-  //   6. month cost / savings / context / inspector hint / version (hide < 110 cols)
   const cols = process.stdout.columns ?? 80;
-  const showDetails = cols >= 70;
-  const showTokens = cols >= 90;
-  const showExtras = cols >= 110;
+
+  // Context / quota pct for warning threshold
+  const quotaPct = quotaUsed != null && quotaLimit != null && quotaLimit > 0
+    ? (quotaUsed / quotaLimit) * 100
+    : 0;
+  const tokenWarning = quotaPct >= 80;
+
+  // If there's a transient status message, show it in the middle section
+  if (statusMessage) {
+    const msgColor = statusMessage.kind === 'error' ? t.error
+      : statusMessage.kind === 'warn' ? t.warning
+      : t.info;
+    return (
+      <Box paddingX={1} height={1} overflow="hidden">
+        <Text>{chalk.hex(t.textMuted)('ctrl+h') + chalk.hex(t.borderNormal)(' │ ')}</Text>
+        <Text>{chalk.hex(msgColor)(statusMessage.text)}</Text>
+        <Box flexGrow={1} />
+        <Text>{chalk.hex(t.borderNormal)(' │ ') + chalk.hex(modeColor(agentMode, t))(agentMode)}</Text>
+      </Box>
+    );
+  }
+
+  const parts: React.ReactElement[] = [];
+
+  // Help hint
+  parts.push(
+    <Text key="help">{chalk.hex(t.textMuted)('ctrl+h help')}</Text>
+  );
+
+  // Separator
+  parts.push(<Text key="sep1">{chalk.hex(t.borderNormal)(' │ ')}</Text>);
+
+  // Context + cost (show cost only if >0 or wide terminal)
+  if (sessionTokens > 0 || sessionCost > 0) {
+    const contextStr = sessionTokens > 0 ? `Context: ${fmtTokens(sessionTokens)}` : '';
+    const costStr = sessionCost > 0 ? `Cost: ${fmtCost(sessionCost)}` : '';
+    const combined = [contextStr, costStr].filter(Boolean).join('  ');
+    const color = tokenWarning ? t.warning : t.textMuted;
+    parts.push(<Text key="ctx">{chalk.hex(color)(combined)}</Text>);
+    parts.push(<Text key="sep2">{chalk.hex(t.borderNormal)(' │ ')}</Text>);
+  }
+
+  // Quota (free tier)
+  if (quotaUsed != null && quotaLimit != null && cols >= 80) {
+    const remaining = quotaLimit - quotaUsed;
+    const qColor = quotaPct >= 90 ? t.error : quotaPct >= 70 ? t.warning : t.success;
+    parts.push(<Text key="quota">{chalk.hex(qColor)(`${remaining}/${quotaLimit} free`)}</Text>);
+    parts.push(<Text key="sep3">{chalk.hex(t.borderNormal)(' │ ')}</Text>);
+  }
+
+  // Spacer
+  parts.push(<Box key="spacer" flexGrow={1} />);
+
+  // Mode
+  parts.push(
+    <Text key="mode">{chalk.hex(modeColor(agentMode, t)).bold(agentMode)}</Text>
+  );
+  parts.push(<Text key="sep4">{chalk.hex(t.borderNormal)(' │ ')}</Text>);
+
+  // Model
+  parts.push(
+    <Text key="model">{chalk.hex(t.textMuted)(String(model))}</Text>
+  );
 
   return (
-    <Box paddingX={1}>
-      <Box flexGrow={1} flexShrink={1} gap={0} overflow="hidden">
-        <Text dimColor>{model}{isThinking ? ' [thinking]' : ''}</Text>
-        {showTokens && (
-          <>
-            <Text dimColor> │ </Text>
-            <Text dimColor>{formatTokens(sessionTokens)} tokens</Text>
-          </>
-        )}
-        {showDetails && (
-          <>
-            <Text dimColor> │ </Text>
-            <Text dimColor>session {formatCost(sessionCost)}</Text>
-          </>
-        )}
-        {showExtras && monthlyCost != null && monthlyCost > 0 && (
-          <>
-            <Text dimColor> │ </Text>
-            <Text color="cyan">month {formatCost(monthlyCost)}</Text>
-          </>
-        )}
-        {showQuota && (
-          <>
-            <Text dimColor> │ </Text>
-            <Text color={quotaColor}>{quotaRemaining}/{quotaLimit} free</Text>
-          </>
-        )}
-        {showExtras && savingsPct != null && savingsPct > 0 && (
-          <>
-            <Text dimColor> │ </Text>
-            <Text color="green" bold>-{savingsPct}% vs Opus</Text>
-          </>
-        )}
-      </Box>
-      <Box flexShrink={0} gap={0}>
-        <Text dimColor> │ </Text>
-        <Text color={modeColor(agentMode) as Parameters<typeof Text>[0]['color']}>{agentMode}</Text>
-        {showExtras && contextTokens != null && contextTokens > 0 && (
-          <>
-            <Text dimColor> │ </Text>
-            <Text dimColor>ctx {formatTokens(contextTokens)}</Text>
-          </>
-        )}
-        {showExtras && <Text dimColor> │ v0.3.0-β1</Text>}
-        {showExtras && inspectorHint && (
-          <>
-            <Text dimColor> │ </Text>
-            <Text dimColor>{inspectorHint}</Text>
-          </>
-        )}
-      </Box>
+    <Box paddingX={1} height={1} overflow="hidden">
+      {parts}
     </Box>
   );
 }
