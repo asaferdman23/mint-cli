@@ -112,6 +112,16 @@ program
     else process.exit(0);
   });
 
+// Stream-agent — NDJSON bridge for the Go BubbleTea TUI (internal).
+program
+  .command('stream-agent')
+  .description('Internal: NDJSON event bridge for the Go TUI frontend')
+  .action(async () => {
+    const { runStreamAgent } = await import('./stream-agent.js');
+    await runStreamAgent();
+    process.exit(0);
+  });
+
 // Cost history command
 program
   .command('cost')
