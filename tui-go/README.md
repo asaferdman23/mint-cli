@@ -62,10 +62,13 @@ Flags:
 
 ## Status
 
-Working foundation: chat with thick left-border messages (user=blue,
+Implemented: chat with thick left-border messages (user=blue,
 assistant=orange), Glamour markdown + syntax highlighting, streaming text,
-live activity line, status bar, help overlay, approval gate, NDJSON bridge.
+live activity line, status bar, help overlay (`ctrl+h`), **model picker
+(`ctrl+o`)**, **theme switcher (`ctrl+t`, live preview)**, **files sidebar
+(`ctrl+b`)**, **@-file completion**, approval gate, NDJSON bridge.
 
-Not yet ported from the planned set: model picker, theme switcher overlay,
-files sidebar, @-file completion, logs page. The Go scaffolding (theme
-registry, overlay pattern) is in place to add them.
+See [SPEC.md](SPEC.md) for the full protocol and UI contract.
+
+Not yet ported (need brain-side support, not just UI): session switcher
+(`ctrl+s`), logs page (`ctrl+l`).

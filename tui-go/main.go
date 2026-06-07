@@ -47,7 +47,7 @@ func main() {
 	}
 	defer bridge.Close()
 
-	p := tea.NewProgram(ui.New(bridge, *mode), tea.WithAltScreen())
+	p := tea.NewProgram(ui.New(bridge, *mode, *themeName), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)

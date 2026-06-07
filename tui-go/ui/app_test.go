@@ -11,7 +11,7 @@ import (
 
 // newTestModel builds a model sized for rendering, without a live bridge.
 func newTestModel() Model {
-	m := New(nil, "diff")
+	m := New(nil, "diff", "opencode")
 	m.width, m.height = 80, 24
 	m.layout()
 	m.md = newMarkdownRenderer(m.contentWidth())

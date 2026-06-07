@@ -63,6 +63,17 @@ type Event struct {
 
 	// done
 	Result *Result `json:"result,omitempty"`
+
+	// meta (emitted once at startup)
+	Models []ModelInfo `json:"models,omitempty"`
+	Paths  []string    `json:"paths,omitempty"`
+	Cwd    string      `json:"cwd,omitempty"`
+}
+
+// ModelInfo is one selectable model for the picker.
+type ModelInfo struct {
+	ID   string `json:"id"`
+	Tier string `json:"tier"`
 }
 
 // FileRef is a retrieved-context file reference.

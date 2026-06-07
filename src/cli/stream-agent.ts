@@ -38,8 +38,33 @@ function emit(event: Record<string, unknown>): void {
   process.stdout.write(JSON.stringify(event) + '\n');
 }
 
+/** Emit a one-shot meta event so the Go UI can populate its pickers. */
+async function emitMeta(): Promise<void> {
+  let models: Array<{ id: string; tier: string }> = [];
+  let files: string[] = [];
+  try {
+    const { MODEL_TIERS } = await import('../providers/tiers.js');
+    models = Object.keys(MODEL_TIERS)
+      .sort()
+      .map((id) => ({ id, tier: (MODEL_TIERS as Record<string, string>)[id] }));
+  } catch {
+    /* models stay empty */
+  }
+  try {
+    const { loadIndex } = await import('../context/indexer.js');
+    const index = await loadIndex(process.cwd());
+    if (index) files = Object.keys(index.files).sort();
+  } catch {
+    /* files stay empty */
+  }
+  emit({ type: 'meta', models, paths: files, cwd: process.cwd(), ts: Date.now() });
+}
+
 export async function runStreamAgent(): Promise<void> {
   const rl = createInterface({ input: process.stdin, terminal: false });
+
+  // Announce capabilities up front (model list + project files for completion).
+  void emitMeta();
 
   // Pending approval resolver — set while a gate is open.
   let pendingApproval: ((ok: boolean) => void) | null = null;
