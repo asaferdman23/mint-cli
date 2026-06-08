@@ -139,6 +139,31 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+h":
 		m.toggleOverlay("help")
 		return m, nil
+	case "esc":
+		// Cancel a running task — send cancel to the bridge and unlock the UI
+		// immediately so the user isn't trapped waiting for a stalled gateway.
+		if m.busy {
+			if m.bridge != nil {
+				m.bridge.Send(protocol.Command{Type: "cancel"})
+			}
+			m.busy = false
+			m.streaming = ""
+			m.activity = ""
+			m.statusErr = "cancelled"
+			// Mark the in-flight assistant message as done so the transcript
+			// doesn't show a dangling streaming bubble.
+			if len(m.messages) > 0 {
+				last := &m.messages[len(m.messages)-1]
+				if last.streaming {
+					last.streaming = false
+					if last.content == "" {
+						last.content = "(cancelled)"
+					}
+				}
+			}
+			m.refreshViewport()
+			return m, nil
+		}
 	}
 
 	// Overlay-active: capture nav, swallow the rest.
@@ -578,9 +603,9 @@ func (m Model) inputView() string {
 		if label == "" {
 			label = "Thinking…"
 		}
-		return s.editorBox.Width(m.width - 2).Render(
-			lipgloss.NewStyle().Foreground(theme.Current.Primary).Render("◐ ") + label,
-		)
+		cancel := s.muted.Render("  Esc to cancel")
+		spinner := lipgloss.NewStyle().Foreground(theme.Current.Primary).Render("◐ ")
+		return s.editorBox.Width(m.width - 2).Render(spinner + label + cancel)
 	}
 	if m.approval != "" {
 		return s.approvalBox.Width(m.width - 2).Render(
@@ -629,7 +654,9 @@ func (m Model) helpView() string {
 		"           (mint · tokyonight · opencode)",
 		"  ctrl+b   files sidebar",
 		"  ctrl+c   exit",
+		"  esc      cancel running task",
 		"  @        file completion",
+		"  /        command menu",
 		"  pgup / pgdn   scroll",
 		"  y / n         approve diffs",
 		"",

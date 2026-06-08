@@ -126,6 +126,38 @@ func TestHelpOverlayToggle(t *testing.T) {
 	}
 }
 
+func TestEscCancelsRunningTask(t *testing.T) {
+	m := newTestModel()
+	// Simulate a running task.
+	m.messages = []message{
+		{role: roleUser, content: "do a thing"},
+		{role: roleAssistant, streaming: true},
+	}
+	m.busy = true
+	m.activity = "Reading file…"
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+
+	if m.busy {
+		t.Error("expected busy=false after Esc cancel")
+	}
+	if m.statusErr != "cancelled" {
+		t.Errorf("expected statusErr='cancelled', got %q", m.statusErr)
+	}
+	// Streaming bubble should be closed.
+	last := m.messages[len(m.messages)-1]
+	if last.streaming {
+		t.Error("expected streaming=false after cancel")
+	}
+	// Activity hint visible while busy.
+	m.busy = true
+	m.activity = ""
+	if !strings.Contains(m.inputView(), "Esc to cancel") {
+		t.Error("missing Esc hint in activity line")
+	}
+}
+
 func TestApprovalGate(t *testing.T) {
 	m := newTestModel()
 	m.applyEvent(protocol.Event{Type: "approval.needed", Reason: "diff"})
