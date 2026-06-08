@@ -525,9 +525,9 @@ func (m Model) inputView() string {
 		)
 	}
 	if m.approval != "" {
-		return s.editorBox.Width(m.width-2).BorderForeground(theme.Current.Warning).Render(
+		return s.approvalBox.Width(m.width - 2).Render(
 			lipgloss.NewStyle().Foreground(theme.Current.Warning).Render(
-				fmt.Sprintf("Approve %s? [y/Enter] yes  [n] no", m.approval),
+				fmt.Sprintf("%s Approve: %s   [y / Enter] yes   [n] no", iconWarning, m.approval),
 			),
 		)
 	}
@@ -546,20 +546,24 @@ func (m Model) inputView() string {
 func (m Model) helpView() string {
 	t := theme.Current
 	lines := []string{
-		iconLogo + " Mint CLI — Help",
-		strings.Repeat(iconSep, 40),
-		"/clear              clear chat",
-		"/diff /auto /plan /yolo   set mode",
+		iconLogo + "  Mint CLI",
+		strings.Repeat(iconSep, 38),
 		"",
-		"ctrl+h   toggle help",
-		"ctrl+o   model picker",
-		"ctrl+t   theme switcher",
-		"ctrl+b   toggle files sidebar",
-		"ctrl+c   exit",
-		"@        file completion",
-		"pgup/pgdn  scroll",
+		"  /clear             clear chat",
+		"  /diff  /auto       set mode",
+		"  /plan  /yolo",
 		"",
-		"Press any key to close",
+		"  ctrl+h   toggle this help",
+		"  ctrl+o   model picker",
+		"  ctrl+t   theme switcher",
+		"           (mint · tokyonight · opencode)",
+		"  ctrl+b   files sidebar",
+		"  ctrl+c   exit",
+		"  @        file completion",
+		"  pgup / pgdn   scroll",
+		"  y / n         approve diffs",
+		"",
+		"  Press any key to close",
 	}
 	body := lipgloss.NewStyle().Foreground(t.TextMuted).Render(strings.Join(lines, "\n"))
 	box := lipgloss.NewStyle().

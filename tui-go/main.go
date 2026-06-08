@@ -21,7 +21,7 @@ func main() {
 		nodeBin    = flag.String("node", "node", "path to the node binary")
 		entry      = flag.String("entry", "", "path to the mint CLI entry (dist/cli/index.js)")
 		mode       = flag.String("mode", "diff", "agent mode: diff|auto|plan|yolo")
-		themeName  = flag.String("theme", "opencode", "color theme")
+		themeName  = flag.String("theme", "mint", "color theme: mint|tokyonight|opencode")
 		cwd        = flag.String("cwd", "", "working directory (default: current)")
 	)
 	flag.Parse()

@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	iconLogo    = "⌬"
+	iconLogo    = "⌬"  // mint logo mark
 	iconThick   = "┃"
 	iconArrow   = "›"
 	iconBullet  = "•"
@@ -16,34 +16,54 @@ const (
 	iconSep     = "─"
 )
 
-// styleSet rebuilds lipgloss styles from the active theme (call after theme swap).
+// ASCII logo — block letters from the landing page, scaled for terminal.
+const logoASCII = `  ██╗   ██╗██╗███╗   ██╗████████╗
+  ███╗ ███║██║████╗  ██║╚══██╔══╝
+  ██╔████╔╝██║██╔██╗ ██║   ██║
+  ██║╚██╔╝ ██║██║╚██╗██║   ██║
+  ██║  ╚╝  ██║██║ ╚████║   ██║
+  ╚═╝      ╚═╝╚═╝  ╚═══╝   ╚═╝`
+
+// styleSet rebuilds lipgloss styles from the active theme.
 type styleSet struct {
-	userBorder      lipgloss.Style
-	assistantBorder lipgloss.Style
+	// message borders
+	userBorder      lipgloss.Style // cyan  — user messages
+	assistantBorder lipgloss.Style // orange — assistant messages
 	userName        lipgloss.Style
 	assistantName   lipgloss.Style
 	muted           lipgloss.Style
-	editorBox       lipgloss.Style
-	statusHelp      lipgloss.Style
-	statusSep       lipgloss.Style
-	mode            lipgloss.Style
+	bright          lipgloss.Style
+	// input / overlays
+	editorBox     lipgloss.Style
+	approvalBox   lipgloss.Style
+	statusHelp    lipgloss.Style
+	statusSep     lipgloss.Style
+	mode          lipgloss.Style
+	accentKeyword lipgloss.Style
 }
 
 func styles() styleSet {
 	t := theme.Current
 	return styleSet{
-		userBorder:      lipgloss.NewStyle().Foreground(t.Secondary),
-		assistantBorder: lipgloss.NewStyle().Foreground(t.Primary),
-		userName:        lipgloss.NewStyle().Foreground(t.Secondary).Bold(true),
-		assistantName:   lipgloss.NewStyle().Foreground(t.Primary).Bold(true),
+		// cyan border for user, orange for assistant — matches landing page terminal
+		userBorder:      lipgloss.NewStyle().Foreground(t.Primary),
+		assistantBorder: lipgloss.NewStyle().Foreground(t.Secondary),
+		userName:        lipgloss.NewStyle().Foreground(t.Primary).Bold(true),
+		assistantName:   lipgloss.NewStyle().Foreground(t.Secondary).Bold(true),
 		muted:           lipgloss.NewStyle().Foreground(t.TextMuted),
+		bright:          lipgloss.NewStyle().Foreground(t.TextEmphasized),
 		editorBox: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(t.BorderFocused).
 			Padding(0, 1),
-		statusHelp: lipgloss.NewStyle().Foreground(t.TextMuted),
-		statusSep:  lipgloss.NewStyle().Foreground(t.BorderNormal),
-		mode:       lipgloss.NewStyle().Bold(true),
+		approvalBox: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(t.Warning).
+			Padding(0, 1),
+		statusHelp:    lipgloss.NewStyle().Foreground(t.TextMuted),
+		statusSep:     lipgloss.NewStyle().Foreground(t.BorderDim),
+		mode:          lipgloss.NewStyle().Bold(true),
+		accentKeyword: lipgloss.NewStyle().Foreground(t.Primary),
 	}
 }
 
@@ -56,7 +76,7 @@ func modeColor(mode string) lipgloss.Color {
 		return t.Info
 	case "diff":
 		return t.Warning
-	default:
+	default: // auto
 		return t.Success
 	}
 }

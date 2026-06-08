@@ -11,7 +11,7 @@ import (
 
 // newTestModel builds a model sized for rendering, without a live bridge.
 func newTestModel() Model {
-	m := New(nil, "diff", "opencode")
+	m := New(nil, "diff", "mint")
 	m.width, m.height = 80, 24
 	m.layout()
 	m.md = newMarkdownRenderer(m.contentWidth())
@@ -121,7 +121,7 @@ func TestHelpOverlayToggle(t *testing.T) {
 	if m.overlay != "help" {
 		t.Errorf("expected help overlay, got %q", m.overlay)
 	}
-	if !strings.Contains(m.View(), "Help") {
+	if !strings.Contains(m.View(), "Mint CLI") {
 		t.Error("help view not rendered")
 	}
 }
@@ -132,7 +132,7 @@ func TestApprovalGate(t *testing.T) {
 	if m.approval != "diff" {
 		t.Errorf("approval not set: %q", m.approval)
 	}
-	if !strings.Contains(m.inputView(), "Approve diff") {
+	if !strings.Contains(m.inputView(), "Approve") {
 		t.Error("approval prompt not rendered")
 	}
 }
