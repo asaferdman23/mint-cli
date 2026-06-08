@@ -107,6 +107,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventMsg:
 		if msg.err != nil {
 			m.busy = false
+			if msg.err.Error() != "EOF" {
+				m.statusErr = "bridge: " + msg.err.Error()
+			} else {
+				m.statusErr = "brain exited — run: npm run build && cd tui-go && go build -o mint-tui ."
+			}
 			return m, nil
 		}
 		m.applyEvent(msg.ev)
