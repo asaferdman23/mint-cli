@@ -148,6 +148,65 @@ func truncatePath(p string, max int) string {
 	return "…" + p[len(p)-(max-1):]
 }
 
+// slashCmd describes one slash command for the completion menu.
+type slashCmd struct {
+	name string
+	desc string
+}
+
+// slashCommands is the full list shown in the / menu.
+var slashCommands = []slashCmd{
+	{"/clear", "clear the chat"},
+	{"/diff",  "diff mode — approve each file change"},
+	{"/auto",  "auto mode — apply without asking"},
+	{"/plan",  "plan mode — no writes, dry run"},
+	{"/yolo",  "yolo mode — full autonomy"},
+}
+
+// filterSlashCmds returns commands whose name contains the query.
+func filterSlashCmds(query string) []slashCmd {
+	q := strings.ToLower(query)
+	var out []slashCmd
+	for _, c := range slashCommands {
+		if strings.Contains(c.name, q) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// slashCompletion renders the /-command dropdown shown above the editor.
+func slashCompletion(matches []slashCmd, selected, width int) string {
+	if len(matches) == 0 {
+		return ""
+	}
+	t := theme.Current
+
+	var b strings.Builder
+	for i, cmd := range matches {
+		sel := i == selected
+		pointer := "  "
+		name := lipgloss.NewStyle().Foreground(t.TextMuted).Render(cmd.name)
+		desc := lipgloss.NewStyle().Foreground(t.BorderNormal).Render("  " + cmd.desc)
+		if sel {
+			pointer = lipgloss.NewStyle().Foreground(t.Primary).Render(iconArrow + " ")
+			name = lipgloss.NewStyle().Foreground(t.Primary).Bold(true).Render(cmd.name)
+			desc = lipgloss.NewStyle().Foreground(t.TextMuted).Render("  " + cmd.desc)
+		}
+		b.WriteString(pointer + name + desc)
+		if i < len(matches)-1 {
+			b.WriteString("\n")
+		}
+	}
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(t.Primary).
+		Padding(0, 1).
+		Width(width - 2).
+		Render(b.String())
+}
+
 // fileCompletion renders the @-completion dropdown shown above the editor.
 func fileCompletion(matches []string, selected, width int) string {
 	if len(matches) == 0 {

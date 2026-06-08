@@ -58,6 +58,9 @@ type Model struct {
 
 	// @-completion state.
 	fileIndex int
+
+	// /-completion state.
+	slashIndex int
 }
 
 // New builds the initial model.
@@ -171,6 +174,39 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// /-command completion takes priority.
+	if q, ok := m.activeSlashQuery(); ok {
+		matches := filterSlashCmds(q)
+		if len(matches) > 0 {
+			switch key {
+			case "up":
+				if m.slashIndex > 0 {
+					m.slashIndex--
+				}
+				return m, nil
+			case "down":
+				if m.slashIndex < len(matches)-1 {
+					m.slashIndex++
+				}
+				return m, nil
+			case "tab", "enter":
+				m.applySlashCompletion(matches[m.slashIndex%len(matches)].name)
+				// If Enter was pressed on an exact match, submit immediately.
+				if key == "enter" {
+					val := m.editor.Value()
+					if !m.busy {
+						return m, m.submit(val)
+					}
+				}
+				return m, nil
+			case "esc":
+				m.editor.SetValue("")
+				m.slashIndex = 0
+				return m, nil
+			}
+		}
+	}
+
 	// @-completion navigation takes priority over the editor.
 	if q, ok := m.activeAtQuery(); ok {
 		matches := filterFiles(m.filePaths, q, fileCompletionLimit)
@@ -211,7 +247,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if !m.busy {
 		var cmd tea.Cmd
 		m.editor, cmd = m.editor.Update(msg)
-		m.fileIndex = 0 // reset selection as the query changes
+		m.fileIndex = 0   // reset selection as the query changes
+		m.slashIndex = 0
 		return m, cmd
 	}
 	return m, nil
@@ -343,6 +380,27 @@ func (m *Model) applyFileCompletion(file string) {
 }
 
 func isSpace(b byte) bool { return b == ' ' || b == '\t' || b == '\n' }
+
+// activeSlashQuery returns the current /command token if the editor value
+// starts with "/" and contains no spaces (i.e. a partial command is being typed).
+func (m Model) activeSlashQuery() (string, bool) {
+	val := m.editor.Value()
+	if !strings.HasPrefix(val, "/") {
+		return "", false
+	}
+	if strings.ContainsAny(val, " \t\n") {
+		return "", false
+	}
+	return val, true
+}
+
+// applySlashCompletion replaces the editor value with the selected command.
+func (m *Model) applySlashCompletion(cmd string) {
+	m.editor.SetValue(cmd)
+	// Move cursor to end.
+	m.editor.CursorEnd()
+	m.slashIndex = 0
+}
 
 // ── Submit + events ─────────────────────────────────────────────────────────
 
@@ -532,14 +590,26 @@ func (m Model) inputView() string {
 		)
 	}
 
-	// @-completion dropdown above the editor.
+	// /-command dropdown (takes priority over @ dropdown).
 	dropdown := ""
-	if q, ok := m.activeAtQuery(); ok {
+	if q, ok := m.activeSlashQuery(); ok {
+		matches := filterSlashCmds(q)
+		if d := slashCompletion(matches, m.slashIndex, m.width); d != "" {
+			dropdown = d + "\n"
+		}
+	} else if q, ok := m.activeAtQuery(); ok {
+		// @-completion dropdown above the editor.
 		matches := filterFiles(m.filePaths, q, fileCompletionLimit)
 		if d := fileCompletion(matches, m.fileIndex, m.width); d != "" {
 			dropdown = d + "\n"
 		}
 	}
+
+	// Reset slash index when not in slash mode.
+	if _, ok := m.activeSlashQuery(); !ok {
+		m.slashIndex = 0
+	}
+
 	return dropdown + s.editorBox.Width(m.width-2).Render(m.editor.View())
 }
 

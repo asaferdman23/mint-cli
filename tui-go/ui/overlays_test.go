@@ -80,6 +80,49 @@ func TestSidebarToggleAndFileTracking(t *testing.T) {
 	}
 }
 
+func TestSlashCompletionShowsAndApplies(t *testing.T) {
+	m := newTestModel()
+
+	// Typing "/" should surface all commands.
+	m.editor.SetValue("/")
+	q, ok := m.activeSlashQuery()
+	if !ok || q != "/" {
+		t.Fatalf("slash query not detected: %q ok=%v", q, ok)
+	}
+	matches := filterSlashCmds(q)
+	if len(matches) != len(slashCommands) {
+		t.Fatalf("expected all commands, got %d", len(matches))
+	}
+
+	// Down should advance selection.
+	u, _ := m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = u.(Model)
+	if m.slashIndex != 1 {
+		t.Errorf("slashIndex expected 1, got %d", m.slashIndex)
+	}
+
+	// Tab completes the selected command into the editor.
+	u, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = u.(Model)
+	if m.editor.Value() != slashCommands[1].name {
+		t.Errorf("completion not applied: %q", m.editor.Value())
+	}
+
+	// Dropdown renders for "/".
+	m.editor.SetValue("/")
+	view := m.inputView()
+	if !strings.Contains(view, "/clear") {
+		t.Error("slash dropdown not rendered in inputView")
+	}
+
+	// Esc clears the editor.
+	u, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = u.(Model)
+	if m.editor.Value() != "" {
+		t.Errorf("esc should clear editor, got %q", m.editor.Value())
+	}
+}
+
 func TestFileCompletionFilterAndApply(t *testing.T) {
 	m := newTestModel()
 	m.filePaths = []string{"src/brain/loop.ts", "src/tui/app.tsx", "README.md"}
